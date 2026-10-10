@@ -48,7 +48,7 @@ def _hv_flags():
                 for sub in action.choices.values():
                     walk(sub)
 
-    walk(_load_hv().build_parser())
+    walk(_load_hv().build_parser(plane="control"))
     return flags - {"-h", "--help"}
 
 

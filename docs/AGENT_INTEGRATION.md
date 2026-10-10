@@ -242,13 +242,13 @@ The contract is **SemVer (`MAJOR.MINOR`)**, reported by `hv version`:
   through a migration window; §0 fires a loud re-integrate nudge; and — because every adapter call
   is best-effort and `exit 0` (§4) — an un-migrated adapter **degrades gracefully** (its nudges
   silently no-op) rather than crashing. Migrate to the new major within the window.
-- **The 2.0 amendment: owner-only commands do not get working shims** (public #136, S6). 2.0 moves every
+- **The 2.0 amendment, closed in 3.0: owner-only commands did not get working shims** (public #136, S6). 2.0 moved every
   command that reads the owner seed, writes owner-key material or owner-signs off `hv`, onto the control
-  plane, `hive-mind`. For those commands only, `hv` does not keep a working shim, because a working shim
-  would keep an owner-signing path in `hv` and undo the split (S2). Instead, through the 2.x line, it
-  prints the exact `hive-mind` command to run — this invocation's arguments included — and **exits 2**,
-  acting on nothing. Exit 0 would let a script believe the old command worked. The pointers are removed at
-  3.0. **No adapter calls an owner-only command**: no MCP or Hermes tool ever did. The adapter-visible
+  plane, `hive-mind`. For those commands only, `hv` kept no working shim, because a working shim
+  would have kept an owner-signing path in `hv` and undone the split (S2). Instead, through the 2.x line, it
+  printed the exact `hive-mind` command to run and **exited 2**, acting on nothing. 3.0 removed the pointers: the
+  moved commands are now argparse's unknown command, exit 2, with no shim and no replacement named. The amendment
+  closes because the commands are gone, not because a shim returned. **No adapter calls an owner-only command**: no MCP or Hermes tool ever did. The adapter-visible
   breaks this major does make are on the data plane, promised for it since 1.x, and listed in the `2.0`
   entry below: local ids refused, `tags` a list, and no `$HERMES_AGENT` source fallback. One visible
   change is not a pointer: a link written

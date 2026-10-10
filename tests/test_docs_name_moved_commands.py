@@ -2,7 +2,7 @@
 
 Since 2b, a command that moved to the control plane prints a pointer and exits 2 when typed on `hv`. A doc that
 still tells a reader to run `hv owner init` sends them to a pointer, not to a command. This test fails when a
-tracked document names a moved command on `hv`. The patterns come from `commandmap.MOVED`, plus the two
+tracked document names a moved command on `hv`. The patterns come from `commandmap.CONTROL_PLANE`, plus the two
 flag-conditional forms `retract --owner` and `owner propose-election --mint`, so a command that moves later is
 covered without editing this file.
 
@@ -33,7 +33,7 @@ SECTION7_FILE = "docs/AGENT_INTEGRATION.md"
 
 def _patterns():
     pats = [re.compile(r"(?<![\w/-])(?:\./)?hv\s+" + r"\s+".join(map(re.escape, key)) + r"(?![\w-])")
-            for key in commandmap.MOVED]
+            for key in commandmap.CONTROL_PLANE]
     pats.append(re.compile(r"(?<![\w/-])(?:\./)?hv\s+retract\b[^`\n]*--owner\b"))
     pats.append(re.compile(r"(?<![\w/-])(?:\./)?hv\s+owner\s+propose-election\b[^`\n]*--mint\b"))
     return pats
