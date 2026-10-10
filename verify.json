@@ -1,5 +1,5 @@
 {
-  "digest": "cd2143c5505b8a97982b1d2b90600778f21599f4b9387bcfc61380c9c502c642",
+  "digest": "1fca1234d771e83bcfb1f873ee42d9dda801ca8ce19afae769f7ac3a368277dc",
   "files": {
     ".github/FUNDING.yml": "ca6c63d7539bb7d2f809b5068781c78de97c028a44c5ae252b11bc1695caf85d",
     ".github/ISSUE_TEMPLATE/bug_report.yml": "22df51b1e51c25f50726392c79811116b88c40370843ff2d4a3e76b643f1cb68",
@@ -22,6 +22,7 @@
     "changelog.d/docs-readme-sweep.md": "5162e94627952ba9fb58ccdffa96b4cbf0985e6c33a53571263e7f23fdb77bb0",
     "changelog.d/fix-group-admit-refusal-exit.md": "37ce10c12a3aa3b8e6a74c8d3642d8f481a401507a6132b68d71a23c18f50cf3",
     "changelog.d/fix-status-signed-peer-probe.md": "ca6ebabfed76d1c275b8d6130ee0ede88c70d3a05406e302cc2850263234689a",
+    "changelog.d/implementer2-admit-no-sync-warning.md": "e2bbb6adea580013a03a80399bc9c4813a852ab28025096ca7d29bbb687f83ae",
     "commandmap.py": "e6545fd239e6f1a7d46a9298dd9b0c98c9ef11b01a002d315f8169db9400a5a5",
     "config/.peers.json.example": "e81eb4533b4e06969946a8fa1c977e0692bc047275101bcdbae1504355866674",
     "config/nudge.env.example": "b278edb191f6588316383f5c095f6332fc3ccaf695c595dccd9b21c4322d5cf3",
@@ -54,7 +55,7 @@
     "hive_modules.py": "e764032eb718df56a9f28463406a25c9a41d0e628c32e0c120ea204f2ec93bd8",
     "hive_sync_daemon.py": "32524c80ba463e933fc4068cac7b0fa5134bf66197bda366e513760ebf33c7bf",
     "hivemind_ctl.py": "3fd05b2c14e61e0a6ff2e22ef6db6f8154a4e2b9473d3c22308b7f411aa2abe4",
-    "hivemind_owner.py": "2c5e41e510204da095be48239452aad65e6e2eeccd7bfae35357ee15bb6d365d",
+    "hivemind_owner.py": "f399940d81b99edd8ca54654b1ecb61377667af5fe2b7c7a5c720deacb746d8a",
     "hv": "1775d4974d5c78e30b0fab8e5b0a4950224a8dc3c3f8930080ff70309d07ec14",
     "integrations/claude-code/hive-memory/SKILL.md": "55c025490cd4afecce87901ade9077bada2a73b3443143f42391c2958ccf91bb",
     "integrations/claude-code/install.sh": "588f0f6894c25893d3a098f4ddd422a480e63c85b5bb48c97f2d242069a93894",
@@ -104,7 +105,7 @@
     "tests/_realhome.py": "cf33f6e9945d14bd355c4e251b7750772a804b1f35e896660c362b7c3a7b6cfc",
     "tests/conftest.py": "4f57d7937c82118093007be3dd5bde7fafdf5ecc994d0b5c7c04950aaf962411",
     "tests/security/poc.py": "4ee6804bfe65e4807c858b7f7bcfc3e7197d096addf4a96a13d16e5aeecc13ba",
-    "tests/test_admit_peering.py": "f9caf05a9f56e04c36845d6c206351b6a8ac2bde209a1fd714a7c3b6eaf1e51b",
+    "tests/test_admit_peering.py": "271787ab0bff9a22bc1b04485d8341ece8fe81e85c5331cabf01e3c81a625d62",
     "tests/test_agent_guidance.py": "f3211fb32efe143ba28fcf92d9c5f653482f211832d9d7b1ed3cc19ac055e1c9",
     "tests/test_announce.py": "8f8458e1b9d4c487c8d90b0fc8fa9636e35d9a5c1b9a25d25309115aaedb191e",
     "tests/test_bounded_timestamps.py": "9b0c0708a5d16c785ef4651eca333e133a26c1dcc0fbd65234da19734de1d1d2",
@@ -218,6 +219,6 @@
     "vocabulary.py": "13c48daa6e38c6be024e2f50f295b9aa9b3e476f250ec3c0d928f4026e9a5ba6",
     "x25519.py": "ec1967595a2306cde860afe4dffab40a3f833d089de6caf5c9c080df8fd45726"
   },
-  "sequence": 517,
+  "sequence": 519,
   "version": "2.4"
 }
