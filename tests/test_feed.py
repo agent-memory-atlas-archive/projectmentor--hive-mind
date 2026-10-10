@@ -204,3 +204,61 @@ def test_affects_is_present_on_owner_acts_only(tmp_path, monkeypatch):
     assert page[f"{d1['id']}:1"]["affects"] == [f"{d0['id']}:1"]
     assert page[f"{d2['id']}:1"]["affects"] == []
     assert "affects" not in page[f"{d0['id']}:2"]
+
+
+def _three(hv, d, tag):
+    return [_fact(hv, d, f"{tag}{i}", T % (30 + i)) for i in range(3)]
+
+
+def test_a_late_lower_seq_is_served_once_and_a_hole_withholds_what_is_above_it(tmp_path, monkeypatch):
+    hv = _loadhv(tmp_path, monkeypatch)
+    owner, (d0, d1, _d2), base = _hive(hv)
+    a1, a2, a3 = _three(hv, d0, "a")
+    b1, b2, b3 = _three(hv, d1, "b")
+    _journal(tmp_path, base + [a1, a3, b1, b2, b3])        # d0 holds 3 before 2; d1 is whole
+    first = _all(hv)
+    refs = {e["ref"] for e in first["entries"]}
+    assert f"{d0['id']}:1" in refs and f"{d0['id']}:3" not in refs        # the hole withholds seq 3
+    assert {f"{d1['id']}:{n}" for n in (1, 2, 3)} <= refs                  # another node's run is not withheld
+    assert first["more"] is False                                           # a reader stopped on a hole does not spin
+    _journal(tmp_path, base + [a1, a2, a3, b1, b2, b3])    # seq 2 arrives
+    second = _all(hv, first["cursor"])
+    assert [e["ref"] for e in second["entries"]] == [f"{d0['id']}:2", f"{d0['id']}:3"]
+    assert _all(hv, second["cursor"])["entries"] == []                      # each served once
+
+
+def test_a_cursor_that_already_passed_a_hole_stays_past_it(tmp_path, monkeypatch):
+    hv = _loadhv(tmp_path, monkeypatch)
+    owner, (d0, _d1, _d2), base = _hive(hv)
+    a1, a2, a3 = _three(hv, d0, "a")
+    _journal(tmp_path, base + [a1, a3])
+    page = _all(hv, f"{d0['id']}:3")
+    assert [e["ref"] for e in page["entries"] if e["node_id"] == d0["id"]] == []
+    _journal(tmp_path, base + [a1, a2, a3])
+    assert [e["ref"] for e in _all(hv, f"{d0['id']}:3")["entries"] if e["node_id"] == d0["id"]] == []
+
+
+def test_a_held_entry_that_fails_verification_occupies_its_seq(tmp_path, monkeypatch):
+    hv = _loadhv(tmp_path, monkeypatch)
+    owner, (d0, _d1, _d2), base = _hive(hv)
+    a1, a2, a3 = _three(hv, d0, "a")
+    a2["payload"] = dict(a2["payload"], content="tampered")
+    _journal(tmp_path, base + [a1, a2, a3])
+    page = _all(hv)
+    refs = {e["ref"] for e in page["entries"]}
+    assert f"{d0['id']}:2" not in refs and {f"{d0['id']}:1", f"{d0['id']}:3"} <= refs
+    assert hv._feed_cursor_parse(page["cursor"])[d0["id"]] == 3
+
+
+def test_more_is_true_only_when_the_limit_stops_on_an_eligible_entry(tmp_path, monkeypatch):
+    hv = _loadhv(tmp_path, monkeypatch)
+    owner, (d0, _d1, _d2), base = _hive(hv)
+    a1, a2, a3 = _three(hv, d0, "a")
+    _journal(tmp_path, base)
+    past_base = _all(hv)["cursor"]
+    _journal(tmp_path, base + [a1, a3])                    # what is left past the limit sits above a hole
+    page = _all(hv, past_base, limit=1)
+    assert [e["ref"] for e in page["entries"]] == [f"{d0['id']}:1"] and page["more"] is False
+    _journal(tmp_path, base + [a1, a2])                    # the next entry is eligible
+    page = _all(hv, past_base, limit=1)
+    assert [e["ref"] for e in page["entries"]] == [f"{d0['id']}:1"] and page["more"] is True

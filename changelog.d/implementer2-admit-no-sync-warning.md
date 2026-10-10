@@ -1,0 +1,1 @@
+- `hive-mind group admit` now prints to stderr when it adds no sync target (no join-request URL, an unusable URL, or a write failure), with the reason and the `.peers.json` entry to add by hand; a duplicate stays quiet and the admit's exit code is unchanged.

@@ -1514,7 +1514,7 @@ def feed_page(after=None, limit=200):
     fields are core-computed so a consumer never reimplements the forget rule: `forgotten` on a `fact`
     entry, and `affects` on a `retract` entry (the held facts sharing the target's content when the act is
     honoured, else empty). `sig` and `pub` pass through; an entry with no `sig` is attributed, not
-    authenticated. Returns {"entries", "cursor", "more"}."""
+    authenticated. A node's chain is served only up to its first missing seq. Returns {"entries", "cursor", "more"}."""
     after = dict(after or {})
     entries = merkle.read_all_entries(JOURNAL_DIR)   # verified lazily, per served entry: a cold process pays for the page, not the journal
     ev = _content_evidence(entries, _governance_state(entries), links=False)   # links never change `forget` or `acts`
@@ -1529,12 +1529,25 @@ def feed_page(after=None, limit=200):
         c = (e.get("payload") or {}).get("content")
         if e.get("type") == "fact" and c in wanted and _verify_entry(e):
             held.setdefault(c, []).append(_ref_str([e["node_id"], e["seq"]]))
+    # Contiguity (#358): sync can land seq N+1 before N, and a cursor that passed N+1 would never serve N. So each
+    # node is served only as the run of held seqs starting at `after[node] + 1`; a missing seq withholds every
+    # higher seq of that node (not of another node). A held entry that fails verification still occupies its seq.
+    held_seqs = {}
+    for e in entries:
+        if e.get("node_id") is not None and isinstance(e.get("seq"), int):
+            held_seqs.setdefault(e["node_id"], set()).add(e["seq"])
+    served_to = {}                              # node -> highest seq reachable without a hole above `after`
+    for node, seqs in held_seqs.items():
+        top = after.get(node, 0)
+        while top + 1 in seqs:
+            top += 1
+        served_to[node] = top
     cursor = dict(after)
     out = []
     more = False
     for e in entries:
         node, seq = e.get("node_id"), e.get("seq")
-        if node is None or not isinstance(seq, int) or seq <= after.get(node, 0):
+        if node is None or not isinstance(seq, int) or seq <= after.get(node, 0) or seq > served_to[node]:
             continue
         if not _verify_entry(e):
             continue
