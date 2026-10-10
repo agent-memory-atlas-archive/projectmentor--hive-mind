@@ -177,4 +177,8 @@ def test_every_row_survives_a_rebuild_with_the_target_absent_present_or_forgotte
     for row in conn.execute("SELECT informed_by FROM decisions WHERE informed_by IS NOT NULL"):
         assert isinstance(hv._local_ids_for_refs(conn, json.loads(row["informed_by"])), list)
     page = hv.feed_page({}, 1000)                                  # the feed reads the same journal
-    assert len(page["entries"]) == len(entries)
+    held = {}
+    for e in entries:
+        held.setdefault(e["node_id"], set()).add(e["seq"])
+    reach = {n: next(k for k in range(len(q) + 2) if k + 1 not in q) for n, q in held.items()}
+    assert len(page["entries"]) == sum(1 for e in entries if e["seq"] <= reach[e["node_id"]])   # a chain is served up to its first hole (#358)
