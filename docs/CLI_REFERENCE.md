@@ -122,26 +122,28 @@ hive-mind config set capsule_putters fertile   # any admitted device may seal an
 hive-mind config set cell_writers owner        # only the owner may publish cells/combs (default)
 ```
 
-*(1.25, #122)* `forget_writers` decides which owner forgets count. `legacy` (the default) also honours an
-unsigned owner forget dated before the genesis owner, which an admitted device could have backdated. `owner`
-honours only a forget signed by the owner as of its position:
+*(1.25, #122; 3.0)* `forget_writers` once decided which owner forgets counted: `legacy` (the default) also honoured an
+unsigned owner forget dated before the genesis owner, which an admitted device could have backdated. **3.0 removed
+that**: only a forget signed by the owner as of its position hides a fact, whatever the key says. The key stays
+recognised (a 2.x peer reads it): `legacy` is refused with a sentence, and `owner` is accepted and records that the
+hive is migrated.
 
 ```
-hive-mind config set forget_writers owner   # close the pre-genesis grandfather (#122)
-hive-mind doctor --fix                      # the same close, re-signing what depends on it first (2.0)
+hive-mind migrate forget             # re-sign what a 2.x hive kept forgotten only by such a forget (3.0)
+hive-mind config set forget_writers owner   # record the close for 2.x peers (`migrate forget` does this)
 ```
 
-`config set` refuses, writing nothing, while closing would bring a fact back: it lists each fact kept forgotten
-only by such a forget, with the two ways to decide it, `hive-mind retract <sid> --owner` (keep it forgotten,
-now signed) or `hive-mind unforget <sid> --reason …` (let it back). Run it again once each is decided.
+`config set` refuses, writing nothing, while a 2.x peer would still keep a fact forgotten only by such a forget: it lists
+each, with the two ways to decide it, `hive-mind retract <sid> --owner` (keep it forgotten, now signed) or
+`hive-mind unforget <sid> --reason …` (let it back). Run it again once each is decided.
 
-*(2.0)* The default stays `legacy`, so nothing a hive forgot comes back when it upgrades. But `hv doctor` fails
-`forget-authz` on an owned hive whose policy is still open, and `hive-mind update` ends with an ACTION
-REQUIRED note until it is closed. `hive-mind doctor --fix` is the one command. With nothing depending on the
-grandfather it closes at once. Otherwise it lists each dependent fact by `h:` id with its text and asks, at a
-terminal, whether to re-sign those forgets so the facts stay hidden (default no). `y` re-signs each one
-owner-signed and then closes; `n`, or no terminal, writes nothing. Read the list first: an admitted device
-could have written one of those forgets, and `hive-mind unforget` lets such a fact back instead.
+*(3.0)* `hv doctor` fails `forget-authz` on an owned hive while the **migration set** (the facts the last 2.x hid by an
+unsigned pre-genesis forget alone) is not empty, and passes on an empty set whatever the key says. `hive-mind update`
+runs `hive-mind migrate forget` first and refuses until the set is empty. `hive-mind doctor --fix` does the same
+re-signing: it lists each dependent fact by `h:` id with its text and asks, at a terminal, whether to re-sign those
+forgets so the facts stay hidden (default no). `y` re-signs each one owner-signed; `n`, or no terminal, writes
+nothing. Read the list first: an admitted device could have written one of those forgets, and
+`hive-mind unforget` lets such a fact back instead.
 
 `same_device_lambda` is why two agents on one machine count for less than two on
 separate machines: the device contributes its strongest agent in full plus this
@@ -317,10 +319,10 @@ devices sealed the same capsule version before syncing, so one value lost a dete
 **capsule-authz** (a `capsule` entry the projection declines because its signer was not authorized
 under `capsule_putters`), **cell-authz** (the same for cells and combs under `cell_writers`),
 **link-authz** (a `supersedes`/`resolves` link was downgraded to evidence — re-issue it owner-signed),
-**forget-authz** (#122: an owner forget dated before the genesis owner needs no signature while
-`forget_writers` is open, so an admitted device could backdate one. In 2.0 the check FAILS on an owned
-hive whose policy is still open, listing by `h:` id each fact kept forgotten only by such a forget, and
-names `hive-mind doctor --fix`, which closes it; once closed the check reports it closed),
+**forget-authz** (#122: an owner forget dated before the genesis owner needed no signature through 2.x, so an
+admitted device could backdate one. 3.0 ignores such a forget. The check FAILS on an owned hive while facts
+the last 2.x hid by one are not yet re-signed, listing each by `h:` id and naming `hive-mind migrate forget`;
+it passes on none, reporting `closed: 0 facts depend on a pre-genesis unsigned forget`),
 **trust-drift** (a device's recent reliability fell well below its baseline; advisory, see `hv peers`)
 and *(1.19 PR2b)* **fleet-contract** (an admitted peer advertises an agent contract below 1.19, or
 is unreachable so it cannot be verified — such a peer lands but does not honour the `link` entries
@@ -997,7 +999,8 @@ hive-mind migrate forget [--check]
 |---|---|
 | `--check` | Writes nothing. Prints the dependent facts, or `closed: 0 facts depend on a pre-genesis unsigned forget`; exit 0 only when there are none. |
 
-A forget that the projection already ignores (`forget_writers=owner`) is not listed and is not re-signed.
+A forget that 2.x already ignored (`forget_writers=owner`) is not listed and is not re-signed. 3.0 PR 4 removed the
+grandfather arm, so after this command no fact is hidden by an unsigned pre-genesis forget on any node.
 While a migration is owed, `hv search`, `hv feed` and the session-start nudge print a one-line notice.
 
 ---

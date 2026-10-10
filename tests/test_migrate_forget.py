@@ -1,9 +1,8 @@
-"""Release 3.0 PR 2 (plan 3.2, 3.4, 3.6): `hive-mind migrate forget` and `--check`, the migration set, the
-node-local notices. `forget-authz` stays the 2.4 fail-on-open-policy (the pass-on-empty rule ships with the arm's
-removal in PR 4).
+"""Release 3.0 PR 2 and 4 (plan 3.2, 3.4, 3.6): `hive-mind migrate forget` and `--check`, the migration set, the
+node-local notices. Since PR 4 `forget-authz` passes on an empty migration set whatever `forget_writers` says.
 
-- The migration set is a differential of the projection (live key vs. the grandfather arm off), checked on the
-  whole forget corpus against the frozen 2.4 oracle.
+- The migration set is what the frozen 2.4 oracle hides and the 3.0 projection shows, checked on the whole forget
+  corpus against the oracle.
 - `--check` never writes; it prints an explicit empty list.
 - Idempotence, partial failure and #130 (nothing re-keyed: the old journal is a prefix of the new one and every
   new entry's ref resolves to a fact it holds).
@@ -40,10 +39,9 @@ def test_the_migration_set_is_the_oracle_differential(tmp_path, monkeypatch, nam
     gov = hv._governance_state(entries)
     m = hv._forget_migration(entries, gov)
     oracle = oracle_mod.bind(hv)
-    live = {c for c, ev in oracle(entries, gov, False).items() if ev["forget"]}
-    arm_off = {c for c, ev in oracle(entries, dict(gov, config=dict(gov["config"], forget_writers="owner")),
-                                     False).items() if ev["forget"]} if scn.owner is not None else live
-    assert {f["content"] for f in m["facts"]} == live - arm_off
+    old = {c for c, ev in oracle(entries, gov, False).items() if ev["forget"]}
+    new = {c for c, ev in hv._content_evidence(entries, gov, False).items() if ev["forget"]}
+    assert {f["content"] for f in m["facts"]} == old - new and new <= old
     if fc.effective(scn, policy) == "owner":
         assert m["facts"] == [] and m["hides"] == []             # nothing to migrate once the key is `owner`
     expected = {c for c, (before, after) in scn.expect.items() if before and not after}
@@ -93,15 +91,15 @@ def test_check_prints_an_explicit_empty_list_on_a_migrated_hive_and_still_writes
     assert _bytes(tmp_path) == before
 
 
-def test_check_passes_on_legacy_with_nothing_dependent_and_the_doctor_check_still_fails(tmp_path):
+def test_check_passes_on_legacy_with_nothing_dependent_and_so_does_the_doctor_check(tmp_path):
     run = _cli(tmp_path)
     _legacy_hive(tmp_path, run)
     before = _bytes(tmp_path)
     r = _ctl(tmp_path, "migrate", "forget", "--check")
     assert r.returncode == 0 and "closed: 0 facts depend" in r.stdout
     assert _bytes(tmp_path) == before
-    fa = _forget_authz(tmp_path)                                  # PR 2 leaves the 2.4 check alone
-    assert fa["status"] == "fail" and "forget_writers=legacy" in fa["detail"]
+    fa = _forget_authz(tmp_path)                                  # PR 4: the key is no longer read, the set is empty
+    assert fa["status"] == "ok" and "closed: 0 facts depend" in fa["detail"]
 
 
 def test_a_key_owner_hive_ignores_a_pre_genesis_plant_and_the_run_appends_nothing(tmp_path):
@@ -155,15 +153,19 @@ def test_yes_re_issues_every_forget_then_sets_the_key_and_is_idempotent(tmp_path
     assert rc2 == 0 and _bytes(tmp_path) == snap
 
 
-def test_the_projection_is_unchanged_by_the_migration(tmp_path):
+def test_the_migration_keeps_the_facts_2_4_hid_hidden(tmp_path):
     run, base, sids = _open_hive(tmp_path)
     import sqlite3
     def conf():
         with sqlite3.connect(Path(tmp_path) / "store.db") as c:
             return dict(c.execute("SELECT content, confidence FROM facts").fetchall())
     before = conf()
+    hidden = ("the backup runs at 02:00", "the vpn uses wireguard")
+    assert all(before[t] != -1.0 for t in hidden)                 # 3.0 shows what an unsigned pre-genesis forget hid
     rc, out = _ctl_at_a_terminal(tmp_path, "y", "migrate", "forget")
-    assert rc == 0 and conf() == before
+    after = conf()
+    assert rc == 0 and all(after[t] == -1.0 for t in hidden)      # and the owner's re-issue hides them again
+    assert {k: v for k, v in after.items() if k not in hidden} == {k: v for k, v in before.items() if k not in hidden}
 
 
 def test_a_device_without_the_owner_key_writes_nothing(tmp_path):

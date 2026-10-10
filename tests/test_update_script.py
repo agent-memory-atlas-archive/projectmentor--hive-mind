@@ -37,6 +37,8 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO / "tests"))
+from test_forget_writers import reopen_as_2x  # noqa: E402
 pytestmark = pytest.mark.skipif(not sys.platform.startswith("linux") or shutil.which("git") is None
                                 or shutil.which("curl") is None, reason="needs Linux, git and curl")
 
@@ -482,13 +484,14 @@ def _backdated_forget(sb, text):
 @pytest.mark.parametrize("state", ["open, a fact depends", "open, nothing depends", "closed", "no owner"])
 def test_d_an_open_forget_grandfather_is_handled_by_step_0_before_anything_else_runs(sandbox, state):
     """3.0 PR 3: step 0 (after the re-exec) migrates or refuses; the daemon is not restarted on a refusal.
-    No terminal here, so a fact that depends on the grandfather is a refusal; with none the owner device just closes."""
+    No terminal here, so a fact that depends on the grandfather is a refusal. With none, 3.0 PR 4 treats an open policy
+    like a closed one: the set is empty, so there is nothing to migrate and the update completes."""
     sb = sandbox()
     sid = None
     if state != "no owner":
         assert _ctl(sb, "owner", "init").returncode == 0                  # 1.28: born closed
     if state.startswith("open"):
-        assert _ctl(sb, "config", "set", "forget_writers", "legacy").returncode == 0   # a pre-1.28 hive
+        reopen_as_2x(sb.hive, sb.env(), sb.hive)   # a pre-1.28 hive
     if state == "open, a fact depends":
         sid = _backdated_forget(sb, "the backup runs at 02:00")
     before = sb.state()
@@ -504,7 +507,7 @@ def test_d_an_open_forget_grandfather_is_handled_by_step_0_before_anything_else_
     else:
         assert r.returncode == 0, out + r.stderr
         assert "ACTION REQUIRED" not in out and "Update complete" in out
-        assert ("Forget migration done" in out) == (state == "open, nothing depends")
+        assert "Forget migration done" not in out and "No fact depends on a pre-genesis unsigned forget" in out
 
 
 # ── #331: a switch to a higher contract major is refused while the forget grandfather is open ─────────
@@ -522,13 +525,14 @@ def test_a_higher_major_is_refused_before_the_switch_only_while_forget_authz_is_
     if state != "no owner":
         assert _ctl(sb, "owner", "init").returncode == 0
     if state == "open":
-        assert _ctl(sb, "config", "set", "forget_writers", "legacy").returncode == 0
+        reopen_as_2x(sb.hive, sb.env(), sb.hive)
+        _backdated_forget(sb, "the backup runs at 02:00")                  # open = the migration set is not empty
     new = _major_upstream(sb)
     before = sb.state()
     r = sb.update()
     if state == "open":
         assert r.returncode == 1, r.stdout + r.stderr
-        assert "ACTION REQUIRED" in r.stdout and "hive-mind doctor --fix" in r.stdout
+        assert "ACTION REQUIRED" in r.stdout and "hive-mind migrate forget" in r.stdout
         assert "REFUSED" in r.stderr and "3.0" in r.stderr and "until the forget grandfather" in r.stderr
         assert "Update complete" not in r.stdout and "Restarting sync daemon" not in r.stdout and not sb.log.exists()
         assert sb.state() == before and _git(sb.hive, "rev-parse", "HEAD") != new
@@ -541,7 +545,7 @@ def test_a_higher_major_is_refused_before_the_switch_only_while_forget_authz_is_
 def test_a_same_major_update_with_forget_authz_open_is_not_refused_before_the_switch_but_step_0_undoes_it(sandbox):
     sb = sandbox()
     assert _ctl(sb, "owner", "init").returncode == 0
-    assert _ctl(sb, "config", "set", "forget_writers", "legacy").returncode == 0
+    reopen_as_2x(sb.hive, sb.env(), sb.hive)
     _backdated_forget(sb, "the backup runs at 02:00")
     new = _major_upstream(sb, "2.9")
     before = sb.state()

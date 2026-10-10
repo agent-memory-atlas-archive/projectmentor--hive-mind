@@ -86,9 +86,9 @@ loader.exec_module(hv)
 print(hv._manifest_sequence(sys.stdin.buffer.read()))' "$HIVE_DIR" 2>/dev/null || echo ""
 }
 
-# 2.0 (4c, decision h:696638b9b7): the update's last word on the pre-genesis forget grandfather. An owned hive
-# whose `forget_writers` is still open gets an ACTION REQUIRED block: the facts that depend on it and the one
-# command that closes it, `hive-mind doctor --fix`. Exit 3 means "print nothing more, fail the update"; 0 means
+# 2.0 (4c, decision h:696638b9b7), 3.0 (plan 3.4): the update's last word on the pre-genesis forgets. An owned hive
+# whose migration set is not empty gets an ACTION REQUIRED block: the facts that depend on it and the one
+# command that settles it, `hive-mind migrate forget`. Exit 3 means "print nothing more, fail the update"; 0 means
 # closed or no owner. Reads no stdin: the y/N belongs to `doctor --fix`, run by the owner.
 _forget_authz_gate() {
   HIVE_HOME="$HIVE_DIR" python3 - "$HIVE_DIR" 2>/dev/null <<'PY'
@@ -108,23 +108,18 @@ if c is None or not c.get("open"):
 here = hv._owner_key_state(gov) in ("held", "present")
 facts = c["facts"]
 print("")
-print("\033[0;33m[!!]\033[0m  \033[1mACTION REQUIRED: the pre-genesis forget grandfather is open (forget-authz)\033[0m")
-print("      2.0 is installed and running, and nothing that was forgotten has come back. But an unsigned")
-print("      owner forget dated before genesis is still honoured, and an admitted device can write one (#122).")
-if facts:
-    print(f"      {len(facts)} fact(s) are kept forgotten only by such a forget:")
-    for f in facts[:10]:
-        text = " ".join(f["content"].split())
-        print(f"        {f['sid']}  {text[:80]}{'…' if len(text) > 80 else ''}")
-    if len(facts) > 10:
-        print(f"        … and {len(facts) - 10} more (`hv doctor` lists them all)")
+print("\033[0;33m[!!]\033[0m  \033[1mACTION REQUIRED: facts depend on a pre-genesis unsigned forget (forget-authz)\033[0m")
+print("      3.0 no longer honours an unsigned owner forget dated before genesis, because an admitted device can")
+print("      write one (#122). These facts are hidden only by such a forget and show again until it is re-signed:")
+for f in facts[:10]:
+    text = " ".join(f["content"].split())
+    print(f"        {f['sid']}  {text[:80]}{'…' if len(text) > 80 else ''}")
+if len(facts) > 10:
+    print(f"        … and {len(facts) - 10} more (`hv doctor` lists them all)")
 print("      Run once, " + ("here (this device keeps an owner key):" if here else "on the owner machine:"))
-print("        hive-mind doctor --fix")
-if facts:
-    print("      It lists these facts and asks y/N. y re-signs those forgets, so the facts stay hidden, and closes")
-    print("      the hive. N writes nothing, and names how to let a fact back instead.")
-else:
-    print("      No fact depends on the grandfather, so it closes without asking.")
+print("        hive-mind migrate forget")
+print("      It lists these facts and asks y/N. y re-signs those forgets, so the facts stay hidden. N writes")
+print("      nothing, and names how to let a fact back instead.")
 print("      Until then `hv doctor` fails forget-authz, and every `hive-mind update` ends here.")
 sys.exit(3)
 PY
@@ -199,15 +194,9 @@ _forget_migration_step0() {
   local _target _now
   # No bytecode: a refused tree must be byte-identical, and the checks import the tree's own modules.
   _mig() { PYTHONDONTWRITEBYTECODE=1 HIVE_HOME="$HIVE_DIR" python3 "$HIVE_DIR/hivemind_ctl.py" migrate forget "$@"; }
-  # Open = the migration set is not empty, or `forget-authz` fails. Until the arm is removed (PR 4) an unset or
-  # `legacy` policy is open even with an empty set, because a new pre-genesis plant would still be honoured, so
-  # both are asked. A check that cannot run counts as open.
-  _open() {
-    local _g=0
-    _mig --check >/dev/null 2>&1 || return 0
-    PYTHONDONTWRITEBYTECODE=1 _forget_authz_gate >/dev/null 2>&1 || _g=$?
-    [ "$_g" != 0 ]
-  }
+  # Open = the migration set is not empty. The arm is gone, so an unset or `legacy` policy with an empty set is
+  # closed. A check that cannot run counts as open.
+  _open() { ! _mig --check >/dev/null 2>&1; }
   info "Checking the pre-genesis forget migration (3.0)..."
   if ! _open; then ok "No fact depends on a pre-genesis unsigned forget"; return 0; fi
   _mig || true

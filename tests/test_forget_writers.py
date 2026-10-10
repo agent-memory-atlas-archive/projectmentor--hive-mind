@@ -1,12 +1,12 @@
-"""#122 step 2 (contract 1.25): the governed `forget_writers` policy closes the pre-genesis grandfather.
+"""#122 step 2 (contract 1.25), after 3.0 removed the grandfather arm.
 
-`legacy` (the default) keeps today's rule: an owner-source forget positioned before the genesis owner is
-honoured without a signature. `owner` honours only a forget signed by the owner as of its own position, so a
-backdated unsigned forget from an admitted device erases nothing. The policy is a set-config governance act,
-applied only when the owner current at that position signed it; the latest such act wins; an unknown value is
-ignored (fail closed to the default). It stores no journal refs, so a future re-keying cannot orphan it (#130).
-A legitimate legacy forget is kept by re-issuing it signed (`hv retract --owner`). `hv config set
-forget_writers owner` refuses while closing would bring a fact back, and names each one to decide.
+Through 2.4 the governed `forget_writers` policy switched the pre-genesis grandfather: `legacy` (the default) honoured an
+owner-source forget positioned before the genesis owner without a signature, `owner` closed it. 3.0 deletes the arm, so
+the projection ignores such a forget whatever the key says (frozen-oracle differential: test_forget_oracle.py). The
+key stays a recognised governed key whose value the projection no longer reads: it is still applied only when the
+owner current at that position signed it, the latest such act wins, and an unknown value is ignored, because a 2.x
+peer reads it. `hv config set forget_writers owner` stays accepted (it records the close for 2.x peers) and refuses while
+a 2.x peer would still keep a fact forgotten only by an unsigned pre-genesis forget; `legacy` is refused with a sentence.
 """
 
 import base64
@@ -30,14 +30,14 @@ def _policy(hv, owner, value, ts, seq):
     return _gov(hv, {"action": "set-config", "key": "forget_writers", "value": value}, owner[0], owner[1], ts, seq)
 
 
-def test_legacy_by_default_owner_closes_the_grandfather(tmp_path, monkeypatch):
+def test_a_pre_genesis_unsigned_forget_is_ignored_whatever_the_key_says(tmp_path, monkeypatch):
     hv = _loadhv(tmp_path, monkeypatch)
     a, (d0, d1, _), base = _hive(hv)
     f = _fact(hv, d0, "the backup runs at 02:00", "2026-01-02T00:00:00Z")
     forged = _act(hv, d1, f, PRE)                                          # the #122 attack: backdated, unsigned
-    assert _row(_project(hv, tmp_path, base + [f, forged]), "the backup runs at 02:00")[0] == FORGET_FLOOR
-    closed = base + [f, forged, _policy(hv, a, "owner", "2026-01-05T00:00:00Z", 20)]
-    assert _row(_project(hv, tmp_path, closed), "the backup runs at 02:00")[0] != FORGET_FLOOR
+    for tail in ([], [_policy(hv, a, "legacy", "2026-01-05T00:00:00Z", 20)],
+                 [_policy(hv, a, "owner", "2026-01-05T00:00:00Z", 21)]):
+        assert _row(_project(hv, tmp_path, base + [f, forged, *tail]), "the backup runs at 02:00")[0] != FORGET_FLOOR
 
 
 def test_a_forget_backdated_after_the_close_erases_nothing(tmp_path, monkeypatch):
@@ -64,36 +64,36 @@ def test_signed_forgets_and_unforgets_are_unaffected(tmp_path, monkeypatch):
     assert _row(conn, "vendor Y is approved")[0] != FORGET_FLOOR
 
 
+def _key(hv, entries):
+    return hv._governance_state(entries)["config"].get("forget_writers", "legacy")
+
+
 def test_only_the_owner_at_that_position_sets_the_policy(tmp_path, monkeypatch):
     hv = _loadhv(tmp_path, monkeypatch)
     a, (d0, d1, _), base = _hive(hv)
     b = _owner_key(hv)
     stranger = _owner_key(hv)
-    f = _fact(hv, d0, "the cache is safe", "2026-01-02T00:00:00Z")
-    forged = _act(hv, d1, f, PRE)
     for i, bad in enumerate((_policy(hv, stranger, "owner", "2026-01-03T00:00:00Z", 20),     # not an owner
                              _policy(hv, b, "owner", "2026-01-03T00:00:00Z", 20))):           # B, before B's term
-        entries = base + [f, forged, bad, _transfer(hv, a, b[1], "2026-01-04T00:00:00Z", 21)]
-        assert _row(_project(hv, tmp_path, entries), "the cache is safe")[0] == FORGET_FLOOR, i
+        entries = base + [bad, _transfer(hv, a, b[1], "2026-01-04T00:00:00Z", 21)]
+        assert _key(hv, entries) == "legacy", i
     # after the transfer, retired owner A's act is ignored and B's counts
     xfer = _transfer(hv, a, b[1], "2026-01-04T00:00:00Z", 21)
     late_a = _policy(hv, a, "owner", "2026-01-05T00:00:00Z", 22)
-    assert _row(_project(hv, tmp_path, base + [f, forged, xfer, late_a]), "the cache is safe")[0] == FORGET_FLOOR
+    assert _key(hv, base + [xfer, late_a]) == "legacy"
     ok_b = _policy(hv, b, "owner", "2026-01-05T00:00:00Z", 22)
-    assert _row(_project(hv, tmp_path, base + [f, forged, xfer, ok_b]), "the cache is safe")[0] != FORGET_FLOOR
+    assert _key(hv, base + [xfer, ok_b]) == "owner"
 
 
 def test_latest_act_wins_and_an_unknown_value_is_ignored(tmp_path, monkeypatch):
     hv = _loadhv(tmp_path, monkeypatch)
     a, (d0, d1, _), base = _hive(hv)
-    f = _fact(hv, d0, "dns is on 10.0.0.2", "2026-01-02T00:00:00Z")
-    forged = _act(hv, d1, f, PRE)
     close = _policy(hv, a, "owner", "2026-01-03T00:00:00Z", 20)
     reopen = _policy(hv, a, "legacy", "2026-01-04T00:00:00Z", 21)
-    assert _row(_project(hv, tmp_path, base + [f, forged, close, reopen]), "dns is on 10.0.0.2")[0] == FORGET_FLOOR
+    assert _key(hv, base + [close, reopen]) == "legacy"
     bogus = _policy(hv, a, "nobody", "2026-01-05T00:00:00Z", 22)          # fails closed: the owner setting stands
-    assert _row(_project(hv, tmp_path, base + [f, forged, close, bogus]), "dns is on 10.0.0.2")[0] != FORGET_FLOOR
-    assert hv._governance_state(base + [f, forged, bogus])["config"].get("forget_writers", "legacy") == "legacy"
+    assert _key(hv, base + [close, bogus]) == "owner"
+    assert _key(hv, base + [bogus]) == "legacy"
 
 
 def test_two_nodes_project_identically(tmp_path, monkeypatch):
@@ -174,13 +174,32 @@ def _policy_acts(tmp_path):
             and e["payload"].get("action") == "set-config" and e["payload"].get("key") == "forget_writers"]
 
 
+def _forget_authz_status(tmp_path, run):
+    doc = json.loads(run("doctor", "--format", "json", check=False).stdout)
+    return {c["name"]: c for c in doc["checks"]}["forget-authz"]["status"]
+
+
 def _legacy_hive(tmp_path, run):
     """Since 1.28 (#135) `hv owner init` leaves a hive CLOSED, so a test of the #122 guard must first put
     it back in the state every pre-1.28 hive is in: grandfather open, `forget_writers=legacy`. Returns the
     number of policy acts that baseline costs, so a test can assert nothing NEW was written."""
     run("owner", "init")
-    run("config", "set", "forget_writers", "legacy")
+    reopen_as_2x(tmp_path)
     return len(_policy_acts(tmp_path))                                     # init's close, then this reopen
+
+
+def reopen_as_2x(home, env=None, root=PROJECT):
+    """3.0 refuses `config set forget_writers legacy`, so a 2.x hive's open policy is planted the way 2.x wrote it:
+    an owner-signed `set-config forget_writers legacy` governance act, through the same append path. `root` is
+    the checkout whose code signs it (the update tests run a sandbox clone)."""
+    code = ("import sys, importlib.machinery as m, importlib.util as u; sys.path.insert(0, %r); "
+            "l = m.SourceFileLoader('hv_plant', %r); hv = u.module_from_spec(u.spec_from_loader('hv_plant', l)); "
+            "l.exec_module(hv); import hivemind_ctl; hivemind_ctl.install(hv); "
+            "assert hv._append_governance({'action': 'set-config', 'key': 'forget_writers', 'value': 'legacy'})"
+            % (str(root), str(Path(root) / "hv")))
+    env = env or dict(os.environ, HIVE_HOME=str(home), HIVE_IDENTITY_STASH=str(Path(home) / "stash"))
+    r = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, cwd=str(home))
+    assert r.returncode == 0, r.stderr
 
 
 def test_config_set_refuses_while_a_fact_would_come_back_and_names_it(tmp_path):
@@ -192,8 +211,8 @@ def test_config_set_refuses_while_a_fact_would_come_back_and_names_it(tmp_path):
     assert len(_policy_acts(tmp_path)) == base                             # nothing written
     doc = json.loads(run("doctor", "--format", "json", check=False).stdout)
     fa = {c["name"]: c for c in doc["checks"]}["forget-authz"]
-    # 2.0 (4c): `fail`, not `warn`, and the one command that closes it is `hive-mind doctor --fix`.
-    assert fa["status"] == "fail" and sid in fa["detail"] and "hive-mind doctor --fix" in fa["detail"]
+    # 3.0: `fail` while the migration set is not empty, and the one command that settles it is `hive-mind migrate forget`.
+    assert fa["status"] == "fail" and sid in fa["detail"] and "hive-mind migrate forget" in fa["detail"]
 
 
 @pytest.mark.parametrize("decision", ["keep", "release"])
@@ -212,12 +231,14 @@ def test_after_the_owner_decides_each_fact_the_close_is_written(tmp_path, decisi
     import sqlite3
     conf = sqlite3.connect(tmp_path / "store.db").execute("SELECT confidence FROM facts").fetchone()[0]
     assert (conf == FORGET_FLOOR) == (decision == "keep")
+    assert _forget_authz_status(tmp_path, run) == "ok"          # decided, so nothing is owed any more
 
 
 def test_config_set_refuses_an_unknown_value_and_needs_no_decision_when_nothing_is_hidden(tmp_path):
     run = _cli(tmp_path)
     base = _legacy_hive(tmp_path, run)
     run("remember", "a fact nobody forgot")
-    assert "must be 'legacy'" in run("config", "set", "forget_writers", "sometimes").stdout
+    assert "must be 'owner'" in run("config", "set", "forget_writers", "sometimes").stdout
+    assert "no longer honoured" in run("config", "set", "forget_writers", "legacy").stdout      # 3.0: refused with a sentence
     assert len(_policy_acts(tmp_path)) == base
     assert "set forget_writers = owner" in run("config", "set", "forget_writers", "owner").stdout

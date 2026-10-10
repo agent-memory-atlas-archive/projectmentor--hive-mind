@@ -110,21 +110,33 @@ at once). Concretely:
   agent that omits `--source` writes as `manual` (#119). Grounding: a `supports`/`contradicts` link, or (since 1.21) a fact assertion, whose
   `channel` is `introspect` weighs `introspect_support_weight` (default 0), so no agent can talk a
   claim up or down by reasoning alone.
-- **Owner forgets are reversible, and only by the owner (contract 1.24, #46).** `hive-mind retract --owner` floors a fact; `hive-mind unforget` reverses it. Both are owner-signed `retract` entries (an unforget carries `unretracts_ref`), and the owner acts on one fact's text form a timeline sorted on `(timestamp, node_id, seq)` where the latest honoured act wins. An act is honoured only when signed by the owner AS OF its own journal position (`_owner_at`, the capsule/cell/link rule), so a previous owner's forget survives a transfer, succession or election (before 1.24 it resurrected), and a successor's signature from before their term does not count. An unsigned or forged unforget is ignored, and an unforget is never grandfathered. Owner acts are governance, not evidence: they do not move a fact's last-evidence time, so an unforgotten fact's confidence re-derives from its surviving evidence. A pre-1.24 node skips an unforget (it has no `retracts_ref`) and keeps the fact forgotten until it upgrades: projection skew, never divergence. **Residual (#122):** a forget positioned before the genesis owner is still grandfathered without a signature, and ingest does not check timestamps, so an admitted device can erase a fact with a backdated unsigned owner forget. After 1.24 the owner can undo it with `hive-mind unforget`, and `hv doctor` (`forget-authz`) names every fact a grandfathered forget keeps
-  forgotten, and counts the ones whose target is not in the journal. **Closed by policy (contract 1.25,
-  #122):** `hive-mind config set forget_writers owner` makes only forgets signed by the owner as of their position
-  count, so a backdated unsigned forget erases nothing, including one appended after the close. The policy
-  is a set-config act honoured only from the owner at its position, and it stores no journal refs, so no
-  future re-keying can orphan it (#130). A legitimate legacy forget is kept by re-issuing it signed. *(2.0, 4c)* The default stays `legacy`, since a
-default flip would re-show every fact a grandfathered forget hides. Instead `hv doctor` fails `forget-authz` on
-any owned hive still open, and `hive-mind doctor --fix` closes it: it lists each dependent fact with its text,
-and on the owner's `y` re-signs those forgets and then sets the policy through the same guard. The list is
-shown because a planted forget would be re-signed too. Once set,
-  the 1.19 property "a compromised admitted device can never erase, only weigh" holds for fact forgets
-  too. Residual: a hive still on `legacy` (the default), and nodes before 1.25, which ignore the key and
-  keep honouring the grandfather until they upgrade (projection skew).
+- **Owner forgets are reversible, and only by the owner (contract 1.24, #46).** `hive-mind retract --owner` floors a fact; `hive-mind unforget` reverses it. Both are owner-signed `retract` entries (an unforget carries `unretracts_ref`), and the owner acts on one fact's text form a timeline sorted on `(timestamp, node_id, seq)` where the latest honoured act wins. An act is honoured only when signed by the owner AS OF its own journal position (`_owner_at`, the capsule/cell/link rule), so a previous owner's forget survives a transfer, succession or election (before 1.24 it resurrected), and a successor's signature from before their term does not count. An unsigned or forged unforget is ignored, and an unforget is never grandfathered. Owner acts are governance, not evidence: they do not move a fact's last-evidence time, so an unforgotten fact's confidence re-derives from its surviving evidence. A pre-1.24 node skips an unforget (it has no `retracts_ref`) and keeps the fact forgotten until it upgrades: projection skew, never divergence. **Closed in 3.0 (#122).** 3.0 deleted the pre-genesis grandfather. A forget positioned before the genesis owner is
+  honoured only if the owner signed it as of its position, which a pre-genesis act never is, so a backdated unsigned
+  forget from an admitted device erases nothing, whatever `forget_writers` says. The key stays a recognised governed
+  key whose value the projection no longer reads (a 2.x `set-config` entry is not "unknown"): `legacy` is refused with
+  a sentence, `owner` is accepted and records the close for 2.x peers. The pre-owner path is untouched: before any owner
+  exists the `owner:owner/owner` source-tag forget is honoured and is never grandfathered. This is a tightening, so it
+  adds no attack surface, and the admitted-device backdating hole of #122 is removed for good.
+  What 3.0 still has to do is keep the facts the last 2.x hid. The **migration set** is the facts a 2.x projection
+  hides by an unsigned pre-genesis forget alone and 3.0 would show again (on a hive whose key is `owner` it is empty by
+  construction: 2.x already ignored those forgets). `hv doctor` (`forget-authz`) fails while the set is not empty, naming
+  each fact by `h:` id, and passes on an empty set whatever the key says, stating it as a list (`closed: 0 facts depend
+  on a pre-genesis unsigned forget`, with `dangling: N` when forgets target nothing). `hive-mind migrate forget` (and
+  `--check`, which never writes) lists the set with each fact's text and, on the owner's `y`, re-signs those forgets and
+  records `forget_writers=owner` so a 2.x peer closes its own grandfather too. The list is shown because a planted forget
+  would be re-signed too; `hive-mind unforget <h:id>` lets a fact back instead and settles it the same way. Nothing is
+  re-keyed (#130): the routine only appends `retract` entries naming the fact's current ref.
+  Residuals, all accepted for 3.x because each needs an admitted device (David, 2026-10-09), each with its rule where one
+  helps: **(a) a dangling late arrival**: a pre-genesis forget whose target is not in the journal is not re-issued (that
+  would be a new owner claim), so a fact that reaches a 3.0 node after it shows; `--check` prints the dangling list, and
+  the rule is to sync the fleet before running `migrate forget`. **(b) a pre-genesis forget planted on a closed hive**: a
+  forget an admitted device wrote before genesis on a hive that already closed is ignored, not re-signed, and is not
+  flagged; the rule is to review pre-genesis owner-source forgets before running `owner init`. **(c)** the update-gate
+  residuals below (the manual-pull window, the same-user reflog collision, and no rollback when the reflog is disabled).
+  **(d)** nodes still on 2.x keep honouring the grandfather until they upgrade (projection skew); `hv doctor`
+  (`fleet-contract`) lists them.
 - **The update gate (3.0, step 0 of `hive-mind update`).** The new `_update.sh` runs `migrate forget` after the
-  re-exec, before any unit, restart, rebuild or wiring. An open grandfather is migrated on the owner's `y`, and
+  re-exec, before any unit, restart, rebuild or wiring. A non-empty migration set is migrated on the owner's `y`, and
   otherwise the update exits 1: if this update's own switch is identified (an exported marker, or an exact
   `merge <sha>: Fast-forward` / `reset: moving to <sha>` reflog row inside a few seconds of the start) the tree
   returns to the pre-switch HEAD with `reset --keep`, so local edits stay; else HEAD is left where it is. There is no
@@ -133,7 +145,10 @@ shown because a planted forget would be re-signed too. Once set,
   (`hv doctor` `forget-authz`, the session-start nudge, the read-verb notice) rather than prevention; a same-user git
   command that writes an exact script subject in those seconds is indistinguishable from the updater's switch (a
   local-operator collision, not a journal act), and with the reflog disabled no switch is identified and nothing is
-  rolled back. Rule: after a refused update, check `git log` and `git status`.
+  rolled back. Rule: after a refused update, check `git log` and `git status`. The re-exec'd process runs step 0
+  before its own fetch too (the parent already switched the tree, and a failed fetch or a refused step below would
+  otherwise leave that switch in place unchecked), and runs it again after any switch of its own. The owner machine
+  updates first; every other machine updates after the owner's re-issues have synced.
 - **Entity rewrite by name (SECREV B3).** An `entity` write by a device that is neither the name's creator nor
   owner-signed is weigh-only: the projection skips it, as a link from such a device is held to evidence. The
   creator is the name's first applied `entity` entry in replay order `(node_id, seq)`, the rule #208 uses for
