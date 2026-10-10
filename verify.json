@@ -1,5 +1,5 @@
 {
-  "digest": "bca42e9da2546de02380097ef2ff79b11b08e91f89c303ca1e2ee660cbce0213",
+  "digest": "cd2143c5505b8a97982b1d2b90600778f21599f4b9387bcfc61380c9c502c642",
   "files": {
     ".github/FUNDING.yml": "ca6c63d7539bb7d2f809b5068781c78de97c028a44c5ae252b11bc1695caf85d",
     ".github/ISSUE_TEMPLATE/bug_report.yml": "22df51b1e51c25f50726392c79811116b88c40370843ff2d4a3e76b643f1cb68",
@@ -20,6 +20,7 @@
     "chacha20poly1305.py": "6c3bb50dc126dab128184280b4d11cb1494800651e97aea941a821f31ff012fd",
     "changelog.d/docs-agents-hive-devices-terms.md": "4730963951387990830ce5ac8997df2446cb3bc0adf526a788eb276b64fd411e",
     "changelog.d/docs-readme-sweep.md": "5162e94627952ba9fb58ccdffa96b4cbf0985e6c33a53571263e7f23fdb77bb0",
+    "changelog.d/fix-group-admit-refusal-exit.md": "37ce10c12a3aa3b8e6a74c8d3642d8f481a401507a6132b68d71a23c18f50cf3",
     "changelog.d/fix-status-signed-peer-probe.md": "ca6ebabfed76d1c275b8d6130ee0ede88c70d3a05406e302cc2850263234689a",
     "commandmap.py": "e6545fd239e6f1a7d46a9298dd9b0c98c9ef11b01a002d315f8169db9400a5a5",
     "config/.peers.json.example": "e81eb4533b4e06969946a8fa1c977e0692bc047275101bcdbae1504355866674",
@@ -50,10 +51,10 @@
     "hive_module_api.py": "44ac1f940ebb9a3d731e3f589b1e8b878c785df144612a1a4f1fe789b1db641c",
     "hive_module_client.py": "a734b85aff7cb4bd86f32a3b3ef697e5048e440e7a22d572668b9cebd86718e1",
     "hive_module_doctor.py": "d42fac815facb6124ebb022cd1e11274691dc4713c325a590297f0a6c12dfb48",
-    "hive_modules.py": "2d0c592829eb7c5b83c9a810c3a8a993bfdec577816fe97c0ddcaaa6ceb45cfb",
+    "hive_modules.py": "e764032eb718df56a9f28463406a25c9a41d0e628c32e0c120ea204f2ec93bd8",
     "hive_sync_daemon.py": "32524c80ba463e933fc4068cac7b0fa5134bf66197bda366e513760ebf33c7bf",
     "hivemind_ctl.py": "3fd05b2c14e61e0a6ff2e22ef6db6f8154a4e2b9473d3c22308b7f411aa2abe4",
-    "hivemind_owner.py": "5c99afdc4c1dc22313b1286c3473d11ca567ee792389842bdd2f9e12cb377ccf",
+    "hivemind_owner.py": "2c5e41e510204da095be48239452aad65e6e2eeccd7bfae35357ee15bb6d365d",
     "hv": "1775d4974d5c78e30b0fab8e5b0a4950224a8dc3c3f8930080ff70309d07ec14",
     "integrations/claude-code/hive-memory/SKILL.md": "55c025490cd4afecce87901ade9077bada2a73b3443143f42391c2958ccf91bb",
     "integrations/claude-code/install.sh": "588f0f6894c25893d3a098f4ddd422a480e63c85b5bb48c97f2d242069a93894",
@@ -134,7 +135,7 @@
     "tests/test_genesis_pin.py": "16952905dad950ded4951b64771f23d822395dd2c80476957131adc60d651ae1",
     "tests/test_gitignore.py": "292daa35a7c070558f0965852186703c169726ac570de9866e28e3ddac1c695e",
     "tests/test_governance.py": "2dcf730f597de0e9975f5a7204bb35d635257e2c5c25d864c82420d2ea4cf0d2",
-    "tests/test_group.py": "497c7aa8e4b74a8a9ed29ee8f5a02bf27e3e40a24bedd0a7860a1bbda136a054",
+    "tests/test_group.py": "9f754ab634d51114d43d46a201fb5bc8f72996982fe3bdf60669f0aaf05cdcda",
     "tests/test_hardening_batch2.py": "49855e078fd4de4419fb3c0636d653f9e3824d54c50b7ea7754392c761b7e0a3",
     "tests/test_hello_sig.py": "0bed5464b61e1d7e57da788d5e97c56ac059a3d77a030ac3150283ef15ac7623",
     "tests/test_hermes_plugin.py": "36b4bdae5c04fe889fd1f2bd4434fb7eb4274c4f64c05f89d4b54124f82b44d8",
@@ -159,7 +160,7 @@
     "tests/test_merkle_dedup.py": "be232d5c8466f1f470c98099c620093e0b3031aaa5bc4c9271caf47dcb53cb28",
     "tests/test_module_api.py": "677a209fa24b7c9846154163e6f4b401e50cf70b38cc2e8129932bbc5fd956e0",
     "tests/test_module_doctor.py": "6bdb072ddead7af502cffd00f882dd940796bd9283108bb079098bbe54166603",
-    "tests/test_module_identity.py": "46c8a242a6baf1c0133b6ae5bbc7c74d69fd9234e22bdee0a87922791bcb0f69",
+    "tests/test_module_identity.py": "c9401d312a7120367f0234d5732588d251e04b1678d1377cd3f09ad9a5a76052",
     "tests/test_module_lifecycle.py": "55ef64b51e4c69a0867c33adaa6d4c8dd281dda46c19f3ac1ed987d2941d1d22",
     "tests/test_module_names.py": "ec5b9e88701b5f5548cbc92d42b78340d9f10fc37777321f66004f9b4d140fe5",
     "tests/test_module_nonowner.py": "497752ba54c58da6c17bf27aa32f77aad09796a1c7b8c85bf49c76df2d500555",
@@ -217,6 +218,6 @@
     "vocabulary.py": "13c48daa6e38c6be024e2f50f295b9aa9b3e476f250ec3c0d928f4026e9a5ba6",
     "x25519.py": "ec1967595a2306cde860afe4dffab40a3f833d089de6caf5c9c080df8fd45726"
   },
-  "sequence": 515,
+  "sequence": 517,
   "version": "2.4"
 }
