@@ -68,9 +68,16 @@ esac
 # Peers
 PEERS_FILE="$HIVE_DIR/.peers.json"
 if [ -f "$PEERS_FILE" ]; then
-  python3 - "$PEERS_FILE" << 'PYEOF'
+  python3 - "$PEERS_FILE" "$HIVE_DIR" << 'PYEOF'
 import json, sys, urllib.request, urllib.error
 data = json.load(open(sys.argv[1]))
+# A peer in read-auth enforce refuses an unsigned /sync/hello (401), so sign the probe the way sync
+# does. Without a usable signer (no key yet, module missing) the probe goes unsigned, as before.
+sys.path.insert(0, sys.argv[2])
+try:
+    import sync_common
+except Exception:
+    sync_common = None
 peers = data.get("peers", [])
 if not peers:
     print("  No peers configured")
@@ -84,10 +91,19 @@ else:
             or p.get("url", "").split("://", 1)[-1] or "?"
         url = p.get("url", "") + "/sync/hello"
         try:
-            r = urllib.request.urlopen(url, timeout=5)
+            try:
+                headers = sync_common.sign_sync_request("GET", "/sync/hello", "", b"") if sync_common else {}
+            except Exception:
+                headers = {}
+            r = urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=5)
             d = json.loads(r.read())
             entries = d.get("journal_summary", {}).get("total", d.get("journal_entries", "?"))
             print(f"  \033[0;32m[ok]\033[0m  peer {name}: {entries} entries")
+        except urllib.error.HTTPError as e:
+            if e.code == 401:      # it answered: read-auth refused this node's probe, not a network fault
+                print(f"  \033[1;33m[!!]\033[0m  peer {name}: reachable, read-auth required (hv sync now to check sync)")
+            else:
+                print(f"  \033[1;33m[!!]\033[0m  peer {name}: unreachable ({e})")
         except Exception as e:
             print(f"  \033[1;33m[!!]\033[0m  peer {name}: unreachable ({e})")
 PYEOF
