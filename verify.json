@@ -1,5 +1,5 @@
 {
-  "digest": "1e9f08ea2c9b5db97c2e4e4c791936fd4fdd03e70170b4253da2984e9a77cb4c",
+  "digest": "e83183d007bb720bda5c2e783c7008d9715f1226be0ac4a44296d9b9ecd74e4a",
   "files": {
     ".github/FUNDING.yml": "ca6c63d7539bb7d2f809b5068781c78de97c028a44c5ae252b11bc1695caf85d",
     ".github/ISSUE_TEMPLATE/bug_report.yml": "22df51b1e51c25f50726392c79811116b88c40370843ff2d4a3e76b643f1cb68",
@@ -22,6 +22,7 @@
     "changelog.d/docs-readme-sweep.md": "5162e94627952ba9fb58ccdffa96b4cbf0985e6c33a53571263e7f23fdb77bb0",
     "changelog.d/fix-group-admit-refusal-exit.md": "37ce10c12a3aa3b8e6a74c8d3642d8f481a401507a6132b68d71a23c18f50cf3",
     "changelog.d/fix-status-signed-peer-probe.md": "ca6ebabfed76d1c275b8d6130ee0ede88c70d3a05406e302cc2850263234689a",
+    "changelog.d/impl2-module-unit-after-sync.md": "e328ce81b516cb5a8af580717be92e03b1b339dc2adaff5b4e9244313d5c5887",
     "changelog.d/implementer2-358-feed-contiguity.md": "e4b80033f12d300a56abbcd47cdf629791eec07ef2ecaa79193050256fe3516e",
     "changelog.d/implementer2-admit-no-sync-warning.md": "e2bbb6adea580013a03a80399bc9c4813a852ab28025096ca7d29bbb687f83ae",
     "commandmap.py": "e6545fd239e6f1a7d46a9298dd9b0c98c9ef11b01a002d315f8169db9400a5a5",
@@ -53,7 +54,7 @@
     "hive_module_api.py": "44ac1f940ebb9a3d731e3f589b1e8b878c785df144612a1a4f1fe789b1db641c",
     "hive_module_client.py": "a734b85aff7cb4bd86f32a3b3ef697e5048e440e7a22d572668b9cebd86718e1",
     "hive_module_doctor.py": "d42fac815facb6124ebb022cd1e11274691dc4713c325a590297f0a6c12dfb48",
-    "hive_modules.py": "e764032eb718df56a9f28463406a25c9a41d0e628c32e0c120ea204f2ec93bd8",
+    "hive_modules.py": "3c6bce474ee8fe89818706e7c748e03568522280d7aa91c529384df9f581c7a1",
     "hive_sync_daemon.py": "32524c80ba463e933fc4068cac7b0fa5134bf66197bda366e513760ebf33c7bf",
     "hivemind_ctl.py": "3fd05b2c14e61e0a6ff2e22ef6db6f8154a4e2b9473d3c22308b7f411aa2abe4",
     "hivemind_owner.py": "f399940d81b99edd8ca54654b1ecb61377667af5fe2b7c7a5c720deacb746d8a",
@@ -163,7 +164,7 @@
     "tests/test_module_api.py": "677a209fa24b7c9846154163e6f4b401e50cf70b38cc2e8129932bbc5fd956e0",
     "tests/test_module_doctor.py": "6bdb072ddead7af502cffd00f882dd940796bd9283108bb079098bbe54166603",
     "tests/test_module_identity.py": "c9401d312a7120367f0234d5732588d251e04b1678d1377cd3f09ad9a5a76052",
-    "tests/test_module_lifecycle.py": "55ef64b51e4c69a0867c33adaa6d4c8dd281dda46c19f3ac1ed987d2941d1d22",
+    "tests/test_module_lifecycle.py": "cd15114ff511eed2f42650d09d6fd8b9907cd791a0dc32da66a2b33fba3f86f1",
     "tests/test_module_names.py": "ec5b9e88701b5f5548cbc92d42b78340d9f10fc37777321f66004f9b4d140fe5",
     "tests/test_module_nonowner.py": "497752ba54c58da6c17bf27aa32f77aad09796a1c7b8c85bf49c76df2d500555",
     "tests/test_module_policy_projection.py": "197252c3763b4f8f80991dbf3e618751936a708566e23317351ada585cf5c93f",
@@ -220,6 +221,6 @@
     "vocabulary.py": "13c48daa6e38c6be024e2f50f295b9aa9b3e476f250ec3c0d928f4026e9a5ba6",
     "x25519.py": "ec1967595a2306cde860afe4dffab40a3f833d089de6caf5c9c080df8fd45726"
   },
-  "sequence": 521,
+  "sequence": 523,
   "version": "2.4"
 }
