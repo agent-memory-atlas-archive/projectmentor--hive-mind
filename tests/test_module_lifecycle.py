@@ -723,3 +723,11 @@ def test_a_restart_that_times_out_is_reported_as_a_timeout_not_a_refusal(hive, t
     r = _run(hive, "module", "update", "demo", check=False)
     out = r.stdout + r.stderr
     assert "would not start" not in out and "had not finished restarting it in time" in out
+
+
+@LINUX_ONLY
+def test_a_module_service_is_ordered_after_hive_sync_without_requiring_it():
+    for svc in ({"command": ["run.sh"]}, {"command": ["run.sh"], "interval": 60}):
+        text = hive_modules.render_units("demo", {"service": svc}, Path("/m"), Path("/k"))["hive-module-demo.service"]
+        assert "After=network.target hive-sync.service\n" in text
+        assert "Wants=" not in text and "Requires=" not in text

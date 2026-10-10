@@ -547,7 +547,7 @@ def render_units(name, manifest, module_dir, key_dir):
         cmd = [str(module_dir / cmd[0]), *cmd[1:]] if own else ["/usr/bin/env", *cmd]
     interval, restart = svc.get("interval"), svc.get("restart", "on-failure")
     service, timer = unit_names(name)
-    lines = ["[Unit]", f"Description=Hive Mind module {name}", "After=network.target", ""]
+    lines = ["[Unit]", f"Description=Hive Mind module {name}", "After=network.target hive-sync.service", ""]
     lines += ["[Service]", f"Type={'oneshot' if interval else 'simple'}", f"WorkingDirectory={str(module_dir).replace('%', '%%')}",
               "ExecStart=" + " ".join(_quote(a) for a in cmd),
               _env("HIVE_MODULE_NAME", name), _env("HIVE_MODULE_DIR", module_dir),
