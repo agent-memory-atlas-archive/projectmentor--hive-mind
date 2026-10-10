@@ -464,70 +464,7 @@ def get_conn():
     return conn
 
 
-# The store's schema version (`meta.schema_version`). 3 (3.0): `entities` is keyed by the creating entry's journal
-# ref and `name` is a non-unique label. `CREATE TABLE IF NOT EXISTS` cannot alter a table, so a store without
-# version 3 has the entity-bearing tables dropped and is rebuilt from the journal, which loses nothing: the store
-# is a projection.
-STORE_SCHEMA_VERSION = "3"
-
-
-def _migrate_store_schema(conn):
-    """One-time, idempotent: a store not at `STORE_SCHEMA_VERSION` drops `entity_facts`, `entities`, `links` and
-    `journal_index` and clears the projected-journal marker, so the next store command (`_ensure_store_current`)
-    or `hv doctor rebuild` projects the journal into the new tables. A fresh store has nothing to drop. The marker
-    goes FIRST: a crash after the drop leaves a store that is known stale, never one that claims to be current."""
-    conn.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
-    row = conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
-    if row and row[0] == STORE_SCHEMA_VERSION:
-        return
-    conn.execute("DELETE FROM meta WHERE key IN ('projected_journal_sig', 'projected_entries')")
-    conn.commit()
-    for t in ("entity_facts", "links", "entities", "journal_index"):
-        conn.execute(f"DROP TABLE IF EXISTS {t}")
-    conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)", (STORE_SCHEMA_VERSION,))
-    conn.commit()
-
-
-def init_db():
-    """Initialize database schema (idempotent)."""
-    HIVE_HOME.mkdir(parents=True, exist_ok=True)
-    JOURNAL_DIR.mkdir(exist_ok=True)
-
-    conn = get_conn()
-    _migrate_store_schema(conn)
-    conn.executescript("""
-    CREATE TABLE IF NOT EXISTS meta (
-        key TEXT PRIMARY KEY,
-        value TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS facts (
-        id INTEGER PRIMARY KEY,
-        content TEXT NOT NULL,
-        tags TEXT,
-        importance REAL DEFAULT 0.5,
-        source_agent TEXT NOT NULL,
-        source_session TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        last_accessed TIMESTAMP,
-        access_count INTEGER DEFAULT 0,
-        confidence REAL DEFAULT 0.0
-    );
-
-    CREATE TABLE IF NOT EXISTS decisions (
-        id INTEGER PRIMARY KEY,
-        content TEXT NOT NULL,
-        rationale TEXT,
-        superseded_by INTEGER REFERENCES decisions(id),
-        source_agent TEXT NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        tags TEXT
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_facts_tags ON facts(tags);
-    CREATE INDEX IF NOT EXISTS idx_facts_source ON facts(source_agent, created_at);
-    CREATE INDEX IF NOT EXISTS idx_decisions_active ON decisions(id) WHERE superseded_by IS NULL;
-
+_ENTITY_DDL = """
     CREATE TABLE IF NOT EXISTS entities (
         id INTEGER PRIMARY KEY,
         name TEXT NOT NULL,   -- a label (3.0), not unique: the identity is (ref_node, ref_seq)
@@ -581,7 +518,102 @@ def init_db():
         PRIMARY KEY (kind, from_kind, from_id, to_kind, to_id, signer)
     );
     CREATE INDEX IF NOT EXISTS idx_links_to ON links(to_kind, to_id, kind);
+"""
 
+
+# The store's schema version (`meta.schema_version`). 3 (3.0): `entities` is keyed by the creating entry's journal
+# ref and `name` is a non-unique label. `CREATE TABLE IF NOT EXISTS` cannot alter a table, so a store without
+# version 3 has the entity-bearing tables dropped and is rebuilt from the journal, which loses nothing: the store
+# is a projection.
+STORE_SCHEMA_VERSION = "3"
+
+
+def _ddl_statements(ddl):
+    """Split a DDL script into statements, so they can run inside a transaction (`executescript` commits)."""
+    out, cur = [], ""
+    for line in ddl.splitlines(keepends=True):
+        cur += line
+        if sqlite3.complete_statement(cur):
+            if cur.strip():
+                out.append(cur)
+            cur = ""
+    return out
+
+
+def _migrate_store_schema(conn):
+    """One-time, idempotent, ATOMIC: a store not at `STORE_SCHEMA_VERSION` has `entity_facts`, `entities`, `links`
+    and `journal_index` dropped, recreated and refilled from the journal in ONE transaction, and only then is
+    `schema_version` stamped. Every command reaches this through `init_db`, so none (doctor, version, sync, the
+    daemon) can see a store with the tables gone; a crash rolls back to the old tables and the old version, and
+    the next `init_db` migrates again. Runs after every other table exists. A store already in the new shape
+    (a fresh one) is only stamped. Loses nothing: the store is a projection."""
+    conn.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
+    row = conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
+    if row and row[0] == STORE_SCHEMA_VERSION:
+        return
+    conn.commit()
+    stamp = "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)"
+    if "ref_node" in {r[1] for r in conn.execute("PRAGMA table_info(entities)")}:
+        conn.execute(stamp, (STORE_SCHEMA_VERSION,))
+        conn.commit()
+        return
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        for t in ("entity_facts", "links", "entities", "journal_index"):
+            conn.execute(f"DROP TABLE IF EXISTS {t}")
+        for stmt in _ddl_statements(_ENTITY_DDL):
+            conn.execute(stmt)
+        _rebuild_in_transaction(conn, begun=True)
+        conn.execute(stamp, (STORE_SCHEMA_VERSION,))
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    _prune_ended_peers_after_rebuild()
+
+
+def init_db():
+    """Initialize database schema (idempotent)."""
+    HIVE_HOME.mkdir(parents=True, exist_ok=True)
+    JOURNAL_DIR.mkdir(exist_ok=True)
+
+    conn = get_conn()
+    conn.executescript("""
+    CREATE TABLE IF NOT EXISTS meta (
+        key TEXT PRIMARY KEY,
+        value TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS facts (
+        id INTEGER PRIMARY KEY,
+        content TEXT NOT NULL,
+        tags TEXT,
+        importance REAL DEFAULT 0.5,
+        source_agent TEXT NOT NULL,
+        source_session TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        last_accessed TIMESTAMP,
+        access_count INTEGER DEFAULT 0,
+        confidence REAL DEFAULT 0.0
+    );
+
+    CREATE TABLE IF NOT EXISTS decisions (
+        id INTEGER PRIMARY KEY,
+        content TEXT NOT NULL,
+        rationale TEXT,
+        superseded_by INTEGER REFERENCES decisions(id),
+        source_agent TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        tags TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_facts_tags ON facts(tags);
+    CREATE INDEX IF NOT EXISTS idx_facts_source ON facts(source_agent, created_at);
+    CREATE INDEX IF NOT EXISTS idx_decisions_active ON decisions(id) WHERE superseded_by IS NULL;
+
+    """)
+    conn.executescript(_ENTITY_DDL)
+    conn.executescript("""
     -- 1.20: ideas — hypotheses whose confidence is EARNED from links (never asserted, never
     -- corroborated by restatement). facts minus importance/access_count/last_accessed, plus utility.
     -- Two identical idea texts are two rows: identity is the journal entry, not the content.
@@ -645,6 +677,7 @@ def init_db():
     _init_fts(conn)
 
     conn.commit()
+    _migrate_store_schema(conn)
     conn.close()
 
 
@@ -6631,10 +6664,11 @@ def rebuild_db():
         conn.close()
 
 
-def _rebuild_in_transaction(conn):
+def _rebuild_in_transaction(conn, begun=False):
     """The body of `rebuild_db`: ONE transaction from the first delete to the last insert, and no commit
     inside (#206). Statements run one by one because `executescript` commits."""
-    conn.execute("BEGIN IMMEDIATE")
+    if not begun:
+        conn.execute("BEGIN IMMEDIATE")
     # Drop the FTS index + triggers first: deleting every content row through
     # the external-content delete triggers can desync FTS5 ("disk image is
     # malformed"). We recreate and backfill the index after replay instead.
