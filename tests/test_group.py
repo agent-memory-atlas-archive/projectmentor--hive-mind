@@ -81,8 +81,11 @@ def test_purge_tombstones_and_survives_readmit(tmp_path):
     assert "dev-b" in gov["purged"] and "dev-b" not in gov["admitted"]
     assert abs(_conf(home, "claim") - 0.45) < 1e-6      # purged device stops counting
     # A re-admit must be refused — purge is permanent.
-    r = _run(home, "group", "admit", "dev-b", "--principal", "bob")
-    assert "purged" in r.stdout.lower() and "cannot be re-admitted" in r.stdout.lower()
+    n_before = len(list((home / "journal").rglob("*")))
+    r = _run(home, "group", "admit", "dev-b", "--principal", "bob", check=False)
+    assert r.returncode != 0, "a refused admit must not exit 0 (#350)"
+    assert "purged" in r.stderr.lower() and "cannot be re-admitted" in r.stderr.lower()
+    assert len(list((home / "journal").rglob("*"))) == n_before     # it wrote no entry
     _, gov = _gov(home)
     assert "dev-b" not in gov["admitted"]               # still not admitted
     assert abs(_conf(home, "claim") - 0.45) < 1e-6      # confidence stays excluded
@@ -147,3 +150,10 @@ def test_aliases_still_work(tmp_path):
     old = _run(home, "key", "show", check=False)                  # removed in 3.0 (h:af137f9421)
     assert old.returncode == 2 and old.stdout == "", old.stderr
     assert _run(home, "config", "identity", "show").returncode == 0
+
+
+def test_admit_with_an_invalid_module_name_exits_nonzero(tmp_path):
+    home = tmp_path
+    _run(home, "owner", "init")
+    r = _run(home, "group", "admit", "dev-m", "--principal", "ma", "--module", "Bad Name!", check=False)
+    assert r.returncode != 0 and "not a valid module name" in r.stderr and "Admitted" not in r.stdout
