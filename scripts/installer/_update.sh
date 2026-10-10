@@ -125,6 +125,28 @@ sys.exit(3)
 PY
 }
 
+# 3.0 PR 9: after the rebuild, the entity store migration is checked. `hv doctor rebuild` opens the store through
+# `init_db`, which migrates a 2.4-shaped store once (drop, rebuild, stamp `schema_version`, one transaction) and
+# leaves a current one alone. This prints the `entity-identity` line, and warns (never fails the update) when it is not ok.
+_entity_identity_report() {
+  HIVE_HOME="$HIVE_DIR" python3 - "$HIVE_DIR" 2>/dev/null <<'PY'
+import importlib.util, sys
+from importlib.machinery import SourceFileLoader
+from pathlib import Path
+loader = SourceFileLoader("hv_update_entity", str(Path(sys.argv[1]) / "hv"))
+spec = importlib.util.spec_from_loader("hv_update_entity", loader)
+hv = importlib.util.module_from_spec(spec)
+loader.exec_module(hv)
+conn = hv.get_conn()
+try:
+    c = hv._entity_identity_check(conn, hv.merkle.read_all_entries(hv.JOURNAL_DIR))
+finally:
+    conn.close()
+print(("ok: " if c["status"] == "ok" else "FAIL: ") + c["detail"])
+sys.exit(0 if c["status"] == "ok" else 1)
+PY
+}
+
 # The major of a CONTRACT_VERSION line, read as TEXT from `hv` on stdin; never executed. Empty when it cannot be read.
 _contract_major() {
   sed -n 's/^CONTRACT_VERSION = "\([0-9][0-9]*\)\.[0-9][0-9]*".*/\1/p' | head -n 1
@@ -446,6 +468,11 @@ fi
 info "Rebuilding database..."
 if cd "$HIVE_DIR" && ./hv doctor rebuild; then
   ok "DB rebuilt"
+  if _ei="$(_entity_identity_report)"; then
+    ok "Entity identity: ${_ei#ok: }"
+  else
+    warn "Entity identity: ${_ei:-could not be checked}. Run 'hv doctor rebuild' and 'hv doctor' to see entity-identity."
+  fi
 else
   warn "Rebuild skipped (store busy). No need to rerun it: the daemon catches the store up on its next cycle, and so does the next hv command."
 fi

@@ -322,6 +322,9 @@ under `capsule_putters`), **cell-authz** (the same for cells and combs under `ce
 admitted device could backdate one. 3.0 ignores such a forget. The check FAILS on an owned hive while facts
 the last 2.x hid by one are not yet re-signed, listing each by `h:` id and naming `hive-mind migrate forget`;
 it passes on none, reporting `closed: 0 facts depend on a pre-genesis unsigned forget`),
+*(3.0)* **entity-identity** (the store is at schema 3 and the name/identity split changed nothing for a legacy
+name group: it passes with `N entities, M names shared by more than one`, and fails a store left at the old schema,
+an entity without an identity ref, or a legacy name group split across entities; `hv doctor rebuild` repairs it),
 **trust-drift** (a device's recent reliability fell well below its baseline; advisory, see `hv peers`)
 and *(1.19 PR2b)* **fleet-contract** (an admitted peer advertises an agent contract below 1.19, or
 is unreachable so it cannot be verified — such a peer lands but does not honour the `link` entries
