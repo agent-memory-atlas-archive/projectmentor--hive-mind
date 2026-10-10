@@ -68,7 +68,7 @@ def install(lib):
 
 # Control-plane argv -> the library argv that implements it. The only entries that differ are the ones
 # the split renames or collapses, and each is named here rather than inferred, so a reader can see
-# exactly what `hive-mind X` runs. Built against commandmap.MOVED, which is the source of truth for what
+# exactly what `hive-mind X` runs. Built against commandmap.CONTROL_PLANE, which is the source of truth for what
 # belongs on this plane at all.
 _RENAMED = {
     ("owner", "revoke"): ("owner", "revoke-escrow"),        # S5: the hyphen goes with the move
@@ -131,7 +131,7 @@ def main(argv=None):
             print(f"hive-mind: {e}", file=sys.stderr)
             return 1
     m = hv()
-    parser = m.build_parser()                     # the library owns every flag definition
+    parser = m.build_parser(plane="control")                     # the library owns every flag definition
     args = parser.parse_args(_to_library_argv(argv))
     try:
         m._unlock_before_writing(args)            # a link verb: a locked key aborts before any write (#167)

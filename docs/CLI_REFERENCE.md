@@ -110,8 +110,7 @@ hive-mind config set quorum_by device       # count quorum by `device` or by `pr
 hive-mind config set dead_man_days 30       # owner silence required before an election can install (default 30)
 ```
 
-> *(2.0)* One command sets every governed key. The three older `set` forms under `hv config`
-> (`confidence set`, `quorum set` and plain `set`) name `hive-mind config set` and exit 2, acting on nothing.
+> One command sets every governed key: `hive-mind config set`. `hv config` has no `set` form (2.0 moved it to the control plane; 3.0 removed the pointers).
 
 `capsule_putters` and `cell_writers` are the two write policies: who may publish capsules, and who
 may publish cells and combs. Each is `owner` (the default) or `fertile` (any admitted device). Set
@@ -653,9 +652,8 @@ with its identity-derived one — that carried key is ignored, never trusted, an
 surfaced as a tamper signal. The same two conditions appear in `hv doctor` as the `device-keys`
 check.
 
-> *(2.0)* The lifecycle moved to the control plane. Run on `hv`, `group admit`, `revoke`, `deny`, `change`
-> and `purge`, and the older top-level `admit`, name the `hive-mind group` form and exit 2. `hv group` and
-> `hv group list` stay.
+> The lifecycle (`admit`, `revoke`, `deny`, `change`, `purge`, `retire`) is `hive-mind group …`, owner-only. `hv group` and
+> `hv group list` stay. The owner-only verbs moved to the control plane in 2.0; `hv` pointed at them through 2.x and since 3.0 does not define them.
 
 ---
 
@@ -1293,7 +1291,7 @@ files yourself it says the install was modified locally.
 | Code | Meaning |
 |---|---|
 | `0` | Verified: integrity, signature and key anchor all confirmed |
-| `1` | Failed: the install is modified, the signature is invalid, the signing key is not the published one (a fork), or there is no manifest. Do not trust it. (`2` is not used: argparse usage errors and the 2.0 pointers exit 2) |
+| `1` | Failed: the install is modified, the signature is invalid, the signing key is not the published one (a fork), or there is no manifest. Do not trust it. (`2` is not used: argparse usage errors exit 2) |
 | `3` | Could not fully check, nothing found wrong: the key anchor was unreachable (offline), or this build predates signed releases. A network outage does not look like tampering |
 
 A fresh checkout still waiting for its release re-sign exits `1`. `hv doctor` is the advisory view of

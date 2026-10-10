@@ -228,7 +228,7 @@ def test_a_control_plane_process_does_load_the_signer(tmp_path):
     assert "ownerkey" in mods
 
 
-# ── S6: every moved command points, exits 2, acts on nothing ─────────────────────────────────────────
+# ── S6 (since 3.0): the data-plane parser has no moved command; see tests/test_removed_pointers.py ─────────────────────────────────────────
 
 def _journal_digest(home):
     h = hashlib.sha256()
@@ -246,33 +246,14 @@ def owned_hive(tmp_path_factory):
     return home
 
 
-@pytest.mark.parametrize("key", sorted(commandmap.MOVED), ids=lambda k: " ".join(k))
-def test_every_moved_command_points_and_acts_on_nothing(owned_hive, key):
+@pytest.mark.parametrize("key", sorted(commandmap.CONTROL_PLANE), ids=lambda k: " ".join(k))
+def test_a_control_plane_command_is_refused_by_hv_and_acts_on_nothing(owned_hive, key):
+    """Since 3.0 the data-plane parser does not define the command at all (the frozen argv list is in
+    `test_removed_pointers.py`); this runs it against an owned hive and checks the journal is untouched."""
     before = _journal_digest(owned_hive)
-    r = _hv(owned_hive, *key)                          # no arguments at all: pointed at before parsing
-    new_form = commandmap.MOVED[key][0]
-    assert r.returncode == commandmap.POINTER_EXIT == 2, r.stdout + r.stderr
-    assert f"Run: hive-mind {new_form}" in r.stderr
-    assert _journal_digest(owned_hive) == before, "a pointer must act on nothing"
-
-
-def test_a_pointer_carries_the_arguments_as_typed(owned_hive):
-    r = _hv(owned_hive, "owner", "revoke-escrow", "all")
-    assert r.returncode == 2 and "Run: hive-mind owner revoke all" in r.stderr     # the S5 rename
-    r = _hv(owned_hive, "config", "quorum", "set", "quorum_m", "2")
-    assert r.returncode == 2 and "Run: hive-mind config set quorum_m 2" in r.stderr  # the collapse
-    r = _hv(owned_hive, "admit", "k1:0000000000000000", "--principal", "p")
-    assert "Run: hive-mind group admit k1:0000000000000000 --principal p" in r.stderr
-
-
-@pytest.mark.parametrize("argv, target", [
-    (["retract", "h:0000000000", "--owner"], "hive-mind retract h:0000000000 --owner"),
-    (["owner", "propose-election", "--mint"], "hive-mind owner mint"),
-])
-def test_the_flag_conditional_moves_point(owned_hive, argv, target):
-    before = _journal_digest(owned_hive)
-    r = _hv(owned_hive, *argv)
-    assert r.returncode == 2 and f"Run: {target}" in r.stderr, r.stderr
+    r = _hv(owned_hive, *key)
+    assert r.returncode == 2 and r.stdout == "", r.stdout + r.stderr
+    assert "hive-mind" not in r.stderr and "usage:" in r.stderr, r.stderr
     assert _journal_digest(owned_hive) == before
 
 
@@ -288,7 +269,7 @@ def _parser_paths_and_flags():
                 for name, sub in action.choices.items():
                     walk(sub, prefix + (name,))
 
-    walk(hivemind_ctl.hv().build_parser())
+    walk(hivemind_ctl.hv().build_parser(plane="control"))
     return paths
 
 
@@ -381,13 +362,14 @@ def test_link_signing_follows_the_plane(tmp_path):
 
 # ── owner-policy content writes ──────────────────────────────────────────────────────────────────────
 
-def test_an_owner_policy_capsule_write_points_and_a_fertile_one_does_not(tmp_path):
+def test_an_owner_policy_capsule_write_is_refused_by_policy_and_a_fertile_one_is_not(tmp_path):
     home = tmp_path / "h"
     assert _ctl(home, "owner", "init").returncode == 0          # capsule_putters defaults to `owner`
     before = _journal_digest(home)
     r = subprocess.run([sys.executable, str(PROJECT / "hv"), "capsule", "put", "k", "--stdin"],
                        input="s3cret", env=_env(home), capture_output=True, text=True)
-    assert r.returncode == 2 and "Run: hive-mind capsule put k --stdin" in r.stderr, r.stdout + r.stderr
+    assert r.returncode == 2 and "`capsule_putters=owner`" in r.stderr and "hive-mind capsule put" in r.stderr, r.stdout + r.stderr
+    assert "moved to the control plane" not in r.stderr
     assert _journal_digest(home) == before
     assert _ctl(home, "config", "set", "capsule_putters", "fertile").returncode == 0
     r = subprocess.run([sys.executable, str(PROJECT / "hv"), "capsule", "put", "k", "--stdin"],
@@ -395,13 +377,13 @@ def test_an_owner_policy_capsule_write_points_and_a_fertile_one_does_not(tmp_pat
     assert r.returncode != 2 and "moved to the control plane" not in r.stderr, r.stderr
 
 
-def test_an_owner_policy_cell_publish_points(tmp_path):
+def test_an_owner_policy_cell_publish_is_refused_by_policy(tmp_path):
     home = tmp_path / "h"
     assert _ctl(home, "owner", "init").returncode == 0          # cell_writers defaults to `owner`
     cell = tmp_path / "cell.json"
     cell.write_text(json.dumps({"name": "demo", "kind": "tool", "version": 1, "spec": {}}))
     r = _hv(home, "wire", "--add", str(cell))
-    assert r.returncode == 2 and "Run: hive-mind wire --add" in r.stderr, r.stdout + r.stderr
+    assert r.returncode == 2 and "`cell_writers=owner`" in r.stderr and "hive-mind wire --add" in r.stderr, r.stdout + r.stderr
 
 
 # ── doctor --fix, split by what it touches ───────────────────────────────────────────────────────────
@@ -440,7 +422,7 @@ def test_every_placeholder_is_replaced_on_the_control_plane():
                   if isinstance(n, ast.FunctionDef)}
     # owner_cmd raises for its moved actions but keeps its data-plane ones; the control plane wraps it.
     expected = hv_placeholders
-    assert {"_append_governance", "_owner_forget", "unforget", "admit_cmd", "_group_change", "_config_set",
+    assert {"_append_governance", "_owner_forget", "_group_change", "_group_retire", "_config_set",
             "_holds_owner_key", "owner_cmd"} <= expected, "the placeholder set shrank: check the split"
     missing = expected - owner_defs
     assert not missing, f"hv placeholders with no control-plane replacement: {sorted(missing)}"

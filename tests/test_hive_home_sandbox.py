@@ -151,6 +151,6 @@ def test_a_module_scoped_owner_init_writes_no_key_into_the_real_home(tmp_path, m
     sandboxed at import, the decoy home stays empty."""
     decoy, home = _decoy(tmp_path), tmp_path / "decoy-home"
     home.mkdir()
-    r = _nested(decoy, mode, "tests/test_s2_split.py", "-k", "every_moved_command_points and owner", HOME=str(home))
+    r = _nested(decoy, mode, "tests/test_s2_split.py", "-k", "refused_by_hv_and_acts_on_nothing and owner", HOME=str(home))
     assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-2000:]
     assert not (home / ".hive").exists(), sorted(str(p) for p in home.rglob("*"))

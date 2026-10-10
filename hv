@@ -49,7 +49,7 @@ import merkle  # noqa: E402
 # 2.0 S2 (public #136): `hv` does NOT import `ownerkey`, directly or through anything it imports, and
 # produces no `owner_sig` by any route. Reading the owner seed and owner signing live on the control plane
 # (`hivemind_ctl.py`, `hivemind_owner.py`); two static tests keep both facts true.
-import commandmap  # noqa: E402  (a table only: what moved to `hive-mind`, and the pointer text)
+import commandmap  # noqa: E402  (a table only: which commands the control plane routes, and the policy-refusal text)
 import vocabulary  # noqa: E402  (a table only: the names core reserves; docs/NAMESPACES.md is generated from it)
 try:
     import ed25519 as _ed25519  # bundled pure-Python signature verifier
@@ -293,11 +293,12 @@ _OWNER_SEALED_SIZES = range(128, 4097)   # the sealed envelope: about 240 bytes 
 
 
 class NotOnDataPlane(Exception):
-    """Raised by a data-plane placeholder for an owner step (2.0 S2, public #136). `hv` catches it in
-    `main`, prints the `hive-mind` form to run and exits 2, having acted on nothing. On the control plane
+    """Raised by a data-plane placeholder for an owner step (2.0 S2, public #136): the key boundary. `hv`
+    cannot owner-sign, so the step refuses and acts on nothing. On the control plane
     `hivemind_ctl.install` replaces every placeholder with the real owner step, so it is never raised there.
 
-    `key` is a `commandmap.MOVED` argv tuple or a `commandmap.FLAG_CONDITIONAL` key."""
+    `key` is a `commandmap.FLAG_CONDITIONAL` key when a hive policy (`capsule_putters`, `cell_writers`)
+    needs an owner-signed write, which `dispatch` explains; otherwise it only labels the refused step."""
 
     def __init__(self, key):
         super().__init__(key)
@@ -5196,7 +5197,8 @@ def retract(args):
         print(f"retract: no fact {args.fact_id}", file=sys.stderr)
         sys.exit(1)
     content = row["content"]
-    if args.owner:
+    owner = getattr(args, "owner", False)       # only the control plane's parser defines --owner
+    if owner:
         rentry = _owner_forget(ref, args.reason)      # the owner step: control plane only (2.0 S2)
         if rentry is None:
             return
@@ -5218,14 +5220,8 @@ def retract(args):
         conn.close()
     except sqlite3.OperationalError as e:                # after the append: never report failure (#70)
         _store_deferred(rentry, e, "Retraction")
-    kind = "FORGOTTEN (owner)" if args.owner else "retracted"
+    kind = "FORGOTTEN (owner)" if owner else "retracted"
     print(f"Fact {sid} (#{row['id']}) {kind} → confidence {conf:.2f}")
-
-
-def unforget(args):
-    """Owner only (1.24, #46): reverse an owner-forget. The command moved to the control plane in 2.0
-    (`hive-mind unforget`, `hivemind_owner.py`); this placeholder refuses (S2)."""
-    raise NotOnDataPlane(("unforget",))
 
 
 def _fts_query(raw):
@@ -7728,7 +7724,7 @@ def _resign_pending_hint(root):
             "is probably still pending on GitHub; run `hive-mind update` again in a few minutes)")
 
 
-# `hv verify` exit codes (#190). Not 2: argparse usage errors and the 2.0 pointers already exit 2.
+# `hv verify` exit codes (#190). Not 2: argparse usage errors.
 VERIFY_EXIT_VERIFIED = 0     # official: integrity, signature and key anchor all confirmed
 VERIFY_EXIT_FAILED = 1       # modified, signature invalid, fork key, or no manifest: do not trust this install
 VERIFY_EXIT_UNCHECKED = 3    # nothing wrong found, but a layer could not be checked (anchor unreachable, unsigned build)
@@ -10365,10 +10361,6 @@ def owner_cmd(args):
         if _ed25519 is None:
             print("ed25519 unavailable; cannot propose an election.")
             return
-        if getattr(args, "mint", False):
-            # Minting writes owner-key material, so it is `hive-mind owner mint` (2.0 S2). Proposing the
-            # minted key is device-signed and stays here: `hv owner propose-election --pub <b64>`.
-            raise NotOnDataPlane("owner propose-election --mint")
         new_pub = _canon_pub(getattr(args, "pub", "") or "")
         if not new_pub:
             print("Provide the proposed owner key: `--pub <base64>` (mint one with `hive-mind owner mint`).")
@@ -10533,18 +10525,6 @@ def _add_peer(url, label):
     except Exception:
         return False
     return True
-
-
-def admit_cmd(args):
-    """Placeholder: admitting a device is owner-signed, so it is `hive-mind group admit` (2.0 S2,
-    `hivemind_owner.py`). The pending list is also `hv group list`."""
-    raise NotOnDataPlane(("group", "admit"))
-
-
-def migrate_cmd(args):
-    """Placeholder: the forget migration signs owner re-issues, so it is `hive-mind migrate forget` (3.0 PR 2,
-    `hivemind_owner.py`)."""
-    raise NotOnDataPlane(("migrate", "forget"))
 
 
 def _group_change(action, device_id, principal=None):
@@ -11199,7 +11179,13 @@ def _telemetry_list(args):
 # CLI
 # --------------------------------------------------------------------------
 
-def build_parser():
+def build_parser(plane="data"):
+    """The command line. `plane="data"` is `hv`: it has no owner-signed verb and no owner flag, so a command
+    that lives on the control plane is argparse's own unknown command (exit 2, nothing written). `plane="control"`
+    is the full parser `hive-mind` routes through, so every flag is still defined once."""
+    control = plane == "control"
+    if plane not in ("data", "control"):
+        raise ValueError(f"unknown plane {plane!r}")
     parser = argparse.ArgumentParser(
         description="Hive Mind CLI — shared, confidence-weighted institutional memory.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -11210,8 +11196,7 @@ def build_parser():
             '  hv search "X" [--min-confidence -1] [--format json]        # ranked by effective confidence\n'
             '  hv decide "chose Y" --rationale "because"                  # record a decision\n'
             "  hv retract <fact-id> [--reason ...]                        # peer negative evidence (rejected)\n"
-            "  hive-mind retract <fact-id> --owner                               # owner forget (decisive, -1.0)\n"
-            "  hv stats | sync now|daemon\n"
+                        "  hv stats | sync now|daemon\n"
             "  hv doctor [--format json] [--fix]                          # health check (+ self-heal)\n"
             "  hv doctor merkle | rebuild                                 # sync diag / rebuild db\n"
             "  hv wire claude                                             # (re)wire the Claude Code hooks + skill\n"
@@ -11316,17 +11301,19 @@ def build_parser():
                                     "`node_id:seq`, both shown by `hv search` (2.0 refuses local ids), resolved "
                                     "before anything is written")
 
-    unforget_parser = subparsers.add_parser("unforget", help="Owner only: reverse an owner-forget (`retract --owner`)")
-    unforget_parser.add_argument("fact_id", help="The forgotten fact: its `h:` short id or `ref` (2.0 refuses local ids)")
-    unforget_parser.add_argument("--reason", required=True, help="Why the forget is reversed (journaled)")
+    if control:
+        unforget_parser = subparsers.add_parser("unforget", help="Owner only: reverse an owner-forget (`retract --owner`)")
+        unforget_parser.add_argument("fact_id", help="The forgotten fact: its `h:` short id or `ref` (2.0 refuses local ids)")
+        unforget_parser.add_argument("--reason", required=True, help="Why the forget is reversed (journaled)")
 
     retract_parser = subparsers.add_parser("retract", help="Record negative evidence against a fact (soft-forget)")
     retract_parser.add_argument("fact_id", metavar="FACT",
                                 help="The fact to retract: its `h:` short id or `ref` (2.0 refuses local ids)")
     retract_parser.add_argument("--reason", help="Why")
     retract_parser.add_argument("--source", help="Retractor identity (default: env/manual)")
-    retract_parser.add_argument("--owner", action="store_true",
-                                help="Owner forget — governance, decisive (drives to the forget floor)")
+    if control:
+        retract_parser.add_argument("--owner", action="store_true",
+                                    help="Owner forget — governance, decisive (drives to the forget floor)")
 
     entity_parser = subparsers.add_parser("entity", help="Manage entities")
     entity_parser.add_argument("action", choices=["add", "list", "show", "link", "join", "unjoin"], help="Sub-command")
@@ -11403,84 +11390,86 @@ def build_parser():
     owner_parser = subparsers.add_parser("owner", help="Show or create the governance owner identity")
     owner_sub = owner_parser.add_subparsers(dest="owner_action")
     owner_sub.add_parser("show", help="Show the established owner + governance state")
-    owner_init = owner_sub.add_parser("init", help="Mint the owner key and claim ownership")
-    owner_init.add_argument("--force", action="store_true", help="Replace an existing owner key / override an established owner")
-    owner_pin = owner_sub.add_parser("pin", help="Show or set the pinned genesis declaration (no arg shows)")
-    owner_pin.add_argument("--set", action="store_true",
-                           help="Pin the journal's single self-signed owner declaration (refuses if there are 0 or 2+)")
-    owner_pin.add_argument("--fingerprint", metavar="FP",
-                           help="Pin from an invite's genesis fingerprint (<hive_id>/<owner_id>/<hash8>), before the first sync")
-    owner_pin.add_argument("--force", action="store_true", help="With --set/--fingerprint: replace an existing pin (a deliberate fork)")
-    owner_export = owner_sub.add_parser("export", help="Back up this device's owner key to a passphrase-encrypted file (for recovery)")
-    owner_export.add_argument("--out", help="Output file (default ./hive-owner-<owner_id>.key)")
-    owner_export.add_argument("--passphrase", action="store_true", help=argparse.SUPPRESS)  # the default now; kept so old scripts run
-    owner_export.add_argument("--plaintext", action="store_true",
-                              help="Write the seed UNENCRYPTED (default: encrypted with a prompted passphrase)")
-    owner_import = owner_sub.add_parser("import", help="Install an owner key from a backup file (resume governance here)")
-    owner_import.add_argument("file", help="The exported owner-key file")
-    owner_import.add_argument("--force", action="store_true", help="Install even if it doesn't match the journal's established owner")
-    owner_standby = owner_sub.add_parser("standby", help="Declare/remove a standby device that may hold the owner key (advisory)")
-    owner_standby.add_argument("device_id", help="The standby device's device_id (k1:…)")
-    owner_standby.add_argument("--off", action="store_true", help="Remove the standby declaration")
-    owner_sub.add_parser("escrow", help="Store the owner key, passphrase-encrypted, IN the hive (syncs to all nodes)")
-    owner_sub.add_parser("restore", help="Recover the owner key from the hive's escrow (needs the passphrase)")
-    owner_nominate = owner_sub.add_parser("nominate", help="Nominate a successor owner key (the successor then `claim`s)")
-    owner_nominate.add_argument("successor_pub", help="The successor's owner pubkey (base64; from `hive-mind owner claim --mint`)")
-    owner_unnominate = owner_sub.add_parser("unnominate", help="Withdraw a pending successor nomination")
-    owner_unnominate.add_argument("successor_pub", help="The nominated successor's owner pubkey (base64)")
-    owner_claim = owner_sub.add_parser("claim", help="Claim ownership on this device against an open nomination (successor side)")
-    owner_claim.add_argument("--mint", action="store_true", help="Mint a fresh owner key for this device first")
-    owner_claim.add_argument("--force", action="store_true", help="With --mint, replace an existing owner key on this device")
-    owner_transfer = owner_sub.add_parser("transfer", help="Immediately hand ownership to a key (the target must already hold it)")
-    owner_transfer.add_argument("new_owner_pub", help="The new owner's pubkey (base64)")
-    owner_revoke_escrow = owner_sub.add_parser("revoke-escrow", help="Tombstone an escrowed key so `restore` skips it")
-    owner_revoke_escrow.add_argument("ref", help="Escrow ref `node_id:seq`, or `all`")
-    owner_sub.add_parser("heartbeat", help="Refresh owner liveness (resets the dead-man timer; owner key holder)")
-    owner_sub.add_parser("freeze-timestamps", help="Arm the bounded entry timestamps (#217): freeze every device's "
-                                                   "chain at its tip, so only later entries are checked (owner key holder)")
-    owner_mint = owner_sub.add_parser("mint", help="[hive-mind] Mint a prospective owner key on this device, "
-                                                  "to propose with `hv owner propose-election --pub`")
-    owner_mint.add_argument("--force", action="store_true", help="Replace an owner key already on this device")
-    owner_sub.add_parser("seal", help="[hive-mind] Seal a plaintext owner key at rest under a passphrase (2.0)")
+    if control:
+        owner_init = owner_sub.add_parser("init", help="Mint the owner key and claim ownership")
+        owner_init.add_argument("--force", action="store_true", help="Replace an existing owner key / override an established owner")
+        owner_pin = owner_sub.add_parser("pin", help="Show or set the pinned genesis declaration (no arg shows)")
+        owner_pin.add_argument("--set", action="store_true",
+                               help="Pin the journal's single self-signed owner declaration (refuses if there are 0 or 2+)")
+        owner_pin.add_argument("--fingerprint", metavar="FP",
+                               help="Pin from an invite's genesis fingerprint (<hive_id>/<owner_id>/<hash8>), before the first sync")
+        owner_pin.add_argument("--force", action="store_true", help="With --set/--fingerprint: replace an existing pin (a deliberate fork)")
+        owner_export = owner_sub.add_parser("export", help="Back up this device's owner key to a passphrase-encrypted file (for recovery)")
+        owner_export.add_argument("--out", help="Output file (default ./hive-owner-<owner_id>.key)")
+        owner_export.add_argument("--passphrase", action="store_true", help=argparse.SUPPRESS)  # the default now; kept so old scripts run
+        owner_export.add_argument("--plaintext", action="store_true",
+                                  help="Write the seed UNENCRYPTED (default: encrypted with a prompted passphrase)")
+        owner_import = owner_sub.add_parser("import", help="Install an owner key from a backup file (resume governance here)")
+        owner_import.add_argument("file", help="The exported owner-key file")
+        owner_import.add_argument("--force", action="store_true", help="Install even if it doesn't match the journal's established owner")
+        owner_standby = owner_sub.add_parser("standby", help="Declare/remove a standby device that may hold the owner key (advisory)")
+        owner_standby.add_argument("device_id", help="The standby device's device_id (k1:…)")
+        owner_standby.add_argument("--off", action="store_true", help="Remove the standby declaration")
+        owner_sub.add_parser("escrow", help="Store the owner key, passphrase-encrypted, IN the hive (syncs to all nodes)")
+        owner_sub.add_parser("restore", help="Recover the owner key from the hive's escrow (needs the passphrase)")
+        owner_nominate = owner_sub.add_parser("nominate", help="Nominate a successor owner key (the successor then `claim`s)")
+        owner_nominate.add_argument("successor_pub", help="The successor's owner pubkey (base64; from `hive-mind owner claim --mint`)")
+        owner_unnominate = owner_sub.add_parser("unnominate", help="Withdraw a pending successor nomination")
+        owner_unnominate.add_argument("successor_pub", help="The nominated successor's owner pubkey (base64)")
+        owner_claim = owner_sub.add_parser("claim", help="Claim ownership on this device against an open nomination (successor side)")
+        owner_claim.add_argument("--mint", action="store_true", help="Mint a fresh owner key for this device first")
+        owner_claim.add_argument("--force", action="store_true", help="With --mint, replace an existing owner key on this device")
+        owner_transfer = owner_sub.add_parser("transfer", help="Immediately hand ownership to a key (the target must already hold it)")
+        owner_transfer.add_argument("new_owner_pub", help="The new owner's pubkey (base64)")
+        owner_revoke_escrow = owner_sub.add_parser("revoke-escrow", help="Tombstone an escrowed key so `restore` skips it")
+        owner_revoke_escrow.add_argument("ref", help="Escrow ref `node_id:seq`, or `all`")
+        owner_sub.add_parser("heartbeat", help="Refresh owner liveness (resets the dead-man timer; owner key holder)")
+        owner_sub.add_parser("freeze-timestamps", help="Arm the bounded entry timestamps (#217): freeze every device's "
+                                                       "chain at its tip, so only later entries are checked (owner key holder)")
+        owner_mint = owner_sub.add_parser("mint", help="[hive-mind] Mint a prospective owner key on this device, "
+                                                      "to propose with `hv owner propose-election --pub`")
+        owner_mint.add_argument("--force", action="store_true", help="Replace an owner key already on this device")
+        owner_sub.add_parser("seal", help="[hive-mind] Seal a plaintext owner key at rest under a passphrase (2.0)")
     owner_propose = owner_sub.add_parser("propose-election", help="Propose electing a new owner (admitted devices; needs quorum + a dark owner)")
-    owner_propose.add_argument("--mint", action="store_true", help="[moved] minting is `hive-mind owner mint` (2.0)")
     owner_propose.add_argument("--pub", help="Propose this base64 owner pubkey (mint one with `hive-mind owner mint`)")
     owner_vote = owner_sub.add_parser("vote", help="Vote for an open election proposal (admitted devices)")
     owner_vote.add_argument("proposal_id", help="The election's proposal_id (from `hv owner elections`)")
     owner_sub.add_parser("elections", help="List open owner-election proposals and their tallies")
 
-    admit_parser = subparsers.add_parser("admit", help="[alias of `hive-mind group admit`] Admit a device; no arg lists pending")
-    admit_parser.add_argument("device_id", nargs="?", help="The peer's device_id (k1:…). Omit to list devices awaiting admission")
-    admit_parser.add_argument("--principal", help="Tag the person or agent who owns this device")
-    admit_parser.add_argument("--module", help="Mark the device as module NAME's (2.1): it never votes in an election")
+    if control:
+        admit_parser = subparsers.add_parser("admit", help="[alias of `hive-mind group admit`] Admit a device; no arg lists pending")
+        admit_parser.add_argument("device_id", nargs="?", help="The peer's device_id (k1:…). Omit to list devices awaiting admission")
+        admit_parser.add_argument("--principal", help="Tag the person or agent who owns this device")
+        admit_parser.add_argument("--module", help="Mark the device as module NAME's (2.1): it never votes in an election")
 
-    migrate_parser = subparsers.add_parser("migrate", help="Owner only: one-time migrations (3.0): `migrate forget`")
-    migrate_sub = migrate_parser.add_subparsers(dest="migrate_action", required=True)
-    m_forget = migrate_sub.add_parser("forget", help="Re-issue, owner-signed, every forget that only the pre-genesis "
-                                                     "grandfather keeps in effect (idempotent)")
-    m_forget.add_argument("--check", action="store_true",
-                          help="Write nothing: list the facts that depend on such a forget; exit 0 only if none")
+        migrate_parser = subparsers.add_parser("migrate", help="Owner only: one-time migrations (3.0): `migrate forget`")
+        migrate_sub = migrate_parser.add_subparsers(dest="migrate_action", required=True)
+        m_forget = migrate_sub.add_parser("forget", help="Re-issue, owner-signed, every forget that only the pre-genesis "
+                                                         "grandfather keeps in effect (idempotent)")
+        m_forget.add_argument("--check", action="store_true",
+                              help="Write nothing: list the facts that depend on such a forget; exit 0 only if none")
     group_parser = subparsers.add_parser("group", help="Membership lifecycle (owner-only): admit/revoke/deny/change/purge/retire/list")
     group_sub = group_parser.add_subparsers(dest="group_action")
-    g_admit = group_sub.add_parser("admit", help="Admit a device; no arg lists pending requests")
-    g_admit.add_argument("device_id", nargs="?", help="The peer's device_id (k1:…). Omit to list pending")
-    g_admit.add_argument("--principal", help="Tag the person or agent who owns this device")
-    g_admit.add_argument("--module", help="Mark the device as module NAME's (2.1): it never votes in an election")
-    g_revoke = group_sub.add_parser("revoke", help="Un-admit a device (reversible) → returns to STERILE")
-    g_revoke.add_argument("device_id")
-    g_deny = group_sub.add_parser("deny", help="Reject a pending join-request (a later admit overrides)")
-    g_deny.add_argument("device_id")
-    g_change = group_sub.add_parser("change", help="Re-tag a device's principal (admission unchanged)")
-    g_change.add_argument("device_id")
-    g_change.add_argument("--principal", required=True, help="The new owner tag (person or agent)")
-    g_purge = group_sub.add_parser("purge", help="Tombstone a compromised device (permanent; none of its content counts)")
-    g_purge.add_argument("device_id")
-    g_retire = group_sub.add_parser("retire", help="Tombstone an honest device but keep its past content (purge with keep_through)")
-    g_retire.add_argument("device_id")
-    g_retire.add_argument("--through", type=int, metavar="SEQ",
-                          help="Keep the device's chain up to this seq (default: the highest seq this node holds)")
-    g_retire.add_argument("--confirm", action="store_true",
-                          help="Needed to retire a device that is already purged: its kept prefix counts again")
+    if control:
+        g_admit = group_sub.add_parser("admit", help="Admit a device; no arg lists pending requests")
+        g_admit.add_argument("device_id", nargs="?", help="The peer's device_id (k1:…). Omit to list pending")
+        g_admit.add_argument("--principal", help="Tag the person or agent who owns this device")
+        g_admit.add_argument("--module", help="Mark the device as module NAME's (2.1): it never votes in an election")
+        g_revoke = group_sub.add_parser("revoke", help="Un-admit a device (reversible) → returns to STERILE")
+        g_revoke.add_argument("device_id")
+        g_deny = group_sub.add_parser("deny", help="Reject a pending join-request (a later admit overrides)")
+        g_deny.add_argument("device_id")
+        g_change = group_sub.add_parser("change", help="Re-tag a device's principal (admission unchanged)")
+        g_change.add_argument("device_id")
+        g_change.add_argument("--principal", required=True, help="The new owner tag (person or agent)")
+        g_purge = group_sub.add_parser("purge", help="Tombstone a compromised device (permanent; none of its content counts)")
+        g_purge.add_argument("device_id")
+        g_retire = group_sub.add_parser("retire", help="Tombstone an honest device but keep its past content (purge with keep_through)")
+        g_retire.add_argument("device_id")
+        g_retire.add_argument("--through", type=int, metavar="SEQ",
+                              help="Keep the device's chain up to this seq (default: the highest seq this node holds)")
+        g_retire.add_argument("--confirm", action="store_true",
+                              help="Needed to retire a device that is already purged: its kept prefix counts again")
     group_sub.add_parser("list", help="Show the membership roster")
 
     join_parser = subparsers.add_parser("join", help="Request admission to this device's hive (after syncing it)")
@@ -11488,11 +11477,12 @@ def build_parser():
 
     config_parser = subparsers.add_parser("config", help="Settings: device identity + owner-signed confidence/quorum params")
     config_sub = config_parser.add_subparsers(dest="config_action")
-    # back-compat alias: `hv config set <key> <value>` == `hv config confidence set …`
-    config_set = config_sub.add_parser("set", help="[alias] Set an owner-signed governed parameter")
-    config_set.add_argument("key", help="a governed key, e.g. cap_self, importance_self_cap, capsule_putters "
-                                        "(an unknown key lists them all)")
-    config_set.add_argument("value", help="numeric value")
+    if control:
+        # back-compat alias: `hv config set <key> <value>` == `hv config confidence set …`
+        config_set = config_sub.add_parser("set", help="[alias] Set an owner-signed governed parameter")
+        config_set.add_argument("key", help="a governed key, e.g. cap_self, importance_self_cap, capsule_putters "
+                                            "(an unknown key lists them all)")
+        config_set.add_argument("value", help="numeric value")
     # canonical: identity (this device's key) + confidence (owner-signed hive params)
     config_id = config_sub.add_parser("identity", help="Show or mint this device's identity key")
     config_id_sub = config_id.add_subparsers(dest="config_identity_action")
@@ -11500,17 +11490,18 @@ def build_parser():
     config_id_sub.add_parser("show", help="Show this device's device_id and pubkey")
     config_id_init = config_id_sub.add_parser("init", help="Mint a device key (fresh install)")
     config_id_init.add_argument("--force", action="store_true", help="Replace an existing key / skip the populated-journal guard")
-    config_conf = config_sub.add_parser("confidence", help="Set an owner-signed confidence parameter")
-    config_conf_sub = config_conf.add_subparsers(dest="config_confidence_action")
-    config_conf_set = config_conf_sub.add_parser("set", help="Set an owner-signed confidence, salience or trust parameter")
-    config_conf_set.add_argument("key", help="e.g. same_device_lambda, cap_self, introspect_support_weight, "
-                                             "importance_self_cap, halflife_fact (an unknown key lists them all)")
-    config_conf_set.add_argument("value", help="numeric value")
-    config_quorum = config_sub.add_parser("quorum", help="Set an owner-signed quorum-election parameter")
-    config_quorum_sub = config_quorum.add_subparsers(dest="config_quorum_action")
-    config_quorum_set = config_quorum_sub.add_parser("set", help="Set quorum_m, quorum_by or dead_man_days")
-    config_quorum_set.add_argument("key", help="quorum_m | quorum_by | dead_man_days")
-    config_quorum_set.add_argument("value", help="value (quorum_m=int, quorum_by=device|principal, dead_man_days=float)")
+    if control:
+        config_conf = config_sub.add_parser("confidence", help="Set an owner-signed confidence parameter")
+        config_conf_sub = config_conf.add_subparsers(dest="config_confidence_action")
+        config_conf_set = config_conf_sub.add_parser("set", help="Set an owner-signed confidence, salience or trust parameter")
+        config_conf_set.add_argument("key", help="e.g. same_device_lambda, cap_self, introspect_support_weight, "
+                                                 "importance_self_cap, halflife_fact (an unknown key lists them all)")
+        config_conf_set.add_argument("value", help="numeric value")
+        config_quorum = config_sub.add_parser("quorum", help="Set an owner-signed quorum-election parameter")
+        config_quorum_sub = config_quorum.add_subparsers(dest="config_quorum_action")
+        config_quorum_set = config_quorum_sub.add_parser("set", help="Set quorum_m, quorum_by or dead_man_days")
+        config_quorum_set.add_argument("key", help="quorum_m | quorum_by | dead_man_days")
+        config_quorum_set.add_argument("value", help="value (quorum_m=int, quorum_by=device|principal, dead_man_days=float)")
 
     discover_parser = subparsers.add_parser("discover", help="Scan the tailnet for hives (Tailscale + /hive/info probe)")
     discover_parser.add_argument("--format", choices=["text", "json"], default="text")
@@ -11564,46 +11555,15 @@ _STORE_COMMANDS = {"remember", "search", "decide", "propose", "retract", "entity
 
 
 def main():
-    parser = build_parser()
-    argv = sys.argv[1:]
-    # 2.0 S2/S6 (public #136): a command that moved to the control plane is pointed at BEFORE parsing, so
-    # it acts on nothing whatever its arguments, and exits 2 so no script mistakes it for success.
-    moved = _moved_key(argv)
-    if moved is not None:
-        return _point(argv, moved)
-    args = parser.parse_args(argv)
-
+    args = build_parser(plane="data").parse_args(sys.argv[1:])
     return dispatch(args)
 
 
-def _moved_key(argv):
-    """The `commandmap` key an `hv` invocation moved under, or None. Whole commands by longest argv
-    prefix (`MOVED`); two flag-conditional ones by their flag. The policy-conditional capsule and wire
-    writes can only be told once the hive's config is read, so their handlers raise `NotOnDataPlane`."""
-    hit = commandmap.lookup(argv)
-    if hit is not None:
-        return hit[0]
-    if argv[:1] == ["retract"] and "--owner" in argv:
-        return "retract --owner"
-    if argv[:2] == ["owner", "propose-election"] and "--mint" in argv:
-        return "owner propose-election --mint"
-    return None
-
-
-def _point(argv, key):
-    """Print where a moved command went — the exact `hive-mind` command to type, this invocation's
-    arguments included — and return the pointer exit code (2). Acts on nothing."""
-    argv = list(argv)
-    if isinstance(key, tuple) and key in commandmap.MOVED:
-        new_form, why = commandmap.MOVED[key]
-        run = new_form.split() + argv[len(key):]          # renames and collapses keep the rest as typed
-    elif key in commandmap.FLAG_CONDITIONAL:
-        new_form, why = commandmap.FLAG_CONDITIONAL[key]
-        run = new_form.split() if key == "owner propose-election --mint" else argv
-    else:
-        why, run = "", argv
-    print(commandmap.pointer_text(argv, " ".join(run), why), file=sys.stderr)
-    return commandmap.POINTER_EXIT
+def _refuse_policy(key):
+    """A current verb refused by hive policy (`capsule_putters=owner`, `cell_writers=owner`): say what the
+    policy needs and where to run it. Exit 2, acting on nothing, so no script mistakes it for success."""
+    print(commandmap.policy_text(key), file=sys.stderr)
+    return commandmap.POLICY_EXIT
 
 
 def dispatch(args):
@@ -11617,8 +11577,8 @@ def dispatch(args):
     directly then minted an owner key against an uninitialised store."""
     try:
         return _dispatch(args)
-    except NotOnDataPlane as e:            # an owner step reached on the data plane (2.0 S2)
-        return _point(sys.argv[1:], e.key)
+    except NotOnDataPlane as e:            # an owner-signed step reached on the data plane (S2)
+        return _refuse_policy(e.key)
     except JournalLockError as e:          # #253: one line naming cause and remedy, not a traceback
         print(str(e), file=sys.stderr)
         return 1

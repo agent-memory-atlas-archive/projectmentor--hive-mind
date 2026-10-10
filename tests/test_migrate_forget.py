@@ -212,12 +212,12 @@ def test_partial_failure_sets_no_key_and_a_rerun_completes(tmp_path, monkeypatch
 
 # ── the pointer, the notices ───────────────────────────────────────────────────────────────────────
 
-def test_hv_points_at_the_control_plane_and_acts_on_nothing(tmp_path):
+def test_hv_does_not_define_migrate_and_acts_on_nothing(tmp_path):
     run, base, sids = _open_hive(tmp_path)
     before = _bytes(tmp_path)
     env = dict(os.environ, HIVE_HOME=str(tmp_path), HIVE_IDENTITY_STASH=str(tmp_path / "stash"))
     r = subprocess.run([sys.executable, str(PROJECT / "hv"), "migrate", "forget"], env=env, capture_output=True, text=True)
-    assert r.returncode == 2 and "hive-mind migrate forget" in r.stderr and _bytes(tmp_path) == before
+    assert r.returncode == 2 and "invalid choice" in r.stderr and _bytes(tmp_path) == before
 
 
 def test_read_verbs_and_the_nudge_carry_a_notice_while_a_migration_is_owed(tmp_path):
