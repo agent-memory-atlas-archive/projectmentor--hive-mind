@@ -6625,6 +6625,56 @@ def _shared_entity_names(conn):
     return {r[0] for r in conn.execute("SELECT name FROM entities GROUP BY name HAVING count(*) > 1")}
 
 
+def _entity_identity_check(conn, entries):
+    """`hv doctor`'s `entity-identity` check (3.0, §4.4). Fails when the store is not at the current schema, or an
+    entity has no identity ref, or one legacy name group (the entries that carry neither `identity_ref` nor
+    `new_identity`) maps to more than one entity: the split must change nothing for a hive that never created a
+    second same-named entity. Otherwise `ok: N entities, M names shared by more than one`."""
+    row = conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
+    have = row[0] if row else None
+    if have != STORE_SCHEMA_VERSION:
+        return {"name": "entity-identity", "status": "fail",
+                "detail": f"the store is at schema {have or 'none'}, 3.0 reads {STORE_SCHEMA_VERSION}: run `hv doctor rebuild`"}
+    n = conn.execute("SELECT count(*) FROM entities").fetchone()[0]
+    bare = conn.execute("SELECT count(*) FROM entities WHERE ref_node IS NULL OR ref_seq IS NULL").fetchone()[0]
+    if bare:
+        return {"name": "entity-identity", "status": "fail",
+                "detail": f"{bare} of {n} entities have no identity ref: run `hv doctor rebuild`"}
+    groups = {}
+    for e in _projection_entries(entries):
+        if e.get("type") != "entity" or _entity_form(e)[0] != "legacy":
+            continue
+        r = conn.execute("SELECT local_id FROM journal_index WHERE kind = 'entity' AND node_id = ? AND seq = ?",
+                         (e.get("node_id"), e.get("seq"))).fetchone()
+        if r is not None:
+            groups.setdefault(e["payload"]["name"], set()).add(r[0])
+    split = sorted(name for name, ids in groups.items() if len(ids) > 1)
+    if split:
+        return {"name": "entity-identity", "status": "fail",
+                "detail": f"{len(split)} legacy name group(s) map to more than one entity ({', '.join(split[:3])}): "
+                          f"run `hv doctor rebuild`"}
+    shared = len(_shared_entity_names(conn))
+    return {"name": "entity-identity", "status": "ok",
+            "detail": f"{n} entit{'y' if n == 1 else 'ies'}, {shared} name{'' if shared == 1 else 's'} shared by more than one"}
+
+
+def api_entities():
+    """Dashboard Entities panel: every entity with its `h:` id, and `label`, which carries the id suffix only for
+    a name more than one entity holds (the CLI's `_entity_label`)."""
+    conn = get_conn()
+    try:
+        shared = _shared_entity_names(conn)
+        rows = conn.execute("SELECT e.id, e.name, e.type, e.ref_node, e.ref_seq, "
+                            "(SELECT count(*) FROM entity_facts f WHERE f.entity_id = e.id) AS facts "
+                            "FROM entities e ORDER BY e.name, e.ref_node, e.ref_seq").fetchall()
+        return {"entities": [{"id": r["id"], "name": r["name"], "type": r["type"], "label": _entity_label(r, shared),
+                              "shared": r["name"] in shared, "ref": _ref_str([r["ref_node"], r["ref_seq"]]),
+                              "sid": _short_id(r["ref_node"], r["ref_seq"]), "facts": r["facts"]} for r in rows],
+                "shared_names": len(shared)}
+    finally:
+        conn.close()
+
+
 def _entity_label(row, shared):
     """`David` for a unique name, `David · h:1f3a…` (the entity's `h:` id, which `--entity` takes) for a repeated one."""
     return f"{row['name']} · {_short_id(row['ref_node'], row['ref_seq'])}" if row["name"] in shared else row["name"]
@@ -9581,6 +9631,17 @@ def _doctor_status():
         c = _forget_authz_check(entries, gov)
         if c is not None:
             checks.append(c)
+    except Exception:
+        pass
+
+    # 3f3. Entity identity (3.0, §4.4): the store is at the current schema and the name -> identity split changed
+    #      nothing for a legacy name group. Reports how many names more than one entity holds.
+    try:
+        _c = get_conn()
+        try:
+            checks.append(_entity_identity_check(_c, entries))
+        finally:
+            _c.close()
     except Exception:
         pass
 

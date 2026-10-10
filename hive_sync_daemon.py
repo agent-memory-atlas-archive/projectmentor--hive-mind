@@ -87,7 +87,7 @@ _ADVERTISED = {"addr": None}
 _OPEN_DISCOVERY = frozenset({"/hive/info", "/sync/merkle-root", "/api/verify"})
 _REMOTE_AUTH = frozenset({"/sync/hello", "/sync/chunk"})
 _LOOPBACK_ONLY = frozenset({
-    "/api/overview", "/api/search", "/api/tags", "/api/related", "/api/item", "/api/audit",
+    "/api/overview", "/api/search", "/api/tags", "/api/related", "/api/item", "/api/audit", "/api/entities",
     "/api/status", "/api/telemetry", "/api/peers", "/api/daemon",
     "/", "/index.html", "/dashboard", "/dashboard/", "/logo.svg", "/favicon.svg", "/app.js", "/app.css",
 })
@@ -743,6 +743,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, hv.api_item(q.get("sid", [""])[0]))
             elif u.path == "/api/audit":
                 self._send(200, hv.api_audit())
+            elif u.path == "/api/entities":
+                self._send(200, hv.api_entities())
             elif u.path == "/api/status":
                 cmd = q.get("cmd", [None])[0]   # per-command so the UI can load progressively
                 if cmd in ("whoami", "stats", "doctor"):

@@ -247,13 +247,20 @@ function corpus(){
      <select id="sort"><option value="confidence">Sort: confidence</option><option value="importance">Sort: importance</option><option value="utility">Sort: utility</option><option value="recency">Sort: recency</option></select>
      <select id="status"><option value="all">Status: live</option><option value="contested">Contested</option><option value="forgotten">Forgotten</option><option value="volatile">Volatile</option></select>
      <select id="tag"><option value="">All tags</option></select>
-   </div><div id="results">${spin()}</div>`);
+   </div><div id="results">${spin()}</div><div id="epanel"></div>`);
   $('#kind').value=C.kind; $('#sort').value=C.sort; $('#status').value=C.status;
   if(!C.tagsLoaded) getJSON('/api/tags').then(r=>{C.tagsLoaded=true;const sel=$('#tag');if(sel){put(sel,html`<option value="">All tags</option>`,r.tags.map(t=>html`<option>${t}</option>`));sel.value=C.tag;}}).catch(()=>{});
   let timer; const reload=()=>{C.q=$('#q').value; const id=C.q.trim(); if(ID_RE.test(id)){ openById(id).then(ok=>{ if(!ok) reload2(); }); return; } reload2(); }; const reload2=()=>{C.kind=$('#kind').value;C.sort=$('#sort').value;C.status=$('#status').value;C.tag=$('#tag').value;C.fpage=1;C.dpage=1;loadCorpus();};
   $('#q').oninput=()=>{clearTimeout(timer);timer=setTimeout(reload,200);};
   ['kind','sort','status','tag'].forEach(id=>$('#'+id).onchange=reload);
-  loadCorpus();
+  loadCorpus(); loadEntities();
+}
+/* A name more than one entity holds is shown with its id (`label`); a unique name is shown bare. */
+function loadEntities(){
+  getJSON('/api/entities').then(r=>{const el=$('#epanel'); if(!el||!r.entities.length)return;
+    put(el,html`<div class="panel"><h2>Entities <span class="count">${r.entities.length}${r.shared_names?html` · ${r.shared_names} shared name${r.shared_names===1?'':'s'}`:null}</span></h2>
+      <table><thead><tr><th>Entity</th><th>Type</th><th>Facts</th></tr></thead><tbody>${r.entities.map(e=>html`<tr><td>${e.label}</td><td>${e.type||''}</td><td>${e.facts}</td></tr>`)}</tbody></table></div>`);
+  }).catch(()=>{});
 }
 function cparams(kind,page){const p=new URLSearchParams({q:C.q,kind,sort:C.sort,status:C.status,limit:String(PER),offset:String((page-1)*PER)});if(C.tag)p.set('tag',C.tag);return p.toString();}
 async function loadFacts(){if(C.kind==='decision'){C.facts=[];C.ftotal=0;return;}const s=await getJSON('/api/search?'+cparams('fact',C.fpage));C.facts=s.facts;C.ftotal=s.facts_total||s.facts.length;}
