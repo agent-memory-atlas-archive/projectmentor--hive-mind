@@ -1,5 +1,5 @@
 {
-  "digest": "838b23410278afc1729f836fdb0059cd37fb72776176450715685a659586d839",
+  "digest": "bca42e9da2546de02380097ef2ff79b11b08e91f89c303ca1e2ee660cbce0213",
   "files": {
     ".github/FUNDING.yml": "ca6c63d7539bb7d2f809b5068781c78de97c028a44c5ae252b11bc1695caf85d",
     ".github/ISSUE_TEMPLATE/bug_report.yml": "22df51b1e51c25f50726392c79811116b88c40370843ff2d4a3e76b643f1cb68",
@@ -20,6 +20,7 @@
     "chacha20poly1305.py": "6c3bb50dc126dab128184280b4d11cb1494800651e97aea941a821f31ff012fd",
     "changelog.d/docs-agents-hive-devices-terms.md": "4730963951387990830ce5ac8997df2446cb3bc0adf526a788eb276b64fd411e",
     "changelog.d/docs-readme-sweep.md": "5162e94627952ba9fb58ccdffa96b4cbf0985e6c33a53571263e7f23fdb77bb0",
+    "changelog.d/fix-status-signed-peer-probe.md": "ca6ebabfed76d1c275b8d6130ee0ede88c70d3a05406e302cc2850263234689a",
     "commandmap.py": "e6545fd239e6f1a7d46a9298dd9b0c98c9ef11b01a002d315f8169db9400a5a5",
     "config/.peers.json.example": "e81eb4533b4e06969946a8fa1c977e0692bc047275101bcdbae1504355866674",
     "config/nudge.env.example": "b278edb191f6588316383f5c095f6332fc3ccaf695c595dccd9b21c4322d5cf3",
@@ -82,7 +83,7 @@
     "scripts/installer/_invite.sh": "74d630c04c92695888f4da83e69d4895cbe086beab013c06e90431fc08f7cb58",
     "scripts/installer/_reset.sh": "5f4d94026b73f656271f6783602eb1ba3a898a5f1a6c85b900bd035d06639207",
     "scripts/installer/_service.sh": "b782d82090b309b122d141b58fa9225f13a22bd7afdc52afe40cd04b682f2ae8",
-    "scripts/installer/_status.sh": "ba2d70d54ee5d07cc5bfae9b395e5be5a955cd16ca5ac6afc71f8c3958fb3e97",
+    "scripts/installer/_status.sh": "0e97cb6a452c8ccfe4cdfa9f5f27a6b360e6ee6cb240dd0d0277fe89082bd5ec",
     "scripts/installer/_uninstall.sh": "e9efcee9f111d4dd5759439b483b8d9b2204d0096c9383a6c57dc3a537ec60d7",
     "scripts/installer/_update.sh": "a2778813429e8a25ad4ff3f61b07449a78fefe559fc84eef695936c820918141",
     "scripts/installer/cleanup.sh": "f66f4929108fafa28245f5460bc14e6b6f420fc75ec810195453939c220b1f20",
@@ -191,6 +192,7 @@
     "tests/test_service.py": "e6b4afb6dfaa8cd4db73ba5ff953dce810524704f4a59ab60ff8a574386178fe",
     "tests/test_short_ids.py": "904c9bb6409cd3b75a6a1b488f92dcb82e6adcf4489652246a06132fcadb1d27",
     "tests/test_smoke_isolation.py": "c43e1c7e590110745736a0fd2bd68f44b1b3c4a6afbc7abcb2b27c63c06f9c93",
+    "tests/test_status_peer_probe.py": "c6c0cfc5846457b07267e4cc2ee7b0e728531c97dddce94c424b13d12b3a8fea",
     "tests/test_strict_signature_ingest.py": "d9c4f21b2a9b4dbabf36011fcd26272cf1a384cbbad2a6f0ec5e0e5951b260ac",
     "tests/test_stripped_build_refuses.py": "63e1264a50dff61b449070801f9a9f175c57ff0f780b9f1210cb6690c22237df",
     "tests/test_succession.py": "ae143ef668a36282939e5227333539f346b7a2cf2cfee84c4db63cfad0513481",
@@ -215,6 +217,6 @@
     "vocabulary.py": "13c48daa6e38c6be024e2f50f295b9aa9b3e476f250ec3c0d928f4026e9a5ba6",
     "x25519.py": "ec1967595a2306cde860afe4dffab40a3f833d089de6caf5c9c080df8fd45726"
   },
-  "sequence": 513,
+  "sequence": 515,
   "version": "2.4"
 }
