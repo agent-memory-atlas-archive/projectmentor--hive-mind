@@ -245,16 +245,13 @@ def test_an_old_store_is_rebuilt_once_and_the_second_run_is_a_no_op(hive):
     _make_old_store(hive)
     assert "ref_node" not in _cols(hive, "entities")
 
-    hv.init_db()                                      # first run: migrates
+    hv.init_db()                                      # first run: migrates AND refills, in one transaction
     assert {"ref_node", "ref_seq"} <= _cols(hive, "entities")
     conn = hv.get_conn()
     assert conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0] == hv.STORE_SCHEMA_VERSION
-    assert conn.execute("SELECT count(*) FROM entities").fetchone()[0] == 0       # dropped, not yet rebuilt
-    assert conn.execute("SELECT value FROM meta WHERE key = 'projected_journal_sig'").fetchone() is None
     conn.close()
-
-    assert hv._ensure_store_current() is True         # the next store command rebuilds from the journal
-    assert dump(hive) == expect                       # and loses nothing
+    assert dump(hive) == expect                       # a current projection straight from init_db, nothing lost
+    assert hv._ensure_store_current() is False        # so no later command has anything left to catch up
     sentinel = hv.get_conn()
     sentinel.execute("INSERT INTO entities (name, ref_node, ref_seq) VALUES ('sentinel', 'n', 99)")
     sentinel.commit()
@@ -267,6 +264,27 @@ def test_an_old_store_is_rebuilt_once_and_the_second_run_is_a_no_op(hive):
         assert conn.execute("SELECT count(*) FROM entities WHERE name = 'sentinel'").fetchone()[0] == 1
     finally:
         conn.close()
+
+
+def test_a_crash_mid_migration_rolls_back_to_the_old_store(hive, monkeypatch):
+    hv = hive.hv
+    project_live(hive, hive.entries + s_links_facts_and_joins(hive))
+    _make_old_store(hive)
+
+    def boom(*a, **k):
+        raise RuntimeError("crash")
+    monkeypatch.setattr(hv, "_rebuild_in_transaction", boom)
+    with pytest.raises(RuntimeError):
+        hv.init_db()
+    assert "ref_node" not in _cols(hive, "entities")  # the old tables are intact
+    conn = hv.get_conn()
+    try:
+        assert conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone() is None
+    finally:
+        conn.close()
+    monkeypatch.undo()
+    hv.init_db()                                      # and the next init_db migrates
+    assert "ref_node" in _cols(hive, "entities")
 
 
 def test_a_fresh_store_is_born_at_the_current_version(tmp_path, monkeypatch):
