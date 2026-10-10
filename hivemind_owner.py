@@ -972,9 +972,34 @@ def admit_cmd(args):
           + (f" (module: {module}; it does not vote)" if module else ""))
     if module:
         return          # a module has no join-request and no sync address: no reciprocal peer
-    if _add_peer(_join_request_url(args.device_id), args.principal or args.device_id):
+    url = _join_request_url(args.device_id)
+    if _add_peer(url, args.principal or args.device_id):
         print("  + reciprocal peer added from its join-request URL — the owner now syncs to "
               "this device too (daemon picks it up next cycle, or `hv sync now`).")
+    else:
+        _warn_no_sync_target(url)
+
+
+def _warn_no_sync_target(url):
+    """`_add_peer` added nothing. A duplicate (or this node's own URL) is fine and stays quiet; otherwise say
+    so on stderr, with why and how to add the target by hand. The admit itself has already succeeded."""
+    if url and _peer_url_ok(url):
+        if url.rstrip("/") == _self_sync_url().rstrip("/"):
+            return
+        try:
+            cfg = json.loads((HIVE_HOME / ".peers.json").read_text())
+            if any(str(p.get("url", "")).rstrip("/") == url.rstrip("/") for p in cfg.get("peers") or []):
+                return
+        except Exception:
+            pass
+        why = f"writing {HIVE_HOME / '.peers.json'} failed"
+    elif url:
+        why = "its join-request URL is not a usable peer URL"
+    else:
+        why = "it sent no join-request URL"
+    print(f"No sync target was added: {why}, so the owner does not sync to this device. To add one, put "
+          f'{{"url": "http://<host>:<port>", "id": "<label>"}} in the "peers" list of {HIVE_HOME / ".peers.json"}.',
+          file=sys.stderr)
 
 
 def mint_module_key(name):

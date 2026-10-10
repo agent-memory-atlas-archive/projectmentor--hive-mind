@@ -77,3 +77,25 @@ def test_add_peer_is_idempotent(tmp_path, monkeypatch):
     assert hv._add_peer("http://100.0.0.5:9876", "x") is False        # duplicate → no-op
     peers = json.loads((tmp_path / ".peers.json").read_text())["peers"]
     assert len([p for p in peers if p.get("url") == "http://100.0.0.5:9876"]) == 1
+
+
+def test_admit_without_url_warns_no_sync_target_and_exits_0(tmp_path, monkeypatch):
+    _run(tmp_path, "owner", "init")
+    hv = _loadhv(tmp_path, monkeypatch)
+    nid, jr = _signed_join_request(hv, url=None)
+    hv.append_foreign_entries([jr])
+    r = _run(tmp_path, "admit", nid, "--principal", "bob")
+    assert "No sync target was added" in r.stderr and ".peers.json" in r.stderr
+    r = _run(tmp_path, "admit", "dev-unknown-by-id")           # admit by id, no join request at all
+    assert "No sync target was added" in r.stderr
+
+
+def test_admit_with_url_and_duplicate_and_module_print_no_warning(tmp_path, monkeypatch):
+    _run(tmp_path, "owner", "init")
+    hv = _loadhv(tmp_path, monkeypatch)
+    nid, jr = _signed_join_request(hv, "http://100.0.0.9:9876")
+    hv.append_foreign_entries([jr])
+    assert "No sync target" not in _run(tmp_path, "admit", nid, "--principal", "bob").stderr
+    hv._add_peer("http://100.0.0.9:9876", "x")                 # now a duplicate
+    assert "No sync target" not in _run(tmp_path, "admit", nid, "--principal", "bob").stderr
+    assert "No sync target" not in _run(tmp_path, "admit", "dev-mod", "--module", "m", "--principal", "bob").stderr
