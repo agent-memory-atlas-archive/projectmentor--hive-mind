@@ -278,3 +278,39 @@ def test_a_fresh_store_is_born_at_the_current_version(tmp_path, monkeypatch):
     finally:
         conn.close()
     assert {"ref_node", "ref_seq"} <= {r[1] for r in sqlite3.connect(tmp_path / "store.db").execute("PRAGMA table_info(entities)")}
+
+
+def test_two_concurrent_writers_of_one_name_make_one_row(hive):
+    """2.4 folded by name in one upsert under the write lock. The lookup and the insert must stay one write
+    transaction: a second writer whose lookup ran before the first committed must not insert a second row."""
+    import threading
+    import time
+    hv = hive.hv
+    ea = ent(hv, hive.plain, "race", T % 1, attrs={"w": "A"})
+    eb = ent(hv, hive.plain, "race", T % 2, attrs={"w": "B"})
+    a = hv.get_conn()
+    hv.persist_entity(a, ea)                          # the first writer holds its row uncommitted
+    done = []
+
+    def second():
+        b = hv.get_conn()
+        try:
+            hv.persist_entity(b, eb)
+            b.commit()
+            done.append(True)
+        finally:
+            b.close()
+
+    t = threading.Thread(target=second)
+    t.start()
+    time.sleep(0.5)                                   # the second writer's lookup runs while the first is open
+    a.commit()
+    a.close()
+    t.join(30)
+    assert done == [True]
+    conn = hv.get_conn()
+    try:
+        rows = conn.execute("SELECT id, name, attributes FROM entities WHERE name = 'race'").fetchall()
+        assert len(rows) == 1 and json.loads(rows[0][2]) == {"w": "B"}
+    finally:
+        conn.close()

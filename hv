@@ -3716,6 +3716,10 @@ def persist_entity(conn, entry):
     # The legacy reading (§4.2 of the 3.0 plan): an entry folds by name into the entity that name already has, and
     # the first applied entry for a name creates it, its journal ref being the identity. Every entry any 2.x node
     # wrote is read this way; a name has one identity until the write path carries an explicit one.
+    # The name lookup and the insert are one write transaction, as 2.4's single upsert was: a second writer must
+    # wait here and then see the first one's row, or two rows share a name (`name` is no longer UNIQUE).
+    if not conn.in_transaction:
+        conn.execute("BEGIN IMMEDIATE")
     row = cur.execute("SELECT id FROM entities WHERE name = ? ORDER BY id LIMIT 1", (payload["name"],)).fetchone()
     if row is None:
         cur.execute("""
