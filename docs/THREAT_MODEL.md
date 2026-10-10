@@ -156,6 +156,24 @@ at once). Concretely:
   admitted device whose `node_id` sorts first can claim a name nobody has yet written on this node; the owner's
   signed write still commands it. Nodes before this rule still let the last write win until they upgrade
   (projection skew). Making the creator the earliest by a signed field would be a signing-format change.
+- **Entity identity (3.0, PR 8).** An `entity` entry now says which entity it writes: `new_identity: true` creates
+  one, `identity_ref` updates the entity whose creating entry that ref names, and an entry with neither (every one a
+  2.x node wrote) is read by name as before. The creator rule above is keyed by identity: only the identity's creator,
+  or an owner-signed write, rewrites it; any other admitted device's `identity_ref` write is weigh-only. An update
+  that names no entity, an entity of another name, another update, or carries both fields is skipped like any entry
+  whose body does not match its type. Nothing on the wire, in signing or in the manifest changes, so a party that is
+  not admitted can do nothing it could not do before. Residuals, all admitted-device and accepted for 3.x: (1) a create
+  needs no authority, so an admitted device can create a second entity of a name another device already uses
+  (impersonation by label; it replaces nothing and shows up as a repeated name). Rule: address an entity by its `h:` id,
+  not its name, wherever the difference matters; `hv entity list` shows the id of every repeated name. (2) Two devices
+  that each `entity add --name X` before they have synced make two entities; `add` writes a create when it finds none.
+  Rule: sync before adding a name another device may already have. (3) A legacy name group's identity is still the first
+  applied entry in replay order, which is not time (a lower `node_id` arriving later moves it); only an entity a 3.0 node
+  creates is pinned. (4) An update is read against the journal as a whole, so one whose target has not synced yet is
+  skipped until it does. (5) Replay order `(node_id, seq)` also decides which of two writes to one entity wins: an owner
+  update from a lower `node_id` is overwritten by the creator's later-replayed create. (6) A 2.x node reads
+  every entry by name and shows one entity per name; journals converge and views diverge. Rule: update every node
+  before creating a second entity of a name.
 - **Version skew during the link write-path switch (contract 1.19 PR2b).** `hv decide --supersedes`,
   `hv remember --resolves` and `hv entity link` now write only a `link` entry. A node older than 1.19
   lands that entry (journals stay converged) but does not honour it, so on that node a superseded

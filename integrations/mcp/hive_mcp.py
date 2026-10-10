@@ -310,7 +310,7 @@ def hive_retract(fact_id: str, reason: str = "") -> str:
 
 @mcp.tool()
 def hive_entity(action: str, name: str = "", type: str = "", attr: str = "",
-                fact_id: str | None = None, confidence: float | None = None) -> str:
+                fact_id: str | None = None, confidence: float | None = None, entity: str = "") -> str:
     """Manage entities (people, projects, concepts) and link facts to them.
 
     action:
@@ -320,11 +320,16 @@ def hive_entity(action: str, name: str = "", type: str = "", attr: str = "",
     - "link"  — attach a fact to an entity (pass name + fact_id — the fact's `sid` from hive_search,
       `h:…`, or its `ref`; a bare numeric rowid is refused since 2.0 — optional confidence).
 
+    Two entities may share a name. When "add", "show" or "link" finds a name that more than one entity
+    holds it fails and lists their ids: pass the one you mean as `entity` (its `h:…` id or `node_id:seq`).
+
     Entities are the corpus's nouns; linking facts to them makes recall by subject reliable.
     """
     args = ["entity", action]
     if name:
         args += ["--name", name]
+    if entity and entity.strip():
+        args += ["--entity", entity.strip()]
     if type:
         args += ["--type", type]
     if attr:

@@ -375,7 +375,7 @@ owner, content from devices that are not admitted is not accepted.
 |---|---|---|
 | `fact` | 1.0 | `content`, `tags`, `source`, `importance` (a hint, capped by the projection), `created_at`, optional `channel` (`sense`\|`act`\|`introspect`; absent = `sense`). Older entries may also carry `resolves_ref` (written by `--resolves` before contract 1.19 PR2b) and the legacy fields `source_session`, `trust_score`, `access_count`. |
 | `decision` | 1.0 | `content`, `rationale`, `source`, `created_at`, `tags` (1.15), `informed_by` (1.19: list of `[node_id, seq]` refs it relied on). Older entries may carry `supersedes_ref` (written by `--supersedes` before PR2b). |
-| `entity` | 1.0 | `name`, `type`, `attributes`, `created_at` |
+| `entity` | 1.0 | `name`, `type`, `attributes`, `created_at`. 3.0 adds two optional fields: `new_identity: true` (this entry creates an entity, whatever its name) and `identity_ref` (`[node_id, seq]` of the entry that created the entity this one updates). An entry with neither is read by name, as before; a node before 3.0 ignores both and reads every entry by name. |
 | `retract` | 1.0 | `retracts_ref` (`[node_id, seq]` of the fact), `reason`, `source`; an owner forget also carries `owner_pub` and `owner_sig` |
 | `governance` | 1.4 | `action` plus action-specific fields; authority-bearing actions carry `owner_pub` / `owner_sig` (see below) |
 | `capsule` | 1.13 | A sealed secret: `name`, `capsule_id`, `version`, `kind`, `alg`, `nonce`, `ct`, `tag`, `wraps` (per-recipient key wraps), `signer`, `hive_id`, and `owner_pub` / `owner_sig` when owner-signed |

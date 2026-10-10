@@ -472,6 +472,9 @@ REF_FIELDS = {
                        "meaning": "A pre-Phase-2 `entity_fact` entry's fact, as a local id; read when `fact_ref` is absent."},
     "supersedes":     {"types": ("decision",), "shape": "local_id", "status": LEGACY,
                        "meaning": "A pre-Phase-2 decision's replaced decision, as a local id; read when `supersedes_ref` is absent."},
+    "identity_ref":   {"types": ("entity",), "shape": "pair", "status": WRITTEN,
+                       "meaning": "3.0: the entity an `entity` entry updates, named by the journal ref of the entry that "
+                                  "created it (an entry that carries neither this nor `new_identity` is read by name)."},
     "escrow_ref":     {"types": ("governance",), "shape": "ref", "status": WRITTEN,
                        "meaning": "The escrow a `revoke-escrow` act tombstones: `all`, a pair or `node_id:seq`."},
     "from":           {"types": ("link",), "shape": "ref", "status": RESERVED,
