@@ -107,6 +107,8 @@ def _carrier(field, ref):
         return "escrow", [_e("dev", 10, "governance", {"action": "revoke-escrow", "escrow_ref": ref}, 10)]
     if field == "entity_ref":
         return "entity", [_e("dev", 11, "entity_fact", {"entity_ref": ref, "fact_ref": NEIGHBOUR}, 11)]
+    if field == "identity_ref":      # 3.0: an update of the entity whose creating entry `ref` names (the target's name)
+        return "entity", [_e("dev", 10, "entity", {"name": "target", "type": "host", "identity_ref": ref}, 10)]
     lid = 999 if ref[0] == "ghost" else 1      # a legacy local id: one no node has, or the first row's
     if field == "entity_id":
         return "entity", [_e("dev", 11, "entity_fact", {"entity_id": lid, "fact_id": 1}, 11)]

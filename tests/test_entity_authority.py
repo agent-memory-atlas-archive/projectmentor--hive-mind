@@ -243,7 +243,7 @@ def test_mutant_without_the_gate_check_a_module_entity_write_lands(hive, monkeyp
 
 def test_mutant_without_the_projection_check_the_modules_rewrite_takes_the_row(hive, monkeypatch):
     hv = hive.hv
-    monkeypatch.setattr(hv, "_entity_declined", lambda entries, gov: set())
+    monkeypatch.setattr(hv, "_entity_resolution", lambda entries, gov: (set(), set(), {}))
     owner_side = ent(hv, device_sorted(hive, before=hive.mod), "david", T % 1, "person")      # replayed first, so the module's lands over it
     rewrite = mod_ent(hv, hive.mod, "david", T % 2, "hacked")
     assert rows(project(hive, hive.entries + [owner_side, rewrite])) == [("david", "hacked", "{}")]
