@@ -776,7 +776,10 @@ def cmd_add(lib, args):
             shutil.rmtree(staging, ignore_errors=True)
             raise ModuleError(str(e))
         try:
-            lib.admit_cmd(argparse.Namespace(device_id=device_id, principal=principal, module=name))
+            try:
+                lib.admit_cmd(argparse.Namespace(device_id=device_id, principal=principal, module=name))
+            except SystemExit:
+                pass              # a refused admit: the check below reports it as a ModuleError
             gov = _gov(lib)
             if gov["modules"].get(device_id) != name or device_id not in gov["admitted"]:
                 raise ModuleError("the owner could not admit the module's device: nothing installed")

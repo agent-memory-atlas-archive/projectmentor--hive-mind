@@ -951,12 +951,12 @@ def admit_cmd(args):
             print(f"  {r['device_id']}  ({r['label'] or '?'})  →  hive-mind group admit {r['device_id']} --principal <name>")
         return
     if args.device_id in _governance_state(merkle.read_all_entries(JOURNAL_DIR))["purged"]:
-        print(f"{args.device_id} is purged (tombstoned) — purge is permanent; it cannot be re-admitted.")
-        return
+        print(f"{args.device_id} is purged (tombstoned) — purge is permanent; it cannot be re-admitted.", file=sys.stderr)
+        sys.exit(1)           # a refusal writes no act: a caller that trusts the exit code must not read it as done
     module = getattr(args, "module", None)
     if module is not None and not vocabulary.valid_module_name(module):
-        print(f"{module!r} is not a valid module name ({vocabulary.valid_module_name.__doc__.strip()})")
-        return
+        print(f"{module!r} is not a valid module name ({vocabulary.valid_module_name.__doc__.strip()})", file=sys.stderr)
+        sys.exit(1)
     if module and not args.principal:
         print("--module needs --principal: give the module's device the operator's principal, so `cap_self` bounds it "
               "and it is not its own voting unit under quorum_by=principal.", file=sys.stderr)
@@ -966,14 +966,15 @@ def admit_cmd(args):
         payload["principal"] = args.principal
     if module:
         payload["module"] = module
-    if _append_governance(payload):
-        print(f"Admitted {args.device_id}" + (f" (principal: {args.principal})" if args.principal else "")
-              + (f" (module: {module}; it does not vote)" if module else ""))
-        if module:
-            return          # a module has no join-request and no sync address: no reciprocal peer
-        if _add_peer(_join_request_url(args.device_id), args.principal or args.device_id):
-            print("  + reciprocal peer added from its join-request URL — the owner now syncs to "
-                  "this device too (daemon picks it up next cycle, or `hv sync now`).")
+    if not _append_governance(payload):
+        sys.exit(1)           # no owner key here: the message is already printed, and no act was written
+    print(f"Admitted {args.device_id}" + (f" (principal: {args.principal})" if args.principal else "")
+          + (f" (module: {module}; it does not vote)" if module else ""))
+    if module:
+        return          # a module has no join-request and no sync address: no reciprocal peer
+    if _add_peer(_join_request_url(args.device_id), args.principal or args.device_id):
+        print("  + reciprocal peer added from its join-request URL — the owner now syncs to "
+              "this device too (daemon picks it up next cycle, or `hv sync now`).")
 
 
 def mint_module_key(name):
