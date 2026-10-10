@@ -464,12 +464,37 @@ def get_conn():
     return conn
 
 
+# The store's schema version (`meta.schema_version`). 3 (3.0): `entities` is keyed by the creating entry's journal
+# ref and `name` is a non-unique label. `CREATE TABLE IF NOT EXISTS` cannot alter a table, so a store without
+# version 3 has the entity-bearing tables dropped and is rebuilt from the journal, which loses nothing: the store
+# is a projection.
+STORE_SCHEMA_VERSION = "3"
+
+
+def _migrate_store_schema(conn):
+    """One-time, idempotent: a store not at `STORE_SCHEMA_VERSION` drops `entity_facts`, `entities`, `links` and
+    `journal_index` and clears the projected-journal marker, so the next store command (`_ensure_store_current`)
+    or `hv doctor rebuild` projects the journal into the new tables. A fresh store has nothing to drop. The marker
+    goes FIRST: a crash after the drop leaves a store that is known stale, never one that claims to be current."""
+    conn.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
+    row = conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
+    if row and row[0] == STORE_SCHEMA_VERSION:
+        return
+    conn.execute("DELETE FROM meta WHERE key IN ('projected_journal_sig', 'projected_entries')")
+    conn.commit()
+    for t in ("entity_facts", "links", "entities", "journal_index"):
+        conn.execute(f"DROP TABLE IF EXISTS {t}")
+    conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)", (STORE_SCHEMA_VERSION,))
+    conn.commit()
+
+
 def init_db():
     """Initialize database schema (idempotent)."""
     HIVE_HOME.mkdir(parents=True, exist_ok=True)
     JOURNAL_DIR.mkdir(exist_ok=True)
 
     conn = get_conn()
+    _migrate_store_schema(conn)
     conn.executescript("""
     CREATE TABLE IF NOT EXISTS meta (
         key TEXT PRIMARY KEY,
@@ -505,11 +530,14 @@ def init_db():
 
     CREATE TABLE IF NOT EXISTS entities (
         id INTEGER PRIMARY KEY,
-        name TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,   -- a label (3.0), not unique: the identity is (ref_node, ref_seq)
         type TEXT, -- person, project, concept
         attributes TEXT, -- JSON
         first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        last_updated TIMESTAMP
+        last_updated TIMESTAMP,
+        ref_node TEXT,        -- 3.0: the identity, the journal ref of the entry that created the entity
+        ref_seq INTEGER,
+        UNIQUE (ref_node, ref_seq)
     );
 
     CREATE TABLE IF NOT EXISTS entity_facts (
@@ -3686,21 +3714,25 @@ def persist_entity(conn, entry):
         attrs = None
     attrs_json = json.dumps(attrs if attrs is not None else {})
     etype = _payload_field(entry, "type")
-    cur.execute("""
-        INSERT INTO entities (name, type, attributes, first_seen, last_updated)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(name) DO UPDATE SET
-            type = excluded.type,
-            attributes = excluded.attributes,
-            last_updated = excluded.last_updated
-    """, (
-        payload["name"],
-        etype,
-        attrs_json,
-        _payload_field(entry, "created_at") or ts,
-        ts,
-    ))
-    eid = cur.execute("SELECT id FROM entities WHERE name = ?", (payload["name"],)).fetchone()[0]
+    # The legacy reading (§4.2 of the 3.0 plan): an entry folds by name into the entity that name already has, and
+    # the first applied entry for a name creates it, its journal ref being the identity. Every entry any 2.x node
+    # wrote is read this way; a name has one identity until the write path carries an explicit one.
+    # The name lookup and the insert are one write transaction, as 2.4's single upsert was: a second writer must
+    # wait here and then see the first one's row, or two rows share a name (`name` is no longer UNIQUE).
+    if not conn.in_transaction:
+        conn.execute("BEGIN IMMEDIATE")
+    row = cur.execute("SELECT id FROM entities WHERE name = ? ORDER BY id LIMIT 1", (payload["name"],)).fetchone()
+    if row is None:
+        cur.execute("""
+            INSERT INTO entities (name, type, attributes, first_seen, last_updated, ref_node, ref_seq)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (payload["name"], etype, attrs_json, _payload_field(entry, "created_at") or ts, ts,
+              entry.get("node_id"), entry.get("seq")))
+        eid = cur.lastrowid
+    else:
+        eid = row[0]
+        cur.execute("UPDATE entities SET type = ?, attributes = ?, last_updated = ? WHERE id = ?",
+                    (etype, attrs_json, ts, eid))
     _record_index(conn, entry, "entity", eid)
     return {"id": eid, "name": payload["name"], "type": etype}
 
