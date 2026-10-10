@@ -145,8 +145,8 @@ CONFIG_KEYS = {
                                                     "reports a flood; 2000 by default. Detection only."),
     "flood_per_minute":          _v(WRITTEN, "2.1", "Entries one device may stamp into a minute before `hv doctor` "
                                                     "reports a flood; 120 by default. Detection only."),
-    "forget_writers":            _v(WRITTEN, "1.25", "Whether an unsigned owner forget dated before genesis "
-                                                     "still counts: `legacy` or `owner`."),
+    "forget_writers":            _v(WRITTEN, "1.25", "Read by 2.x peers only: whether an unsigned owner "
+                                                     "forget dated before genesis counted. 3.0 never counts it."),
     "halflife_fact":             _v(WRITTEN, "1.20", "Half-life, in days, of a fact's confidence and "
                                                      "importance."),
     "halflife_idea":             _v(WRITTEN, "1.20", "Half-life, in days, of an idea's confidence and "

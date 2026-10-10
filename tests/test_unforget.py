@@ -162,19 +162,30 @@ def test_the_timeline_sorts_on_timestamp_not_on_device_id(tmp_path, monkeypatch)
     assert _row(_project(hv, tmp_path, base + [f, forgot, xfer, back]), "the lb drains in 30s")[0] != FORGET_FLOOR
 
 
-# ── the grandfather (kept by David's ruling; #122) and the legacy shape ───────────────────────────
+# ── the grandfather is gone in 3.0 (#122, plan 3.5); the pre-owner source-tag path stays ──────────
 
-def test_an_unsigned_forget_before_genesis_stays_honoured_and_an_unforget_is_never_grandfathered(tmp_path, monkeypatch):
+def test_an_unsigned_forget_before_genesis_is_ignored_and_an_unforget_is_never_grandfathered(tmp_path, monkeypatch):
     hv = _loadhv(tmp_path, monkeypatch)
     a, (d0, d1, _), base = _hive(hv)
     f = _fact(hv, d0, "legacy fact", "2025-12-30T00:00:00Z")
     legacy = _act(hv, d1, f, PRE)                                       # unsigned, pre-genesis (#122)
-    assert _row(_project(hv, tmp_path, base + [f, legacy]), "legacy fact")[0] == FORGET_FLOOR
-    for i, early in enumerate((_act(hv, d1, f, "2025-12-31T00:00:01Z", unforget=True),
-                               _act(hv, d1, f, "2025-12-31T00:00:02Z", owner=a[:2], unforget=True))):
-        assert _row(_project(hv, tmp_path, base + [f, legacy, early]), "legacy fact")[0] == FORGET_FLOOR
+    assert _row(_project(hv, tmp_path, base + [f, legacy]), "legacy fact")[0] != FORGET_FLOOR
+    signed_after = _act(hv, d1, f, "2026-01-04T00:00:00Z", owner=a[:2])  # the owner's own forget still works
+    assert _row(_project(hv, tmp_path, base + [f, legacy, signed_after]), "legacy fact")[0] == FORGET_FLOOR
+    for early in (_act(hv, d1, f, "2025-12-31T00:00:01Z", unforget=True),
+                  _act(hv, d1, f, "2025-12-31T00:00:02Z", owner=a[:2], unforget=True)):
+        assert _row(_project(hv, tmp_path, base + [f, legacy, early]), "legacy fact")[0] != FORGET_FLOOR
     back = _act(hv, d1, f, "2026-01-05T00:00:00Z", owner=a[:2], unforget=True)
-    assert _row(_project(hv, tmp_path, base + [f, legacy, back]), "legacy fact")[0] != FORGET_FLOOR
+    assert _row(_project(hv, tmp_path, base + [f, legacy, signed_after, back]), "legacy fact")[0] != FORGET_FLOOR
+
+
+def test_before_any_owner_the_source_tag_forget_is_still_honoured(tmp_path, monkeypatch):
+    """The pre-owner path is not touched by 3.0: no owner yet, so the `owner:owner/owner` source tag forgets."""
+    hv = _loadhv(tmp_path, monkeypatch)
+    d = _device(hv)
+    f = _fact(hv, d, "pre-owner fact", "2026-01-02T00:00:00Z")
+    ev = hv._content_evidence([f, _act(hv, d, f, "2026-01-03T00:00:00Z")], hv._governance_state([f]))
+    assert ev["pre-owner fact"]["forget"] is True
 
 
 def test_owner_acts_never_move_last_evidence_at(tmp_path, monkeypatch):
@@ -221,7 +232,7 @@ def test_two_nodes_project_identically(tmp_path, monkeypatch):
         rows.append([tuple(r) for r in conn.execute(
             "SELECT content, confidence, contested, last_evidence_at FROM facts ORDER BY content")])
     assert rows[0] == rows[1]
-    assert [r[1] == FORGET_FLOOR for r in rows[0]] == [True, False, True]   # fact 0 forgotten, 1 lifted, 2 legacy
+    assert [r[1] == FORGET_FLOOR for r in rows[0]] == [True, False, False]   # fact 0 forgotten, 1 lifted, 2 unsigned pre-genesis: ignored
 
 
 def test_a_pre_1_24_node_skips_the_unforget(tmp_path, monkeypatch):

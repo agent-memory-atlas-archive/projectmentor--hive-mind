@@ -114,7 +114,7 @@ The keys a `set-config` act may set. An older node ignores a key it does not kno
 | `dead_man_days` | written | 1.9 | Days of owner silence before a quorum election can install a new owner. |
 | `flood_per_day` | written | 2.1 | Entries one device may stamp into a day before `hv doctor` reports a flood; 2000 by default. Detection only. |
 | `flood_per_minute` | written | 2.1 | Entries one device may stamp into a minute before `hv doctor` reports a flood; 120 by default. Detection only. |
-| `forget_writers` | written | 1.25 | Whether an unsigned owner forget dated before genesis still counts: `legacy` or `owner`. |
+| `forget_writers` | written | 1.25 | Read by 2.x peers only: whether an unsigned owner forget dated before genesis counted. 3.0 never counts it. |
 | `halflife_fact` | written | 1.20 | Half-life, in days, of a fact's confidence and importance. |
 | `halflife_idea` | written | 1.20 | Half-life, in days, of an idea's confidence and importance. |
 | `halflife_volatile` | written | 1.20 | Half-life, in days, of a `volatile`-tagged fact. |

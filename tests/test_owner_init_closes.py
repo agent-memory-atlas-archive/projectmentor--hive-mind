@@ -161,7 +161,7 @@ def test_an_in_effect_grandfathered_forget_is_re_issued_and_the_hive_closes(tmp_
     assert sum(1 for e in _entries(hv) if e.get("type") == "retract") == 2
 
     fa = _doctor(tmp_path)["forget-authz"]
-    assert fa["status"] == "ok" and fa["detail"].startswith("closed (forget_writers=owner)")
+    assert fa["status"] == "ok" and fa["detail"].startswith("closed: 0 facts depend on a pre-genesis unsigned forget")
 
 
 def test_a_member_sources_retract_is_never_promoted_into_an_owner_act(tmp_path, monkeypatch, capsys):
@@ -212,7 +212,8 @@ def test_a_dangling_grandfathered_forget_closes_the_hive_and_is_not_re_issued(tm
     assert "re-issued" not in out
     _hides, dangling = hv._forgets_grandfathered(_entries(hv), _gov(hv))
     assert _hides == [] and len(dangling) == 1                            # still reported, still honoured by nobody
-    assert "closed (forget_writers=owner): 1 unsigned" in _doctor(tmp_path)["forget-authz"]["detail"]
+    detail = _doctor(tmp_path)["forget-authz"]["detail"]
+    assert detail.startswith("closed: 0 facts depend") and "dangling: 1" in detail
 
 
 def test_an_empty_journal_closes_with_no_re_issue(tmp_path, monkeypatch, capsys):
@@ -238,7 +239,7 @@ def test_owner_init_force_closes_a_legacy_owned_hive_too(tmp_path, monkeypatch, 
     a, (d0, d1, _), base = _hive(hv)
     f = _fact(hv, d0, "the backup runs at 02:00", "2026-01-02T00:00:00Z")
     conn = _project(hv, tmp_path, base + [f, _act(hv, d1, f, PRE)])
-    assert _row(conn, "the backup runs at 02:00")[0] == FORGET_FLOOR
+    assert _row(conn, "the backup runs at 02:00")[0] != FORGET_FLOOR      # 3.0 shows what only the grandfather hid
     conn.close()
     assert _policy(hv) == "legacy"
 
@@ -282,7 +283,7 @@ def test_a_signing_failure_appends_nothing_and_leaves_the_hive_legacy(tmp_path, 
     assert _signed_forgets(hv) == []                                      # and NOTHING was appended
     assert [(e["type"], (e.get("payload") or {}).get("action"))
             for e in _appended_since(tmp_path, before)] == [("governance", "owner")]
-    assert _conf(hv, "the backup runs at 02:00") == FORGET_FLOOR          # the grandfather still holds it
+    assert _conf(hv, "the backup runs at 02:00") != FORGET_FLOOR          # 3.0: shown until the owner decides it
     sid = hv._short_id(*refs["the backup runs at 02:00"])
     assert "COULD NOT re-issue" in out and "NOTHING was written" in out and sid in out
     assert f"hive-mind retract {sid} --owner" in out and f"hive-mind unforget {sid}" in out
@@ -312,7 +313,7 @@ def test_an_append_that_fails_partway_never_sets_the_config(tmp_path, monkeypatc
     assert len(_signed_forgets(hv)) == 1                                  # the first landed and stays
     assert not [e for e in _entries(hv) if e.get("type") == "governance"
                 and (e["payload"] or {}).get("action") == "set-config"]
-    assert _conf(hv, "fact one") == FORGET_FLOOR and _conf(hv, "fact two") == FORGET_FLOOR
+    assert sorted(_conf(hv, c) == FORGET_FLOOR for c in ("fact one", "fact two")) == [False, True]   # the landed one holds
     assert "PARTLY re-issued" in out and "re-issued owner-signed:" in out and "NOT re-issued:" in out
     for c in ("fact one", "fact two"):                                    # both lists are reported
         assert hv._short_id(*refs[c]) in out

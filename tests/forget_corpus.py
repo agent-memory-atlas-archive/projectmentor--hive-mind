@@ -23,7 +23,8 @@ from test_unforget import _act, _hive, _transfer, PRE  # noqa: E402
 # `owner`: the genesis owner (seed, pub, id); `devs`: admitted devices; `policy_ts`: where a `forget_writers`
 # act goes (after genesis, before any later owner change); `expect`: see the module docstring; `absent_is`: what
 # the journal itself already sets when the key is "absent" (a hive that closed at genesis says `owner`).
-Scenario = namedtuple("Scenario", "entries owner devs policy_ts expect absent_is", defaults=("legacy",))
+# `current`: the owner at the end of the journal when it is not the genesis owner (a transfer, succession or election).
+Scenario = namedtuple("Scenario", "entries owner devs policy_ts expect absent_is current", defaults=("legacy", None))
 
 POLICIES = ("absent", "legacy", "owner")
 POLICY_TS = "2026-01-01T00:10:00Z"
@@ -31,8 +32,8 @@ D1, D2, D3, D4, D5, D6 = (f"2026-01-0{d}T00:00:00Z" for d in (2, 3, 4, 5, 6, 7))
 _B = base64.b64encode
 
 
-def _scn(entries, owner, devs, expect):
-    return Scenario(entries, owner, devs, POLICY_TS, expect)
+def _scn(entries, owner, devs, expect, current=None):
+    return Scenario(entries, owner, devs, POLICY_TS, expect, "legacy", current)
 
 
 def _forget_at(hv, dev, fact, ts, owner=None, source="owner:owner/owner"):
@@ -90,7 +91,7 @@ def owner_transfer_between(hv):
           _act(hv, d1, fs[3], D5, owner=b[:2])]              # B, the current owner: honoured
     return _scn(base + es, a, [d0, d1],
                 {"transfer: fact 0": (True, False), "transfer: fact 1": (True, True),
-                 "transfer: fact 2": (False, False), "transfer: fact 3": (True, True)})
+                 "transfer: fact 2": (False, False), "transfer: fact 3": (True, True)}, current=b)
 
 
 def owner_succession_between(hv):
@@ -110,7 +111,7 @@ def owner_succession_between(hv):
           _act(hv, d1, fs[3], D6, owner=o2[:2])]             # the successor: honoured
     return _scn(base + es, a, [d0, d1],
                 {"succession: fact 0": (True, False), "succession: fact 1": (True, True),
-                 "succession: fact 2": (False, False), "succession: fact 3": (True, True)})
+                 "succession: fact 2": (False, False), "succession: fact 3": (True, True)}, current=o2)
 
 
 def owner_election_between(hv):
@@ -132,7 +133,7 @@ def owner_election_between(hv):
           _act(hv, d1, f_after_c, "2026-06-03T00:00:00Z", owner=c[:2])]     # C, the elected owner: honoured
     return _scn(base + es, a, [d0, d1],
                 {"election: fact 0": (True, True), "election: fact 1": (False, False),
-                 "election: fact 2": (True, True)})
+                 "election: fact 2": (True, True)}, current=c)
 
 
 def dangling_pre_genesis_forget(hv):
@@ -170,7 +171,7 @@ def closed_at_genesis(hv):
                  "2026-01-01T00:01:00Z", 41)
     return Scenario(base + [kept, dropped, _act(hv, d1, kept, PRE), _act(hv, d1, dropped, PRE), reissue, close],
                     a, [d0, d1], "2026-01-01T00:20:00Z",       # a `legacy` act here reopens what genesis closed
-                    {"closed: re-issued signed": (True, True), "closed: never re-issued": (True, False)}, "owner")
+                    {"closed: re-issued signed": (True, True), "closed: never re-issued": (True, False)}, "owner", None)
 
 
 CORPUS = {fn.__name__: fn for fn in (

@@ -1,15 +1,14 @@
-"""2.0 4c: the pre-genesis forget grandfather is closed by the owner, never by a default flip (public #136,
-#135 part 2; decisions h:af137f9421 and h:696638b9b7).
+"""2.0 4c, re-specified by 3.0 PR 4: the pre-genesis forget grandfather is settled by the owner, never by a default flip
+(public #136, #135 part 2; decisions h:af137f9421 and h:696638b9b7).
 
-- An unset `forget_writers` still projects as `legacy`. A per-hive conditional default would project
-  identically (the two policies differ exactly on `_forgets_grandfathered`'s `hides`) and would not close
-  #122's attack, so the projection does not change and nothing reappears.
-- `hv doctor`'s `forget-authz` FAILS on an owned hive whose policy is still open, whether or not a fact
-  depends on the grandfather, and names each dependent fact by its `h:` id.
-- `hive-mind doctor --fix` is the close. Nothing depends: it closes at once. Facts depend: it lists them and
-  asks y/N at a terminal, default N, BEFORE unlocking the owner key; `y` re-signs each dependent forget and
-  then closes through the #122 guard. No terminal, a piped answer or N: nothing is written.
-- `hv doctor --fix` (the 15-minute timer) never closes: it cannot owner-sign, so it points.
+- 3.0 deleted the grandfather arm: an unsigned pre-genesis owner forget hides nothing, whatever `forget_writers` says. The
+  facts the last 2.x hid by it (the MIGRATION SET) show until the owner re-signs those forgets.
+- `hv doctor`'s `forget-authz` FAILS on an owned hive while the migration set is not empty, naming each fact by its `h:` id,
+  and PASSES on an empty set with the key unset, `legacy` or `owner` (the old check failed an open policy).
+- `hive-mind doctor --fix` and `hive-mind migrate forget` settle it. Nothing depends: nothing to do. Facts depend: it lists
+  them and asks y/N at a terminal, default N, BEFORE unlocking the owner key; `y` re-signs each dependent forget and
+  records the close. No terminal, a piped answer or N: nothing is written.
+- `hv doctor --fix` (the 15-minute timer) never settles it: it cannot owner-sign, so it points.
 """
 
 import argparse
@@ -31,6 +30,8 @@ from test_forget_writers import (_policy, _cli, _backdate_forget, _legacy_hive, 
                                  _journal)
 import _keys  # noqa: E402
 import _planes  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent / "oracles"))
+import content_evidence_2_4 as oracle_mod  # noqa: E402
 
 CTL = PROJECT / "hivemind_ctl.py"
 HV = PROJECT / "hv"
@@ -96,8 +97,8 @@ def _confidences(home):
 # ── the projection does not change ─────────────────────────────────────────────────────────────────
 
 def test_an_unset_policy_projects_exactly_like_an_explicit_legacy_one(tmp_path, monkeypatch):
-    """Fable's ask 1: every shape of owner forget at once, fact by fact. A 1.x peer projects `legacy`, so this
-    is also the mixed-fleet proof: agreement by identity."""
+    """Every shape of owner forget at once, fact by fact. 3.0 does not read the key, so an unset and an explicit
+    `legacy` policy project identically, and the facts 2.4 hid by the grandfather (the migration set) show."""
     hv = _loadhv(tmp_path, monkeypatch)
     a, (d0, d1, d2), base = _hive(hv)
     dep, signed, lifted, late, plain = (_fact(hv, d0, c, f"2026-01-02T00:00:0{i}Z") for i, c in
@@ -115,7 +116,12 @@ def test_an_unset_policy_projects_exactly_like_an_explicit_legacy_one(tmp_path, 
     legacy = hv._content_evidence(legacy_entries, hv._governance_state(legacy_entries))
     assert unset == legacy
     assert {c: v["forget"] for c, v in unset.items()} == {
+        "dependent": False, "signed": True, "lifted": False, "backdated late": False, "plain": False}
+    old = oracle_mod.bind(hv)(entries, hv._governance_state(entries))                  # what 2.4 projected
+    assert {c: v["forget"] for c, v in old.items()} == {
         "dependent": True, "signed": True, "lifted": False, "backdated late": True, "plain": False}
+    m = hv._forget_migration(entries, hv._governance_state(entries))
+    assert {f["content"] for f in m["facts"]} == {"dependent", "backdated late"} and len(m["dangling"]) == 1
 
 
 # ── hv doctor: an open owned hive fails ────────────────────────────────────────────────────────────
@@ -127,16 +133,17 @@ def test_an_open_hive_with_a_dependent_fact_fails_and_names_it_by_h_id(tmp_path)
     fa = _forget_authz(tmp_path)
     assert fa["status"] == "fail" and fa["facts"] == [
         {"sid": sid, "ref": fa["facts"][0]["ref"], "content": "the backup runs at 02:00"}]
-    assert sid in fa["detail"] and "hive-mind doctor --fix` here (this device keeps an owner key)" in fa["detail"]
+    assert sid in fa["detail"] and "hive-mind migrate forget` here (this device keeps an owner key)" in fa["detail"]
 
 
-def test_an_open_hive_with_nothing_depending_still_fails(tmp_path):
+def test_a_legacy_hive_with_nothing_depending_passes(tmp_path):
+    """3.0 (plan 3.4): the check is the migration set, not the key. `legacy` and nothing dependent passes, and the
+    detail states the empty list; the 2.4 check failed this hive."""
     run = _cli(tmp_path)
     _legacy_hive(tmp_path, run)
     run("remember", "a fact nobody forgot")
     fa = _forget_authz(tmp_path)
-    assert fa["status"] == "fail" and fa["facts"] == []
-    assert "no fact depends" in fa["detail"] and "hive-mind doctor --fix" in fa["detail"]
+    assert fa["status"] == "ok" and "closed: 0 facts depend on a pre-genesis unsigned forget" in fa["detail"]
 
 
 def test_a_closed_hive_passes_and_an_unowned_one_says_nothing(tmp_path):
@@ -148,13 +155,15 @@ def test_a_closed_hive_passes_and_an_unowned_one_says_nothing(tmp_path):
 
 
 @pytest.mark.parametrize("closed", [False, True])
-def test_doctor_exits_non_zero_on_an_open_hive_because_of_this_check(tmp_path, monkeypatch, closed):
+def test_doctor_exits_non_zero_while_a_migration_is_owed_because_of_this_check(tmp_path, monkeypatch, closed):
     """The exit code, asserted, not just the status (Fable's ask 2). `authenticity` fails on any unsigned
     working tree, so the check under test is the only one run here: the exit is attributable to it."""
     run = _cli(tmp_path)
     _legacy_hive(tmp_path, run)
+    _backdate_forget(tmp_path, run, "the backup runs at 02:00")
     if closed:
-        run("config", "set", "forget_writers", "owner")
+        rc, _ = _ctl_at_a_terminal(tmp_path, "y", "migrate", "forget")
+        assert rc == 0
     hv = _planes.load_hv(tmp_path, "hv_forget_exit", control_plane=False)
     real = hv._doctor_status
     monkeypatch.setattr(hv, "_doctor_status", lambda: [c for c in real() if c["name"] == "forget-authz"])
@@ -175,20 +184,24 @@ def test_the_printed_remedies_run_as_printed(tmp_path):
     keep = _ctl(tmp_path, "retract", sids[0], "--owner", "--reason", "keep it")
     back = _ctl(tmp_path, "unforget", sids[1], "--reason", "it was right")
     assert keep.returncode == 0 and back.returncode == 0, keep.stdout + keep.stderr + back.stdout + back.stderr
-    assert _forget_authz(tmp_path)["facts"] == []                         # both settled
+    assert _forget_authz(tmp_path)["status"] == "ok"                      # both settled
 
 
 # ── hive-mind doctor --fix: the close ──────────────────────────────────────────────────────────────
 
-def test_fix_closes_at_once_when_nothing_depends(tmp_path):
+def test_fix_with_nothing_depending_writes_nothing_and_the_check_passes(tmp_path):
     run = _cli(tmp_path)
     base = _legacy_hive(tmp_path, run)
     run("remember", "a fact nobody forgot")
+    before = _bytes_of(tmp_path)
     r = _ctl(tmp_path, "doctor", "--fix")
     assert "[y/N]" not in r.stdout
-    acts = _policy_acts(tmp_path)
-    assert len(acts) == base + 1 and acts[-1]["payload"]["value"] == "owner" and "owner_sig" in acts[-1]["payload"]
+    assert len(_policy_acts(tmp_path)) == base and _bytes_of(tmp_path) == before
     assert _forget_authz(tmp_path)["status"] == "ok"
+
+
+def _bytes_of(home):
+    return {str(p.relative_to(home)): p.read_bytes() for p in sorted(Path(home, "journal").glob("*.jsonl"))}
 
 
 @pytest.mark.parametrize("how", ["closed stdin", "y piped, no terminal", "N at a terminal", "Enter at a terminal"])
@@ -224,8 +237,8 @@ def test_a_no_never_asks_for_the_owner_key_passphrase(tmp_path):
 
 
 def test_yes_at_a_terminal_re_signs_every_dependent_forget_then_closes_and_nothing_comes_back(tmp_path):
-    """Fable's ask 9: the re-issue is a no-op on the forgotten set, on both contracts: the projection after
-    equals the one before, and a `legacy` projection over the new journal agrees."""
+    """The re-issue brings the 3.0 projection to what 2.4 projected: the facts show before it and are hidden after, and
+    the frozen 2.4 oracle over the journal as a peer that never saw the close would read it agrees."""
     run = _cli(tmp_path)
     base = _legacy_hive(tmp_path, run)
     run("remember", "a fact nobody forgot")
@@ -239,12 +252,14 @@ def test_yes_at_a_terminal_re_signs_every_dependent_forget_then_closes_and_nothi
     assert len(acts) == base + 1 and acts[-1]["payload"]["value"] == "owner"
     journal = _journal(tmp_path)
     assert journal.index(new[-1]) < journal.index(acts[-1])               # re-issues first, the close last
-    assert _confidences(tmp_path) == before                               # the 2.0 projection: unchanged
-    assert before["the backup runs at 02:00"] == FORGET_FLOOR
+    after = _confidences(tmp_path)
+    hidden = ("the backup runs at 02:00", "the vpn uses wireguard")
+    assert all(before[t] != FORGET_FLOOR for t in hidden) and all(after[t] == FORGET_FLOOR for t in hidden)
+    assert after["a fact nobody forgot"] == before["a fact nobody forgot"]
     hv = _planes.load_hv(tmp_path, "hv_forget_legacy", control_plane=False)
     as_1x = [e for e in journal if e not in acts[base:]]                  # a peer that never saw the close
-    ev = hv._content_evidence(as_1x, hv._governance_state(as_1x))
-    assert {c: v["forget"] for c, v in ev.items()} == {c: v == FORGET_FLOOR for c, v in before.items()}
+    ev = oracle_mod.bind(hv)(as_1x, hv._governance_state(as_1x))
+    assert {c: v["forget"] for c, v in ev.items()} == {c: v == FORGET_FLOOR for c, v in after.items()}
     assert _forget_authz(tmp_path)["status"] == "ok"
     assert rc == 0 or "forget-authz now: closed" in out
 
@@ -268,7 +283,7 @@ def test_fix_dry_run_only_says_what_it_would_do(tmp_path):
     base = _legacy_hive(tmp_path, run)
     _backdate_forget(tmp_path, run, "the backup runs at 02:00")
     r = _ctl(tmp_path, "doctor", "--fix", "--dry-run")
-    assert "would ask to re-sign 1 pre-genesis forget(s), then close" in r.stdout
+    assert "would ask to re-sign 1 pre-genesis forget(s), then record forget_writers=owner" in r.stdout
     assert len(_policy_acts(tmp_path)) == base
 
 
@@ -285,7 +300,7 @@ def test_hv_doctor_fix_points_and_never_closes_but_still_repairs(tmp_path):
     os.chmod(dk, 0o644)
     r = subprocess.run([sys.executable, str(HV), "doctor", "--fix"], env=_env(tmp_path), capture_output=True,
                        text=True, stdin=subprocess.DEVNULL)
-    assert r.returncode != 0 and "run `hive-mind doctor --fix` on the owner machine" in r.stdout
+    assert r.returncode != 0 and "run `hive-mind migrate forget` on the owner machine" in r.stdout
     assert "[y/N]" not in r.stdout and "heal error" not in r.stdout and "hive-mind " + "config set" not in r.stderr
     assert len(_policy_acts(tmp_path)) == base and _forget_authz(tmp_path)["status"] == "fail"
     assert (dk.stat().st_mode & 0o777) == 0o600

@@ -134,7 +134,7 @@ def test_config_lambda_zero_collapses_same_device(tmp_path):
 
 def test_owner_forget_authority():
     # The forget-authorization rule (pure reader test): once an owner exists, only an owner-SIGNED
-    # forget (or one predating the owner) is honored; an unsigned `owner:owner/owner` is ignored.
+    # forget is honored; an unsigned `owner:owner/owner` is ignored.
     hv = _loadhv()
     oseed = os.urandom(32)
     opub = hv._ed25519.pub_from_seed(oseed)
@@ -164,11 +164,11 @@ def test_owner_forget_authority():
     # owner-signed forget -> honored
     ev = hv._content_evidence([owner, fact, forget("2026-03-01T00:00:00Z", signed=True)], gov)
     assert ev["X"]["forget"] is True
-    # unsigned forget that PREDATES the owner -> grandfathered (honored)
+    # unsigned forget that PREDATES the owner -> no longer grandfathered (3.0 removed the arm): ignored
     late_owner = gov_owner("2026-04-01T00:00:00Z")
     gov2 = hv._governance_state([late_owner])
     ev = hv._content_evidence([late_owner, fact, forget("2026-03-01T00:00:00Z", signed=False)], gov2)
-    assert ev["X"]["forget"] is True
+    assert ev["X"]["forget"] is False
     # with NO owner at all -> legacy unsigned forget honored
     ev = hv._content_evidence([fact, forget("2026-03-01T00:00:00Z", signed=False)], None)
     assert ev["X"]["forget"] is True

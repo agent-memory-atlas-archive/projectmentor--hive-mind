@@ -22,7 +22,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_update_script import (REPO, Sandbox, _backdated_forget, _ctl, _git, _major_upstream,  # noqa: E402,F401
-                                sandbox)
+                                sandbox, reopen_as_2x)
 
 pytestmark = pytest.mark.skipif(not sys.platform.startswith("linux"), reason="needs Linux")
 
@@ -84,7 +84,7 @@ def snap(sb):
 def open_hive(sb, fact="the backup runs at 02:00"):
     """An owned hive whose forget_writers is still open, with one fact kept forgotten only by the grandfather."""
     assert _ctl(sb, "owner", "init").returncode == 0
-    assert _ctl(sb, "config", "set", "forget_writers", "legacy").returncode == 0
+    reopen_as_2x(sb.hive, sb.env(), sb.hive)
     return _backdated_forget(sb, fact)
 
 
@@ -294,6 +294,8 @@ def test_g_the_2_4_reflog_path_in_the_same_unix_second_as_the_start(sandbox):
     rc, out, err = run_update(sb, extra_env={"HIVE_UPDATE_REEXEC": "1"}, tty=None)         # the child alone
     assert rc == 1, out + err
     assert _git(sb.hive, "rev-parse", "HEAD") == b0 and "was undone" in err
+    assert snap(sb)[1:] == before_files                                         # file bytes and untracked files kept
+    untouched(sb)
 
 
 def test_h_a_failing_fetch_in_the_child_still_runs_step_0_and_undoes_the_parents_switch(sandbox):
@@ -317,7 +319,6 @@ def test_h_a_failing_fetch_in_the_child_still_runs_step_0_and_undoes_the_parents
     assert _git(sb.hive, "rev-parse", "HEAD") == b0
     assert snap(sb)[1:] == before_files
     untouched(sb)
-    assert snap(sb)[1:] == before_files
 
 
 def test_g_the_2_4_rewrite_path_returns_to_the_pre_switch_head(sandbox):
@@ -337,33 +338,29 @@ def test_g_the_2_4_rewrite_path_returns_to_the_pre_switch_head(sandbox):
     assert _git(sb.hive, "rev-parse", "HEAD") == b0 and "was undone" in err
 
 
-def test_h_a_failing_fetch_in_the_child_still_runs_step_0_and_undoes_the_parents_switch(sandbox):
-    """The re-exec'd process used to reach step 0 only after `git fetch`; a non-zero fetch left the parent's
-    switch in place with the migration unchecked (hive-mind#340)."""
-    sb = sandbox()
-    open_hive(sb)
-    b0, mid, tip = two_ahead(sb)
-    _git(sb.hive, "fetch", "-q", "origin")
-    dirty(sb)
-    before_files = snap(sb)[1:]
-    second = int(time.time()) - 2
-    stub_date(sb, second)
-    env = {**os.environ, "GIT_COMMITTER_DATE": f"{second} +0000", "GIT_AUTHOR_NAME": "t",
-           "GIT_AUTHOR_EMAIL": "t@e.invalid", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@e.invalid"}
-    subprocess.run(["git", "-C", str(sb.hive), "merge", "--ff-only", "-q", mid], check=True, env=env)   # the parent
-    _git(sb.hive, "remote", "set-url", "origin", str(sb.tmp / "no-such-remote"))                      # the fetch fails
-    rc, out, err = run_update(sb, extra_env={"HIVE_UPDATE_REEXEC": "1"}, tty=None)
-    assert rc == 1 and "REFUSED" in err, out + err
-    assert "Fetching latest" not in out                                         # refused before the fetch ran
-    assert _git(sb.hive, "rev-parse", "HEAD") == b0
-    assert snap(sb)[1:] == before_files
-    untouched(sb)
-    untouched(sb)
-
-
 # ── (h) the 2.4 switch plus one fast-forward of the child's own, all in the start second ─────────────────────
 
+def stub_first_check_passes(sb):
+    """A `python3` that answers the FIRST `migrate forget --check` with success (the child's early step 0 sees a
+    closed hive) and runs everything else, the later checks included, for real. Without it the hive is open at
+    the early check and the child never reaches its own fast-forward (hive-mind#341)."""
+    import shutil
+    seen = sb.tmp / "first-check-seen"
+    stub = sb.stub / "python3"
+    stub.write_text(f'''#!/bin/sh
+case " $* " in
+  *" migrate forget --check "*) if [ ! -e "{seen}" ]; then : > "{seen}"; exit 0; fi ;;
+esac
+exec {shutil.which("python3")} "$@"
+''')
+    stub.chmod(0o755)
+    return seen
+
+
 def test_h_a_switch_plus_the_childs_own_fast_forward_returns_to_the_pre_switch_head_not_the_middle(sandbox):
+    """The 2.4 parent switched to `mid`; the child's early step 0 passes (stubbed once), so it goes on to its own fetch
+    and fast-forward to `tip`, and the step 0 after that switch finds the migration owed. HEAD must return to `b0`,
+    not stop at `mid`."""
     sb = sandbox()
     open_hive(sb)
     b0, mid, tip = two_ahead(sb)
@@ -372,14 +369,17 @@ def test_h_a_switch_plus_the_childs_own_fast_forward_returns_to_the_pre_switch_h
     before_files = snap(sb)[1:]                                                  # before the parent's switch
     second = int(time.time()) - 2
     stub_date(sb, second)
+    seen = stub_first_check_passes(sb)
     env = {**os.environ, "GIT_COMMITTER_DATE": f"{second} +0000", "GIT_AUTHOR_NAME": "t",
            "GIT_AUTHOR_EMAIL": "t@e.invalid", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@e.invalid"}
     subprocess.run(["git", "-C", str(sb.hive), "merge", "--ff-only", "-q", mid], check=True, env=env)   # the parent
     rc, out, err = run_update(sb, extra_env={"HIVE_UPDATE_REEXEC": "1"}, tty=None)   # the child fast-forwards to tip
     assert rc == 1, out + err
+    assert seen.exists() and "Fetching latest" in out and "Repo updated" in out, out + err   # it DID reach its own switch
     head = _git(sb.hive, "rev-parse", "HEAD")
     assert head == b0, f"stopped at {'the middle commit' if head == mid else head}"
     assert snap(sb)[1:] == before_files
+    untouched(sb)
 
 
 def test_h_the_child_alone_in_a_later_second_rolls_back_to_the_head_it_read_before_its_fetch(sandbox):
@@ -391,29 +391,6 @@ def test_h_the_child_alone_in_a_later_second_rolls_back_to_the_head_it_read_befo
     rc, out, err = run_update(sb, extra_env={"HIVE_UPDATE_REEXEC": "1"}, tty=None)
     assert rc == 1, out + err
     assert _git(sb.hive, "rev-parse", "HEAD") == b0 and "did not switch the tree" in err   # step 0 ran before its fetch
-
-
-def test_h_a_failing_fetch_in_the_child_still_runs_step_0_and_undoes_the_parents_switch(sandbox):
-    """The re-exec'd process used to reach step 0 only after `git fetch`; a non-zero fetch left the parent's
-    switch in place with the migration unchecked (hive-mind#340)."""
-    sb = sandbox()
-    open_hive(sb)
-    b0, mid, tip = two_ahead(sb)
-    _git(sb.hive, "fetch", "-q", "origin")
-    dirty(sb)
-    before_files = snap(sb)[1:]
-    second = int(time.time()) - 2
-    stub_date(sb, second)
-    env = {**os.environ, "GIT_COMMITTER_DATE": f"{second} +0000", "GIT_AUTHOR_NAME": "t",
-           "GIT_AUTHOR_EMAIL": "t@e.invalid", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@e.invalid"}
-    subprocess.run(["git", "-C", str(sb.hive), "merge", "--ff-only", "-q", mid], check=True, env=env)   # the parent
-    _git(sb.hive, "remote", "set-url", "origin", str(sb.tmp / "no-such-remote"))                      # the fetch fails
-    rc, out, err = run_update(sb, extra_env={"HIVE_UPDATE_REEXEC": "1"}, tty=None)
-    assert rc == 1 and "REFUSED" in err, out + err
-    assert "Fetching latest" not in out                                         # refused before the fetch ran
-    assert _git(sb.hive, "rev-parse", "HEAD") == b0
-    assert snap(sb)[1:] == before_files
-    untouched(sb)
 
 
 # ── the marker: only the pre-exec process sets it; the child never does ──────────────────────────────────────
