@@ -107,14 +107,15 @@ def test_the_loader_is_one_list_one_loop_and_nothing_else():
 # attribute or a string (so `getattr(mod, "run_path")` fails as well as `mod.run_path(...)`).
 LOADER_ONLY = ("exec", "compile")
 BANNED_MODULES = {"runpy", "importlib", "imp", "zipimport", "py_compile", "compileall", "marshal", "ctypes",
-                  "builtins", "code", "codeop", "pkgutil", "pdb", "bdb"}
+                  "builtins", "code", "codeop", "pkgutil", "pdb", "bdb", "timeit", "profile", "cProfile", "trace",
+                  "doctest"}
 BANNED_NAMES = {"eval", "__import__", "__builtins__", "import_module", "exec_module", "load_module", "run_path",
                 "run_module", "execfile", "spec_from_file_location", "spec_from_loader", "module_from_spec",
                 "SourceFileLoader", "SourcelessFileLoader", "ExtensionFileLoader", "load_source", "load_compiled",
                 "load_dynamic", "InteractiveInterpreter", "InteractiveConsole", "compile_file", "compile_dir"}
 # A module name is also banned as a string (`sys.modules["runpy"]`, `__import__` is already banned), except the
-# short ones that are ordinary words here (`imp` is a local name for importance, "code" a key).
-BANNED_STRINGS = BANNED_NAMES | (BANNED_MODULES - {"imp", "code"})
+# short ones that are ordinary words here (`imp` is a local name for importance, "code" a key, "trace"/"profile" nouns).
+BANNED_STRINGS = BANNED_NAMES | (BANNED_MODULES - {"imp", "code", "trace", "profile"})
 
 
 def file_runner_violations(data):
@@ -137,13 +138,19 @@ def file_runner_violations(data):
     return out
 
 
+def outside_the_loader(name, violations, span=None):
+    """The violations not allowed: only `hv`'s own exec/compile, on a line inside the loader block (`span` is its
+    (first, last) line), are."""
+    return [(line, what) for line, what in violations
+            if not (name == "hv" and span and span[0] <= line <= span[1] and what.strip("'") in LOADER_ONLY)]
+
+
 def test_the_one_exec_in_the_tree_is_the_loader():
     """Nothing else in `hv` or its parts compiles or evaluates code, imports by name, or runs a file as code
     (runpy, importlib loaders, `__import__` of a path, and the rest of BANNED_NAMES)."""
     for path, data in hv_sources():
-        for line, what in file_runner_violations(data):
-            in_loader = path.name == "hv" and line >= loader_line() and what.strip("'") in LOADER_ONLY
-            assert in_loader, f"{path.name}:{line}: {what}"
+        found = outside_the_loader(path.name, file_runner_violations(data), loader_lines())
+        assert not found, f"{path.name}: {found}"
 
 
 # One planted probe per file-running API: each has to be reported by the guard's own function.
@@ -168,6 +175,12 @@ FILE_RUNNER_PROBES = {
     "code.InteractiveInterpreter": "import code\ncode.InteractiveInterpreter().runsource('1')",
     "getattr by string": "m = object()\ngetattr(m, 'run_path')('x')",
     "alias of a runner": "f = __builtins__",
+    "attribute only": "m = object()\nm.run_path('x')",
+    "timeit": "import timeit\ntimeit.timeit('1')",
+    "profile": "import profile\nprofile.run('1')",
+    "cProfile": "import cProfile\ncProfile.run('1')",
+    "trace": "import trace\ntrace.Trace().run('1')",
+    "doctest": "import doctest\ndoctest.run_docstring_examples('x', {})",
 }
 
 
@@ -176,13 +189,30 @@ def test_the_exec_ban_reports_each_planted_file_runner(name):
     assert file_runner_violations(FILE_RUNNER_PROBES[name]), name
 
 
+def test_the_loader_allowance_is_the_loaders_exec_and_compile_inside_its_span_only():
+    span = (10, 20)
+    for src, name, allowed in [
+        ("exec(x)", "hv", True),
+        ("compile(x, 'a', 'exec')", "hv", True),
+        ("eval(x)", "hv", False),              # inside the span but not LOADER_ONLY
+        ("import runpy", "hv", False),
+        ("exec(x)", "01_identity.py", False),  # a part never gets the allowance
+    ]:
+        found = file_runner_violations("\n" * 14 + src)
+        assert found and bool(outside_the_loader(name, found, span)) is (not allowed), src
+    for pad in ("\n" * 4, "\n" * 24):  # before and after the loader block
+        assert outside_the_loader("hv", file_runner_violations(pad + "exec(x)"), span), len(pad)
+
+
 def test_the_exec_ban_is_quiet_on_ordinary_code():
     assert file_runner_violations("import re, subprocess\nre.compile('x')\nsubprocess.run(['ls'])\n") == []
 
 
-def loader_line():
+def loader_lines():
+    """(first, last) line of the loader block in `hv`."""
     data = (PROJECT / "hv").read_bytes()
-    return data[:loader_span(data)[0]].count(b"\n") + 1
+    start, end = loader_span(data)
+    return data[:start].count(b"\n") + 1, data[:end].count(b"\n")
 
 
 def test_PARTS_is_a_tuple_of_package_relative_paths():
