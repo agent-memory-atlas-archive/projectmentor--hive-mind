@@ -25,24 +25,6 @@ jobs:
       - name: Run offline test suite
         run: python3 -m pytest -q -n auto   # pytest-xdist: every core (the sign gate runs the same)
 
-  # 3.1 PRs 1 and 2 only (the PRs that move code out of `hv` into hivemind/parts/): `hv` with its loader block
-  # replaced by the parts must equal `hv` at the PR's base, byte for byte. Not a permanent check: once the move is
-  # done there is no old `hv` to compare with, and a permanent copy would freeze the parts. Kept through PR 2 (it gates PR 2 too); a follow-up removes it.
-  hv-move-gate:
-    if: github.event_name == 'pull_request' && (startsWith(github.head_ref, 'feat/3.1-pr1-') || startsWith(github.head_ref, 'feat/3.1-pr2-'))
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
-        with:
-          python-version: '3.12'
-      - name: Parts joined at the loader equal the base hv
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          git fetch --no-tags --depth=1 origin "$BASE_SHA"
-          python3 scripts/common/hv_move_gate.py "$BASE_SHA"
-
   # The suite as it runs on a developer's machine (#160): HIVE_HOME exported to a live-looking hive with
   # an owner, a genesis pin and keys. That hive is marked as a decoy, so the session guard in conftest.py
   # fails the run unless every byte of it (journal, store, keys) is unchanged at the end.

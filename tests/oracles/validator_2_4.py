@@ -4,7 +4,7 @@ Never edit.
 
 `tests/test_entity_write_path.py` (3.0 plan 4.5, PR 8) runs the two optional `entity` fields, `identity_ref` and
 `new_identity`, through THIS text, so "a 2.4 validator accepts the new fields" is a fact about 2.4 and not a sentence.
-The first block is byte-for-byte the 2.4 text (`hv` lines 4000-4120 at `53a3eeb`); the second is 2.4's reading of
+The first block is byte-for-byte the 2.4 text (`hv` lines 4000-4120 at `53a3eeb`, before the 3.1 split; now in `hivemind/parts/`); the second is 2.4's reading of
 which `entity` entries it applies (`_entity_name`, `_entity_declined`, `_entity_verdicts`, lines 3710-3757), keyed by
 name. The test pins the sha256 of each and runs them in `hv`'s namespace, which supplies the helpers
 (`_is_str`, `_valid_ref`, `_link_authority`, ...).

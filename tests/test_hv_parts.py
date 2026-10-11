@@ -1,7 +1,7 @@
 """The part loader (3.1 PR 1, docs/design "3.1 plan" section 2.1).
 
 `hv` is a header, a loader and a footer. Its body lives in `hivemind/parts/NN_<name>.py`, executed in order into
-`hv`'s own namespace by the loader, from the one list `PARTS`. This file is the permanent half of the move gate:
+`hv`'s own namespace by the loader, from the one list `PARTS`. This file is what remains of the move gate after it was retired:
 
 * what the loader may do (its text, its list, its bytes-not-text read, the one exec in the tree);
 * what the loaded namespace is (exactly `PARTS` more than the monolith defined; every code object in it comes from
@@ -9,8 +9,8 @@
 * that the guards which read `hv`'s text read the parts too, proven by planting a violation in `01_identity` and
   watching each guard fail (directive h:157bd5e469: a guard is not trusted on its docstring).
 
-What is NOT here, on purpose: equality with the pre-split `hv`. That is `scripts/common/hv_move_gate.py`, run against
-the base of the PRs that move code. Kept forever it would freeze the parts.
+What is NOT here, on purpose: equality with the pre-split `hv`. It was checked once, in the PRs that moved the code;
+kept forever it would freeze the parts.
 """
 
 import ast
