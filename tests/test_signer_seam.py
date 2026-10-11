@@ -114,3 +114,17 @@ def test_the_signer_does_not_leak_the_seed():
 def test_a_malformed_seed_is_refused(bad):
     with pytest.raises(ValueError):
         signer.FileSigner(bad)
+
+
+def test_a_shadowing_hivemind_package_does_not_break_the_import(tmp_path):
+    """A regular `hivemind` package elsewhere on the path (PyPI has one) must not beat ours: ours is regular too."""
+    import subprocess
+
+    shadow = tmp_path / "hivemind"
+    shadow.mkdir()
+    (shadow / "__init__.py").write_text("")
+    code = f"import sys; sys.path.insert(0, {str(PROJECT)!r}); from hivemind.crypto import signer; print(signer.__file__)"
+    env = {"PYTHONPATH": str(tmp_path), "PATH": "/usr/bin:/bin"}
+    out = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip().startswith(str(PROJECT))
