@@ -1,1 +1,0 @@
-- A module service unit is now ordered after `hive-sync.service` (`After=` only, no `Wants=` or `Requires=`), so a module that reads the hive at start finds sync up first; a node without hive-sync behaves as before. Existing units pick this up on the next `hive-mind module update` (#96 in the private tracker).

@@ -1,1 +1,0 @@
-- **3.0: the schema-3 migration drops, rebuilds and stamps `meta.schema_version` in one transaction (PR 7 follow-up).** A crash part-way through the migration can no longer leave a store with the tables dropped but the version unstamped, or stamped but not rebuilt; the next store command re-runs the whole migration.
