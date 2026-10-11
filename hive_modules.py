@@ -523,7 +523,7 @@ def _fetch(repo, dest):
     try:
         subprocess.run(["git", "clone", "--quiet", "--depth", "1", "--", repo, str(dest)], env=env,
                        check=True, capture_output=True, text=True, timeout=300)
-        ls = subprocess.run(["git", "-C", str(dest), "ls-files", "-z"], check=True, capture_output=True, timeout=30)
+        ls = subprocess.run(["git", "-c", "core.fsmonitor=false", "-C", str(dest), "ls-files", "-z"], check=True, capture_output=True, timeout=30)
         head = subprocess.run(["git", "-C", str(dest), "rev-parse", "HEAD"], check=True, capture_output=True,
                               text=True, timeout=30).stdout.strip()
     except subprocess.CalledProcessError as e:
@@ -1412,7 +1412,8 @@ def check_module(root, core_version, run=False, deny=()):
     tracked = None
     if (root / ".git").exists():
         try:
-            ls = subprocess.run(["git", "-C", str(root), "ls-files", "-z"], check=True, capture_output=True, timeout=30)
+            ls = subprocess.run(["git", "-c", "core.fsmonitor=false", "-C", str(root), "ls-files", "-z"],
+                                check=True, capture_output=True, timeout=30)
             tracked = [n.decode() for n in ls.stdout.split(b"\x00") if n]
         except (OSError, subprocess.SubprocessError):
             warnings.append("could not list the git-tracked files; checked every file on disk")

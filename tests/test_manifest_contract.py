@@ -572,3 +572,13 @@ def test_check_on_a_git_checkout_ignores_untracked_files(tmp_path):
     subprocess.run(["git", "-C", str(tmp_path), "add", "-A"], check=True)
     (tmp_path / "scratch.txt").write_text("untracked")
     assert hive_modules.check_module(tmp_path, CORE)[0] == []
+
+
+def test_check_on_a_git_checkout_does_not_run_its_fsmonitor_hook(tmp_path):
+    full_module(tmp_path)
+    subprocess.run(["git", "-C", str(tmp_path), "init", "-q"], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "add", "-A"], check=True)
+    marker = tmp_path.parent / (tmp_path.name + "-pwned")
+    subprocess.run(["git", "-C", str(tmp_path), "config", "core.fsmonitor", f"touch {marker}; false"], check=True)
+    assert hive_modules.check_module(tmp_path, CORE)[0] == []
+    assert not marker.exists()
