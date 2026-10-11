@@ -1,1 +1,0 @@
-- Fix: `hive-mind migrate forget` now routes through the dispatcher (it printed the usage and exited), and the update-gate and `migrate forget` notices tell the owner `hv sync now` instead of `hive-mind sync`, which does not run (#370).
