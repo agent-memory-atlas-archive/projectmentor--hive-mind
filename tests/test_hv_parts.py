@@ -102,17 +102,82 @@ def test_the_loader_is_one_list_one_loop_and_nothing_else():
     assert "Path(__file__).resolve().parent" in ast.unparse(body[1])
 
 
+# Every way the stdlib has to run code that is not written in the file being read. The loader's exec/compile are the
+# only uses in the tree; everything here is banned outright, as an import, an `import from`, a bare name, an
+# attribute or a string (so `getattr(mod, "run_path")` fails as well as `mod.run_path(...)`).
+LOADER_ONLY = ("exec", "compile")
+BANNED_MODULES = {"runpy", "importlib", "imp", "zipimport", "py_compile", "compileall", "marshal", "ctypes",
+                  "builtins", "code", "codeop", "pkgutil", "pdb", "bdb"}
+BANNED_NAMES = {"eval", "__import__", "__builtins__", "import_module", "exec_module", "load_module", "run_path",
+                "run_module", "execfile", "spec_from_file_location", "spec_from_loader", "module_from_spec",
+                "SourceFileLoader", "SourcelessFileLoader", "ExtensionFileLoader", "load_source", "load_compiled",
+                "load_dynamic", "InteractiveInterpreter", "InteractiveConsole", "compile_file", "compile_dir"}
+# A module name is also banned as a string (`sys.modules["runpy"]`, `__import__` is already banned), except the
+# short ones that are ordinary words here (`imp` is a local name for importance, "code" a key).
+BANNED_STRINGS = BANNED_NAMES | (BANNED_MODULES - {"imp", "code"})
+
+
+def file_runner_violations(data):
+    """(line, what) for each use in this source of exec, eval, a bare compile, or any file-running API. The loader
+    block's own exec/compile are the caller's to allow (they are LOADER_ONLY)."""
+    out = []
+    for node in ast.walk(ast.parse(data)):
+        if isinstance(node, ast.Import):
+            out += [(node.lineno, f"import {a.name}") for a in node.names if a.name.split(".")[0] in BANNED_MODULES]
+        elif isinstance(node, ast.ImportFrom):
+            if (node.module or "").split(".")[0] in BANNED_MODULES:
+                out.append((node.lineno, f"from {node.module} import ..."))
+            out += [(node.lineno, f"import {a.name}") for a in node.names if a.name in BANNED_NAMES | set(LOADER_ONLY)]
+        elif isinstance(node, ast.Name) and (node.id in BANNED_NAMES or node.id in LOADER_ONLY):
+            out.append((node.lineno, node.id))
+        elif isinstance(node, ast.Attribute) and (node.attr in BANNED_NAMES or node.attr == "exec"):
+            out.append((node.lineno, ast.unparse(node)))
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value in BANNED_STRINGS | set(LOADER_ONLY):
+            out.append((node.lineno, repr(node.value)))
+    return out
+
+
 def test_the_one_exec_in_the_tree_is_the_loader():
-    """Nothing else in `hv` or its parts compiles or evaluates code, imports by name, or reads a file as source."""
+    """Nothing else in `hv` or its parts compiles or evaluates code, imports by name, or runs a file as code
+    (runpy, importlib loaders, `__import__` of a path, and the rest of BANNED_NAMES)."""
     for path, data in hv_sources():
-        for node in ast.walk(ast.parse(data)):
-            if isinstance(node, ast.Call):
-                f = node.func
-                name = f.id if isinstance(f, ast.Name) else getattr(f, "attr", None)
-                dotted = ast.unparse(f)
-                if name in ("exec", "eval", "__import__", "import_module", "exec_module", "load_module") \
-                        or (name == "compile" and dotted == "compile"):
-                    assert path.name == "hv" and node.lineno >= loader_line(), f"{path.name}:{node.lineno}: {dotted}"
+        for line, what in file_runner_violations(data):
+            in_loader = path.name == "hv" and line >= loader_line() and what.strip("'") in LOADER_ONLY
+            assert in_loader, f"{path.name}:{line}: {what}"
+
+
+# One planted probe per file-running API: each has to be reported by the guard's own function.
+FILE_RUNNER_PROBES = {
+    "exec": "exec(open('x').read())",
+    "eval": "eval('1')",
+    "compile": "compile('1', 'x', 'exec')",
+    "__import__": "__import__('x')",
+    "runpy.run_path": "import runpy\nrunpy.run_path('x.py')",
+    "runpy.run_module": "from runpy import run_module\nrun_module('x')",
+    "runpy alias": "import runpy as r\nr.run_path('x')",
+    "importlib.import_module": "import importlib\nimportlib.import_module('x')",
+    "importlib.util loader": "import importlib.util\nimportlib.util.spec_from_file_location('m', 'x.py').loader.exec_module(None)",
+    "from importlib.machinery": "from importlib.machinery import SourceFileLoader\nSourceFileLoader('m', 'x').load_module()",
+    "imp.load_source": "import imp\nimp.load_source('m', 'x.py')",
+    "zipimport": "import zipimport\nzipimport.zipimporter('x.zip').load_module('m')",
+    "py_compile": "import py_compile\npy_compile.compile('x.py')",
+    "marshal": "import marshal\nexec_ = marshal.loads(b'')",
+    "ctypes": "import ctypes\nctypes.CDLL('x.so')",
+    "sys.modules string": "import sys\nsys.modules['runpy'].run_path('x')",
+    "builtins": "import builtins\ngetattr(builtins, 'ex' + 'ec')",
+    "code.InteractiveInterpreter": "import code\ncode.InteractiveInterpreter().runsource('1')",
+    "getattr by string": "m = object()\ngetattr(m, 'run_path')('x')",
+    "alias of a runner": "f = __builtins__",
+}
+
+
+@pytest.mark.parametrize("name", sorted(FILE_RUNNER_PROBES))
+def test_the_exec_ban_reports_each_planted_file_runner(name):
+    assert file_runner_violations(FILE_RUNNER_PROBES[name]), name
+
+
+def test_the_exec_ban_is_quiet_on_ordinary_code():
+    assert file_runner_violations("import re, subprocess\nre.compile('x')\nsubprocess.run(['ls'])\n") == []
 
 
 def loader_line():
@@ -357,12 +422,14 @@ GUARDS = [
      "def _probe_open(env, pw):\n    return _owner_unseal(env, pw)\n"),
     ("control-plane", "tests/test_control_plane.py::test_hv_does_not_import_the_control_plane",
      "def _probe_ctl():\n    import hivemind_ctl\n    return hivemind_ctl\n"),
+    ("exec-ban", "tests/test_hv_parts.py::test_the_one_exec_in_the_tree_is_the_loader",
+     "def _probe_run():\n    import runpy\n    return runpy.run_path('x.py')\n"),
     ("module-management", "tests/test_module_lifecycle.py::test_the_data_plane_cannot_reach_module_management",
      "def _probe_mod():\n    import hive_modules\n    return hive_modules\n"),
 ]
 # The verifier's probe, as one function planted in the first part: it reads the seed, opens it, signs as the
-# owner, and reaches for the control plane and module management.
-COMBINED_PROBE = ("def _probe_all(p, env, pw):\n    import ownerkey, hivemind_ctl, hive_modules\n"
+# owner, and reaches for the control plane, module management and runpy.
+COMBINED_PROBE = ("def _probe_all(p, env, pw):\n    import ownerkey, hivemind_ctl, hive_modules, runpy\n"
                   "    seed = OWNER_KEY_PATH.read_bytes()\n    _owner_unseal(env, pw)\n"
                   "    p = dict(p)\n    p['owner_sig'] = _ed25519.sign(b'x', seed)\n    return p\n")
 
