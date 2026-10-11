@@ -1358,7 +1358,7 @@ hive-mind <subcommand> [options]
 | `reset` | Recover a **wedged** install in one command: force-align the code to `origin` (even after a rewrite, even with local edits), rebuild the DB from the journal, refresh the supervisor units + Claude Code hooks, restart the daemon, and verify authenticity. **Your Hive (journal, keys, device identity) is preserved** — this is not `uninstall`. Use it when `hv doctor`/`hv verify` is unhappy after a breaking change. `-y` skips the prompt. |
 | `status` | Show device health and peer sync state. |
 | `invite` | Print the one-line address to paste on a new device so it can join this hive. |
-| `module` | *(2.1, Linux)* Install and manage modules: `add <name> --from <repo>`, `remove`, `update`, `list`, `config` *(2.3)*, `quota` (see below). |
+| `module` | *(2.1, Linux)* Install and manage modules: `add <name> --from <repo>`, `remove`, `update`, `list`, `config` *(2.3)*, `check` *(3.1)*, `quota` (see below). |
 | `uninstall` | Remove HiveMind from this device (see flags below). |
 
 ### `hive-mind module` — Install and manage modules *(2.1, Linux only)*
@@ -1369,6 +1369,7 @@ hive-mind module add --abort <name>          # (2.3)
 hive-mind module remove <name>
 hive-mind module update <name> [--from <repo>] [--publisher KEY]
 hive-mind module list
+hive-mind module check <dir> [--run] [--deny TERM] [--json]       # (3.1)
 hive-mind module config <name> set <key> <value> | unset <key> | list
 hive-mind module quota <name> [--per-hour N] [--per-day N] [--entry-bytes N] [--lifetime N]
 ```
