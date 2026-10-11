@@ -181,7 +181,7 @@ def test_c_open_and_declined_leaves_the_tree_byte_identical(sandbox, answer, dir
     sb = sandbox()
     before, after, rc, out, err = refuse_scenario(sb, answer, dirt, old=old)
     assert rc == 1, out + err
-    assert "REFUSED" in err and "hive-mind migrate forget" in err and "hive-mind sync" in err
+    assert "REFUSED" in err and "hive-mind migrate forget" in err and "hv sync now" in err
     assert "Update complete" not in out and "Refreshing commands" not in out and "Pinned this hive" not in out
     assert "was undone" in err
     assert after == before

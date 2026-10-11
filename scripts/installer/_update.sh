@@ -226,7 +226,7 @@ _forget_migration_step0() {
   _target="$(_rollback_target)"; _now="$(git -C "$HIVE_DIR" rev-parse HEAD)"
   echo "" >&2
   echo "hive-mind update: REFUSED. This version needs the pre-genesis forgets re-signed first, and they are not." >&2
-  echo "  On the owner machine run:  hive-mind migrate forget    then:  hive-mind sync" >&2
+  echo "  On the owner machine run:  hive-mind migrate forget    then:  hv sync now" >&2
   echo "  On every other machine, after the owner's re-issues have synced:  hive-mind update" >&2
   echo "  The owner machine should update first. There is no flag that skips this." >&2
   if [ -n "$_target" ] && [ "$_target" != "$_now" ] \

@@ -563,7 +563,7 @@ def migrate_cmd(args):
         return _key_written_status()
     if not _owner_key_exists():
         print("This device does not hold the owner key: nothing was written. Run `hive-mind migrate forget` on "
-              "the owner machine, then `hive-mind sync` here.")
+              "the owner machine, then `hv sync now` here.")
         return 1
     print(f"An admitted device could have written one of these forgets (#122), so read each of the {len(facts)}.")
     if not _confirmed(f"Re-sign these {len(facts)} forget(s) so the facts stay hidden? [y/N] "):
