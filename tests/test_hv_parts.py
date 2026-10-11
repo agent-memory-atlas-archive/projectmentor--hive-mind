@@ -112,7 +112,11 @@ BANNED_MODULES = {"runpy", "importlib", "imp", "zipimport", "py_compile", "compi
 BANNED_NAMES = {"eval", "__import__", "__builtins__", "import_module", "exec_module", "load_module", "run_path",
                 "run_module", "execfile", "spec_from_file_location", "spec_from_loader", "module_from_spec",
                 "SourceFileLoader", "SourcelessFileLoader", "ExtensionFileLoader", "load_source", "load_compiled",
-                "load_dynamic", "InteractiveInterpreter", "InteractiveConsole", "compile_file", "compile_dir"}
+                "load_dynamic", "InteractiveInterpreter", "InteractiveConsole", "compile_file", "compile_dir",
+                # the import machinery's own loaders, reachable without an import through sys.modules
+                "FileFinder", "PathFinder", "_load_unlocked", "_exec", "_load", "_get_supported_file_loaders",
+                "_bootstrap", "_bootstrap_external", "_frozen_importlib", "_frozen_importlib_external",
+                "compile_command"}
 # A module name is also banned as a string (`sys.modules["runpy"]`, `__import__` is already banned), except the
 # short ones that are ordinary words here (`imp` is a local name for importance, "code" a key, "trace"/"profile" nouns).
 BANNED_STRINGS = BANNED_NAMES | (BANNED_MODULES - {"imp", "code", "trace", "profile"})
@@ -133,7 +137,8 @@ def file_runner_violations(data):
             out.append((node.lineno, node.id))
         elif isinstance(node, ast.Attribute) and (node.attr in BANNED_NAMES or node.attr == "exec"):
             out.append((node.lineno, ast.unparse(node)))
-        elif isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value in BANNED_STRINGS | set(LOADER_ONLY):
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str) and (
+                node.value in BANNED_STRINGS | set(LOADER_ONLY) or node.value.startswith(("importlib.", "_frozen_importlib"))):
             out.append((node.lineno, repr(node.value)))
     return out
 
@@ -176,6 +181,11 @@ FILE_RUNNER_PROBES = {
     "getattr by string": "m = object()\ngetattr(m, 'run_path')('x')",
     "alias of a runner": "f = __builtins__",
     "attribute only": "m = object()\nm.run_path('x')",
+    "bootstrap via sys.modules": "import sys\nb = sys.modules['importlib._bootstrap']\nb._load_unlocked(None)",
+    "bootstrap attribute only": "f = m.FileFinder('d')",
+    "frozen importlib key": "import sys\nx = sys.modules['_frozen_importlib_external']",
+    "importlib.machinery key": "import sys\nx = sys.modules['importlib.machinery']",
+    "code.compile_command": "m.compile_command('1')",
     "timeit": "import timeit\ntimeit.timeit('1')",
     "profile": "import profile\nprofile.run('1')",
     "cProfile": "import cProfile\ncProfile.run('1')",
