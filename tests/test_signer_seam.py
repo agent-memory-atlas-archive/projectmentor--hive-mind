@@ -44,14 +44,16 @@ def _core_sources():
 
 
 def _signing_offenders(name, src):
-    """Calls to ed25519's `sign` in `src`, following names bound to the module or to its `sign` attribute."""
+    """Calls to ed25519's `sign` in `src`, following names bound to the module or to its `sign` attribute.
+    Any name containing `ed25519` counts as the module (the hv parts share one namespace, so a file may use a name another bound).
+    Documented limits: tuple/for/parameter bindings, importlib/__import__/sys.modules, relative or dotted imports."""
     tree = ast.parse(src)
     mods, signs = set(), set()                           # names bound to the module / to its `sign`
 
     def is_mod(n):
         if isinstance(n, ast.NamedExpr):
             return is_mod(n.value)
-        return (isinstance(n, ast.Name) and n.id in mods) or (isinstance(n, ast.Attribute) and "ed25519" in ast.unparse(n))
+        return (isinstance(n, ast.Name) and (n.id in mods or "ed25519" in n.id)) or (isinstance(n, ast.Attribute) and "ed25519" in ast.unparse(n))
 
     def is_sign(n):
         if isinstance(n, ast.Name):
@@ -67,6 +69,8 @@ def _signing_offenders(name, src):
             mods.update((a.asname or a.name) for a in node.names if a.name == "ed25519")
         elif isinstance(node, ast.ImportFrom) and node.module == "ed25519":
             for a in node.names:
+                if a.name == "*":
+                    offenders.append(f"{name}:{node.lineno} from ed25519 import *")
                 if a.name == "sign":
                     signs.add(a.asname or a.name)
                     offenders.append(f"{name}:{node.lineno} from ed25519 import sign")
@@ -92,6 +96,8 @@ def _signing_offenders(name, src):
     for node in ast.walk(tree):
         if isinstance(node, ast.Call) and is_sign(node.func):
             offenders.append(f"{name}:{node.lineno} {ast.unparse(node.func)}(...)")
+        elif isinstance(node, ast.Attribute) and node.attr == "sign" and is_mod(node.value):
+            offenders.append(f"{name}:{node.lineno} {ast.unparse(node)} (reference)")   # passed as a value (map, partial)
     return offenders
 
 
@@ -112,9 +118,19 @@ def test_the_seam_is_the_only_caller_of_ed25519_sign():
     "import ed25519\nk = ed25519\nk.sign(b'm', s)\n",
     "from ed25519 import sign as f\nf(b'm', s)\n",
     "import ed25519 as _ed25519\n(k := _ed25519).sign(b'm', s)\n",
+    "_ed25519.sign(b'm', s)\n",                             # bound by another file (the hv parts share one namespace)
+    "ed25519.sign(b'm', s)\n",
+    "from ed25519 import *\n",
+    "import functools\np = functools.partial(_ed25519.sign, seed=s)\n",
+    "list(map(_ed25519.sign, ms, ss))\n",
 ])
 def test_the_guard_catches_planted_aliases(probe):
     assert _signing_offenders("probe.py", probe)
+
+
+def test_the_guard_catches_a_sign_planted_in_a_part():
+    part = next(p for p in sorted((PROJECT / "hivemind" / "parts").glob("11_*.py")))
+    assert _signing_offenders(part.name, part.read_text() + "\ndef _planted(seed):\n    return _ed25519.sign(b'm', seed)\n")
 
 
 def test_the_guard_ignores_unrelated_sign_calls():
