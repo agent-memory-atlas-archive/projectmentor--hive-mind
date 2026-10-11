@@ -528,6 +528,31 @@ _ENTITY_DDL = """
 STORE_SCHEMA_VERSION = "3"
 
 
+class NewerStoreSchema(Exception):
+    """store.db carries a `schema_version` newer than this `hv` reads: another, newer `hv` wrote it."""
+    def __init__(self, found):
+        self.found = found
+        super().__init__(
+            f"store.db was written by a newer schema ({found}); this hv reads schema {STORE_SCHEMA_VERSION}. "
+            f"Update hv, or run `hv doctor rebuild` to build a fresh store from the journal")
+
+
+def _newer_store_schema():
+    """The `schema_version` of an existing store.db when it is newer than `STORE_SCHEMA_VERSION`, else None.
+    Reads only `meta`: a newer store's other tables may not be shaped as this `hv` expects."""
+    if not DB_PATH.exists():
+        return None
+    try:
+        conn = get_conn()
+        try:
+            row = conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
+        finally:
+            conn.close()
+        return row[0] if row and int(row[0]) > int(STORE_SCHEMA_VERSION) else None
+    except (sqlite3.Error, ValueError, TypeError):
+        return None
+
+
 def _ddl_statements(ddl):
     """Split a DDL script into statements, so they can run inside a transaction (`executescript` commits)."""
     out, cur = [], ""
@@ -576,6 +601,9 @@ def init_db():
     """Initialize database schema (idempotent)."""
     HIVE_HOME.mkdir(parents=True, exist_ok=True)
     JOURNAL_DIR.mkdir(exist_ok=True)
+    newer = _newer_store_schema()
+    if newer:
+        raise NewerStoreSchema(newer)
 
     conn = get_conn()
     conn.executescript("""
@@ -6937,9 +6965,61 @@ def entity(args):
         conn.close()
 
 
-def rebuild_db():
+def _rebuild_fresh():
+    """Build store.db from the journal into a new file and swap it in, whatever the old file holds (any
+    `schema_version`, any table shape). The old file is read by nothing, so a store a newer `hv` wrote, or one
+    that is damaged, rebuilds. A crash before the swap leaves the old file as it was."""
+    global DB_PATH
+    live = DB_PATH
+    tmp = live.with_name(live.name + ".rebuild")
+    sidecars = ("-wal", "-shm")
+    for suffix in ("",) + sidecars:
+        tmp.with_name(tmp.name + suffix).unlink(missing_ok=True)
+    lock = None
+    if live.exists():           # take the live store's write lock for the whole swap: a busy store fails as before
+        try:
+            lock = sqlite3.connect(live, timeout=_BUSY_TIMEOUT_S, isolation_level=None)
+            lock.execute("BEGIN IMMEDIATE")
+        except sqlite3.OperationalError as e:
+            lock.close()
+            if "locked" in str(e) or "busy" in str(e):
+                raise
+            lock = None
+        except sqlite3.DatabaseError:       # not a database at all: nothing to lock, nothing to keep
+            lock.close()
+            lock = None
+    DB_PATH = tmp
+    try:
+        counts = rebuild_db()
+        conn = get_conn()
+        try:
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        finally:
+            conn.close()
+    except BaseException:
+        DB_PATH = live
+        if lock:
+            lock.close()
+        for suffix in ("",) + sidecars:
+            tmp.with_name(tmp.name + suffix).unlink(missing_ok=True)
+        raise
+    DB_PATH = live
+    for suffix in sidecars:                      # the old file's log must not be replayed onto the new one
+        live.with_name(live.name + suffix).unlink(missing_ok=True)
+    os.replace(tmp, live)
+    if lock:
+        lock.close()
+    for suffix in sidecars:
+        tmp.with_name(tmp.name + suffix).unlink(missing_ok=True)
+    return counts
+
+
+def rebuild_db(fresh=False):
     """Rebuild SQLite entirely from the journal. Two-pass so cross-row links
-    resolve regardless of journal order. Returns a counts dict."""
+    resolve regardless of journal order. Returns a counts dict. `fresh` builds a new file and swaps it in,
+    so it needs nothing from the old one (`hv doctor rebuild`)."""
+    if fresh:
+        return _rebuild_fresh()
     init_db()
     conn = get_conn()
     try:
@@ -7025,7 +7105,7 @@ def _rebuild_in_transaction(conn, begun=False):
 
 
 def rebuild(args):
-    c = rebuild_db()
+    c = rebuild_db(fresh=True)
     print(f"Rebuilt from {c['entries']} journal entries:")
     print(f"  Facts: {c['facts']}  Decisions: {c['decisions']}  "
           f"Entities: {c['entities']}  Links: {c['links']}  Edges: {c['edges']}")
@@ -9293,7 +9373,10 @@ def _doctor_status():
     #    Content-duplicate facts collapse to one row, so rows <= journal fact-entries; the red flag
     #    is an empty DB over a non-empty journal (a missed rebuild).
     jfacts = sum(1 for e in entries if e.get("type") == "fact")
+    newer = _newer_store_schema()
     try:
+        if newer:
+            raise NewerStoreSchema(newer)
         conn = get_conn()
         nfacts = conn.execute("SELECT count(*) FROM facts").fetchone()[0]
         conn.close()
@@ -9303,6 +9386,8 @@ def _doctor_status():
         else:
             checks.append({"name": "database", "status": "ok",
                            "detail": f"{nfacts} fact rows from {jfacts} journal fact-entries"})
+    except NewerStoreSchema as e:
+        checks.append({"name": "database", "status": "fail", "detail": str(e)})
     except Exception as e:
         checks.append({"name": "database", "status": "fail",
                        "detail": f"store.db unreadable ({e}) — run `hv doctor rebuild`"})
@@ -11965,7 +12050,15 @@ def dispatch(args):
 
 def _dispatch(args):
     # Idempotent; also auto-migrates older DBs missing tables/indexes.
-    init_db()
+    # `hv doctor rebuild` builds a new store from the journal and reads nothing of the old one, so it skips this.
+    from_scratch = args.command == "doctor" and getattr(args, "doctor_action", None) == "rebuild"
+    try:
+        if not from_scratch:
+            init_db()
+    except NewerStoreSchema as e:
+        if args.command != "doctor":          # `hv doctor` reports it
+            print(f"hv: {e}", file=sys.stderr)
+            return 1
     if args.command in _STORE_COMMANDS:
         try:
             _ensure_store_current()   # #70: catch up after a deferred write or an out-of-band append

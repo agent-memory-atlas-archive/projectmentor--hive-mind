@@ -1,0 +1,1 @@
+- `hv doctor rebuild` builds the store from the journal into a new file and swaps it in, whatever `schema_version` or table shapes the old `store.db` has, so a store a newer `hv` wrote (or a damaged one) recovers. Any other `hv` command now names a store written by a newer schema instead of the generic "store is busy" message, and `hv doctor` flags it under `database`.
