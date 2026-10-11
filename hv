@@ -74,6 +74,13 @@ if _MISSING_CRYPTO:
                      f"cannot check. Restore the install: hive-mind update.\n")
     raise SystemExit(1)
 
+# The agent-facing contract version (hv API + Agent Integration Spec), SemVer MAJOR.MINOR.
+# MINOR = additive / backward-compatible (never remove or repurpose existing verbs, flags, or
+# output fields within a major). MAJOR = breaking; bump only when unavoidable, keep the previous
+# major working as deprecated shims through a window. Authoritative value; docs/AGENT_INTEGRATION.md
+# documents the same number. See `hv version`.
+CONTRACT_VERSION = "3.0"   # per-version history: docs/CONTRACT_HISTORY.md (newest first); add a new contract's entry there, not on this line (#106)
+
 HIVE_HOME = Path(os.environ.get("HIVE_HOME", Path.home() / "projects" / "hive-mind"))
 DB_PATH = HIVE_HOME / "store.db"
 JOURNAL_DIR = HIVE_HOME / "journal"
@@ -432,14 +439,6 @@ def _owner_unseal(env, passphrase):
 
 # `_read_passphrase` and `_stash_owner_key` moved to the control plane with every owner-key write
 # (2.0 PR 2b, `hivemind_owner.py`).
-
-
-# The agent-facing contract version (hv API + Agent Integration Spec), SemVer MAJOR.MINOR.
-# MINOR = additive / backward-compatible (never remove or repurpose existing verbs, flags, or
-# output fields within a major). MAJOR = breaking; bump only when unavoidable, keep the previous
-# major working as deprecated shims through a window. Authoritative value; docs/AGENT_INTEGRATION.md
-# documents the same number. See `hv version`.
-CONTRACT_VERSION = "3.0"   # per-version history: docs/CONTRACT_HISTORY.md (newest first); add a new contract's entry there, not on this line (#106)
 
 
 # --------------------------------------------------------------------------

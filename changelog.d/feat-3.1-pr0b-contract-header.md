@@ -1,0 +1,1 @@
+- `CONTRACT_VERSION` moves from the body of `hv` into its header, and a permanent test checks that `_update.sh` still reads the contract major from `hv`'s text (3.1 split, PR 0b; no behaviour change).
