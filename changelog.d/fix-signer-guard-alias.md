@@ -1,0 +1,1 @@
+- Tests: the signer-seam only-caller guard now follows names bound to the `ed25519` module or its `sign` attribute (aliases, `getattr`, walrus), with planted alias probes (#386).
