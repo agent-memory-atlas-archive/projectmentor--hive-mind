@@ -102,22 +102,127 @@ def test_the_loader_is_one_list_one_loop_and_nothing_else():
     assert "Path(__file__).resolve().parent" in ast.unparse(body[1])
 
 
+# Every way the stdlib has to run code that is not written in the file being read. The loader's exec/compile are the
+# only uses in the tree; everything here is banned outright, as an import, an `import from`, a bare name, an
+# attribute or a string (so `getattr(mod, "run_path")` fails as well as `mod.run_path(...)`).
+LOADER_ONLY = ("exec", "compile")
+BANNED_MODULES = {"runpy", "importlib", "imp", "zipimport", "py_compile", "compileall", "marshal", "ctypes",
+                  "builtins", "code", "codeop", "pkgutil", "pdb", "bdb", "timeit", "profile", "cProfile", "trace",
+                  "doctest"}
+BANNED_NAMES = {"eval", "__import__", "__builtins__", "import_module", "exec_module", "load_module", "run_path",
+                "run_module", "execfile", "spec_from_file_location", "spec_from_loader", "module_from_spec",
+                "SourceFileLoader", "SourcelessFileLoader", "ExtensionFileLoader", "load_source", "load_compiled",
+                "load_dynamic", "InteractiveInterpreter", "InteractiveConsole", "compile_file", "compile_dir",
+                # the import machinery's own loaders, reachable without an import through sys.modules
+                "FileFinder", "PathFinder", "_load_unlocked", "_exec", "_load", "_get_supported_file_loaders",
+                "_bootstrap", "_bootstrap_external", "_frozen_importlib", "_frozen_importlib_external",
+                "compile_command"}
+# A module name is also banned as a string (`sys.modules["runpy"]`, `__import__` is already banned), except the
+# short ones that are ordinary words here (`imp` is a local name for importance, "code" a key, "trace"/"profile" nouns).
+BANNED_STRINGS = BANNED_NAMES | (BANNED_MODULES - {"imp", "code", "trace", "profile"})
+
+
+def file_runner_violations(data):
+    """(line, what) for each use in this source of exec, eval, a bare compile, or any file-running API. The loader
+    block's own exec/compile are the caller's to allow (they are LOADER_ONLY)."""
+    out = []
+    for node in ast.walk(ast.parse(data)):
+        if isinstance(node, ast.Import):
+            out += [(node.lineno, f"import {a.name}") for a in node.names if a.name.split(".")[0] in BANNED_MODULES]
+        elif isinstance(node, ast.ImportFrom):
+            if (node.module or "").split(".")[0] in BANNED_MODULES:
+                out.append((node.lineno, f"from {node.module} import ..."))
+            out += [(node.lineno, f"import {a.name}") for a in node.names if a.name in BANNED_NAMES | set(LOADER_ONLY)]
+        elif isinstance(node, ast.Name) and (node.id in BANNED_NAMES or node.id in LOADER_ONLY):
+            out.append((node.lineno, node.id))
+        elif isinstance(node, ast.Attribute) and (node.attr in BANNED_NAMES or node.attr == "exec"):
+            out.append((node.lineno, ast.unparse(node)))
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str) and (
+                node.value in BANNED_STRINGS | set(LOADER_ONLY) or node.value.startswith(("importlib.", "_frozen_importlib"))):
+            out.append((node.lineno, repr(node.value)))
+    return out
+
+
+def outside_the_loader(name, violations, span=None):
+    """The violations not allowed: only `hv`'s own exec/compile, on a line inside the loader block (`span` is its
+    (first, last) line), are."""
+    return [(line, what) for line, what in violations
+            if not (name == "hv" and span and span[0] <= line <= span[1] and what.strip("'") in LOADER_ONLY)]
+
+
 def test_the_one_exec_in_the_tree_is_the_loader():
-    """Nothing else in `hv` or its parts compiles or evaluates code, imports by name, or reads a file as source."""
+    """Nothing else in `hv` or its parts compiles or evaluates code, imports by name, or runs a file as code
+    (runpy, importlib loaders, `__import__` of a path, and the rest of BANNED_NAMES)."""
     for path, data in hv_sources():
-        for node in ast.walk(ast.parse(data)):
-            if isinstance(node, ast.Call):
-                f = node.func
-                name = f.id if isinstance(f, ast.Name) else getattr(f, "attr", None)
-                dotted = ast.unparse(f)
-                if name in ("exec", "eval", "__import__", "import_module", "exec_module", "load_module") \
-                        or (name == "compile" and dotted == "compile"):
-                    assert path.name == "hv" and node.lineno >= loader_line(), f"{path.name}:{node.lineno}: {dotted}"
+        found = outside_the_loader(path.name, file_runner_violations(data), loader_lines())
+        assert not found, f"{path.name}: {found}"
 
 
-def loader_line():
+# One planted probe per file-running API: each has to be reported by the guard's own function.
+FILE_RUNNER_PROBES = {
+    "exec": "exec(open('x').read())",
+    "eval": "eval('1')",
+    "compile": "compile('1', 'x', 'exec')",
+    "__import__": "__import__('x')",
+    "runpy.run_path": "import runpy\nrunpy.run_path('x.py')",
+    "runpy.run_module": "from runpy import run_module\nrun_module('x')",
+    "runpy alias": "import runpy as r\nr.run_path('x')",
+    "importlib.import_module": "import importlib\nimportlib.import_module('x')",
+    "importlib.util loader": "import importlib.util\nimportlib.util.spec_from_file_location('m', 'x.py').loader.exec_module(None)",
+    "from importlib.machinery": "from importlib.machinery import SourceFileLoader\nSourceFileLoader('m', 'x').load_module()",
+    "imp.load_source": "import imp\nimp.load_source('m', 'x.py')",
+    "zipimport": "import zipimport\nzipimport.zipimporter('x.zip').load_module('m')",
+    "py_compile": "import py_compile\npy_compile.compile('x.py')",
+    "marshal": "import marshal\nexec_ = marshal.loads(b'')",
+    "ctypes": "import ctypes\nctypes.CDLL('x.so')",
+    "sys.modules string": "import sys\nsys.modules['runpy'].run_path('x')",
+    "builtins": "import builtins\ngetattr(builtins, 'ex' + 'ec')",
+    "code.InteractiveInterpreter": "import code\ncode.InteractiveInterpreter().runsource('1')",
+    "getattr by string": "m = object()\ngetattr(m, 'run_path')('x')",
+    "alias of a runner": "f = __builtins__",
+    "attribute only": "m = object()\nm.run_path('x')",
+    "bootstrap via sys.modules": "import sys\nb = sys.modules['importlib._bootstrap']\nb._load_unlocked(None)",
+    "bootstrap attribute only": "f = m.FileFinder('d')",
+    "frozen importlib key": "import sys\nx = sys.modules['_frozen_importlib_external']",
+    "importlib.machinery key": "import sys\nx = sys.modules['importlib.machinery']",
+    "code.compile_command": "m.compile_command('1')",
+    "timeit": "import timeit\ntimeit.timeit('1')",
+    "profile": "import profile\nprofile.run('1')",
+    "cProfile": "import cProfile\ncProfile.run('1')",
+    "trace": "import trace\ntrace.Trace().run('1')",
+    "doctest": "import doctest\ndoctest.run_docstring_examples('x', {})",
+}
+
+
+@pytest.mark.parametrize("name", sorted(FILE_RUNNER_PROBES))
+def test_the_exec_ban_reports_each_planted_file_runner(name):
+    assert file_runner_violations(FILE_RUNNER_PROBES[name]), name
+
+
+def test_the_loader_allowance_is_the_loaders_exec_and_compile_inside_its_span_only():
+    span = (10, 20)
+    for src, name, allowed in [
+        ("exec(x)", "hv", True),
+        ("compile(x, 'a', 'exec')", "hv", True),
+        ("eval(x)", "hv", False),              # inside the span but not LOADER_ONLY
+        ("import runpy", "hv", False),
+        ("exec(x)", "01_identity.py", False),  # a part never gets the allowance
+    ]:
+        found = file_runner_violations("\n" * 14 + src)
+        assert found and bool(outside_the_loader(name, found, span)) is (not allowed), src
+    for pad in ("\n" * 4, "\n" * 24):  # before and after the loader block
+        assert outside_the_loader("hv", file_runner_violations(pad + "exec(x)"), span), len(pad)
+
+
+def test_the_exec_ban_is_quiet_on_ordinary_code():
+    assert file_runner_violations("import re, subprocess\nre.compile('x')\nsubprocess.run(['ls'])\n") == []
+
+
+def loader_lines():
+    """(first, last) line of the loader block in `hv`."""
     data = (PROJECT / "hv").read_bytes()
-    return data[:loader_span(data)[0]].count(b"\n") + 1
+    start, end = loader_span(data)
+    return data[:start].count(b"\n") + 1, data[:end].count(b"\n")
 
 
 def test_PARTS_is_a_tuple_of_package_relative_paths():
@@ -357,12 +462,14 @@ GUARDS = [
      "def _probe_open(env, pw):\n    return _owner_unseal(env, pw)\n"),
     ("control-plane", "tests/test_control_plane.py::test_hv_does_not_import_the_control_plane",
      "def _probe_ctl():\n    import hivemind_ctl\n    return hivemind_ctl\n"),
+    ("exec-ban", "tests/test_hv_parts.py::test_the_one_exec_in_the_tree_is_the_loader",
+     "def _probe_run():\n    import runpy\n    return runpy.run_path('x.py')\n"),
     ("module-management", "tests/test_module_lifecycle.py::test_the_data_plane_cannot_reach_module_management",
      "def _probe_mod():\n    import hive_modules\n    return hive_modules\n"),
 ]
 # The verifier's probe, as one function planted in the first part: it reads the seed, opens it, signs as the
-# owner, and reaches for the control plane and module management.
-COMBINED_PROBE = ("def _probe_all(p, env, pw):\n    import ownerkey, hivemind_ctl, hive_modules\n"
+# owner, and reaches for the control plane, module management and runpy.
+COMBINED_PROBE = ("def _probe_all(p, env, pw):\n    import ownerkey, hivemind_ctl, hive_modules, runpy\n"
                   "    seed = OWNER_KEY_PATH.read_bytes()\n    _owner_unseal(env, pw)\n"
                   "    p = dict(p)\n    p['owner_sig'] = _ed25519.sign(b'x', seed)\n    return p\n")
 
