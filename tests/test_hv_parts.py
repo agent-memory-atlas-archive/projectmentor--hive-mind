@@ -14,6 +14,7 @@ the base of the PRs that move code. Kept forever it would freeze the parts.
 """
 
 import ast
+import builtins
 import importlib.machinery
 import importlib.util
 import os
@@ -198,13 +199,35 @@ def test_hv_dunder_file_is_hvs_and_code_objects_name_their_part(tmp_path):
         str(PROJECT / p) for p in parts_of()}
 
 
+def _free_names(src):
+    """Names a part loads but binds nowhere in itself (its own defs, assignments, args, imports) and are not builtins."""
+    tree, bound, loaded = ast.parse(src), set(dir(builtins)), set()
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Name):
+            (loaded if isinstance(n.ctx, ast.Load) else bound).add(n.id)
+        elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            bound.add(n.name)
+        elif isinstance(n, ast.arg):
+            bound.add(n.arg)
+        elif isinstance(n, (ast.Import, ast.ImportFrom)):
+            bound.update((a.asname or a.name).split(".")[0] for a in n.names)
+        elif isinstance(n, ast.ExceptHandler) and n.name:
+            bound.add(n.name)
+    return loaded - bound
+
+
 def test_a_part_is_not_a_module(tmp_path):
-    """Imported alone it fails at its first free name; nothing relies on the file name."""
+    """Imported alone it fails loudly: a NameError at its first free name at import time, or, for a part that is
+    only definitions (nothing runs at import), at least one name its functions need that only `hv` binds. Nothing
+    relies on the file name."""
     for rel in parts_of():
         loader = importlib.machinery.SourceFileLoader("a_part_alone", str(PROJECT / rel))
         mod = importlib.util.module_from_spec(importlib.util.spec_from_loader("a_part_alone", loader))
-        with pytest.raises(NameError):
+        try:
             loader.exec_module(mod)
+        except NameError:
+            continue
+        assert _free_names((PROJECT / rel).read_bytes()), f"{rel} imports alone and needs nothing from hv"
 
 
 def _hv_code_sweep(mod, allowed):

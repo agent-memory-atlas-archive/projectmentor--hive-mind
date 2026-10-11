@@ -8,8 +8,11 @@
 It gates the two PRs that move code (3.1 PR 1 and PR 2) against their base. It is not a permanent check: once the
 move is done there is no old `hv` to compare with, and a permanent copy would freeze the parts.
 """
+import io
 import subprocess
 import sys
+import tarfile
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
@@ -24,10 +27,19 @@ def main(argv):
     if len(argv) != 2:
         print(__doc__, file=sys.stderr)
         return 2
-    base = subprocess.run(["git", "-C", str(ROOT), "show", f"{argv[1]}:hv"], capture_output=True)
-    if base.returncode != 0:
-        print(f"hv_move_gate: cannot read hv at {argv[1]}: {base.stderr.decode().strip()}", file=sys.stderr)
+    archive = subprocess.run(["git", "-C", str(ROOT), "archive", argv[1], "hv", "hivemind/parts"], capture_output=True)
+    if archive.returncode != 0:
+        # a base from before PR 1 has no hivemind/parts: ask for `hv` alone
+        archive = subprocess.run(["git", "-C", str(ROOT), "archive", argv[1], "hv"], capture_output=True)
+    if archive.returncode != 0:
+        print(f"hv_move_gate: cannot read hv at {argv[1]}: {archive.stderr.decode().strip()}", file=sys.stderr)
         return 2
+    # The base may itself be split (PR 2's base is PR 1's merge): compare single-file forms, so the base `hv`
+    # is the same bytes whether or not the base already had a loader.
+    with tempfile.TemporaryDirectory() as tmp:
+        tarfile.open(fileobj=io.BytesIO(archive.stdout)).extractall(tmp, filter="data")
+        base_bytes = monolith(Path(tmp)) if (Path(tmp) / "hivemind").is_dir() else (Path(tmp) / "hv").read_bytes()
+    base = type("B", (), {"stdout": base_bytes})
     now = monolith(ROOT)
     if now == base.stdout:
         print(f"move gate: header + parts + footer equal hv at {argv[1][:12]} ({len(now)} bytes)")

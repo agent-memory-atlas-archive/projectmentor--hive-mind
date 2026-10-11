@@ -1,0 +1,1 @@
+- `hv`'s body moves into `hivemind/parts/02_store_journal.py` through `17_cli.py`, run into `hv`'s one namespace in order by the part loader; `hv` is now its header, the loader and the `__main__` footer. The same code in the same order (the move gate checks it byte for byte); no behaviour change (3.1 split, PR 2).
