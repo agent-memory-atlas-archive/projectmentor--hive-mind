@@ -265,6 +265,33 @@ at once). Concretely:
   operator or admitted-device compromise, accepted in 3.x). Operator rule: the install directory is writable only by the
   operator. The S2 guards that scan `hv` read the parts too (`tests/_source.py`).
 
+- **The S2 exec ban is a static name list, with documented limits (#382).** The guard in `tests/test_hv_parts.py`
+  (`file_runner_violations`) reads the source of `hv` and the parts and reports banned imports, names, attributes and
+  exact strings. It is a tripwire against an accidental or careless file-running call, not a sandbox. A name list
+  cannot be complete, because Python reaches the same effect through names the list does not hold. These are not
+  caught, and each stays out of the list for the reason given:
+  - *Process spawn through `os`* (`os.execv`, `os.posix_spawn` and kin). `hv` already imports `os` and
+    `subprocess` for its own work, so banning them would ban `hv`; the guard cannot tell a spawn of a fixed argv
+    from a spawn of a planted one.
+  - *`pickle` and `shelve` loads.* Loading runs code chosen by the data. The modules have legitimate uses and the
+    data is not visible in the source, so a name match says nothing about what is loaded.
+  - *`logging.config` factory lookup.* A config names a callable by a dotted string that the logging module
+    resolves at run time. The string is data, and any dotted name is a valid value.
+  - *A `sys.path` edit followed by a plain import.* The import names an ordinary module, and the file it loads
+    depends on a path the source builds. Nothing in the import statement is wrong.
+  - *Split or computed strings* (`"ex" + "ec"`, a join, a decode). A scan of literals sees the pieces, never the
+    result, and the names reach the call through `getattr` or `sys.modules` lookups on computed keys.
+  - *The string `code`.* It is exempt on purpose, because it is an ordinary word in `hv` (error codes, exit
+    codes). With `import code` banned, the one leftover is a `code` module that something else already loaded and
+    reached through `sys.modules`.
+
+  Residual: only someone who can write signed core (`hv` or a part) can plant any of these, which is the position of
+  the parts bullet above: an operator or admitted-device compromise, accepted in 3.x. A change to signed core is
+  seen by `hv verify` and the update gate as a changed file, whatever it calls, so the guard is a second line, not
+  the first. Operator rule: review every change to `hv` and `hivemind/parts/` as code, and do not read a green S2
+  guard as proof that a change runs no file. The guard is not extended to close these; widening a name list
+  closes one spelling and leaves the next.
+
 - **Outbound verification is opt-in.** The outbound mode defaults to `permissive`, which flags and never
   withholds a push, so a node is protected from an impostor at a peer's address only after it runs
   `hv sync auth --outbound enforce`; `hv doctor` (`peer-identity`) says when every peer is ready. A peer on
