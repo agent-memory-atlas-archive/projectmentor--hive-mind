@@ -26,6 +26,7 @@ import pytest
 PROJECT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT))
 from _source import hv_text  # noqa: E402
+from _fs import FileSigner  # noqa: E402
 
 OWNERKEY_SRC = (PROJECT / "ownerkey.py").read_text()
 HV_SRC = hv_text()          # hv and its parts: the source that executes (3.1)
@@ -154,8 +155,8 @@ def test_signing_is_byte_identical_and_still_verifies(tmp_path, monkeypatch):
     assert not hasattr(hv, "_sign_governance_payload"), "hv can still owner-sign (S2)"
     import hivemind_ctl
     hivemind_ctl.install(hv)
-    through_hv = hv._sign_governance_payload(dict(payload), seed, pub)
-    direct = ownerkey.sign_governance(dict(payload), seed, pub)
+    through_hv = hv._sign_governance_payload(dict(payload), FileSigner(seed))
+    direct = ownerkey.sign_governance(dict(payload), FileSigner(seed))
     assert through_hv == direct                                   # the wrapper adds nothing
     assert hv._verify_governance(through_hv) == hv._owner_id_for_pub(pub)   # and it still verifies
 

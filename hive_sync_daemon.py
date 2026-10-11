@@ -456,7 +456,7 @@ class Handler(BaseHTTPRequestHandler):
         identity (sync_common.sign_hello), whether or not the caller's own envelope verified. Called only
         from inside do_GET, after _enter took a request slot, so a flood of nonced requests signs at most
         MAX_CONCURRENT_REQUESTS at a time and is rate-limited per address like any other request."""
-        sig = sync_common.sign_hello(body, self.headers.get("Hive-Auth-Nonce"), path, hv._device_seed(), hv.NODE_ID)
+        sig = sync_common.sign_hello(body, self.headers.get("Hive-Auth-Nonce"), path, hv._device_signer(), hv.NODE_ID)
         if sig:
             body["hello_sig"] = sig
         self._send(200, body)

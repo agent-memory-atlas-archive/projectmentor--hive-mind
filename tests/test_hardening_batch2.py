@@ -21,6 +21,7 @@ import x25519        # noqa: E402
 import ed25519       # noqa: E402
 import merkle        # noqa: E402
 import _planes  # noqa: E402  (which plane runs a command, 2.0)
+from _fs import FileSigner  # noqa: E402
 
 
 def _load(name, home, monkeypatch, **env):
@@ -120,7 +121,7 @@ def _owner_corpus(hv, n_admit=2):
     oid = hv._owner_id_for_pub(pub)
 
     def govent(payload, seq, ts):
-        p = hv._sign_governance_payload(payload, seed, pub)
+        p = hv._sign_governance_payload(payload, FileSigner(seed))
         return {"node_id": "n", "seq": seq, "type": "governance", "timestamp": ts,
                 "payload": p, "prev_hash": "sha256:genesis"}
 
@@ -158,7 +159,7 @@ def _election_corpus(hv, basis_ts, entry_ts):
 
     def owner_ent(payload, seq, ts):
         return {"node_id": "owner", "seq": seq, "type": "governance", "timestamp": ts,
-                "payload": hv._sign_governance_payload(payload, oseed, opub), "prev_hash": "sha256:genesis"}
+                "payload": hv._sign_governance_payload(payload, FileSigner(oseed)), "prev_hash": "sha256:genesis"}
 
     entries = [
         owner_ent({"action": "owner", "owner_id": oid, "owner_pub": base64.b64encode(opub).decode(),
@@ -170,7 +171,7 @@ def _election_corpus(hv, basis_ts, entry_ts):
     prop = {"node_id": vid, "seq": 1, "type": "governance", "timestamp": entry_ts,
             "payload": {"action": "propose-election", "proposal_id": pid,
                         "new_owner_pub": npub_b64, "basis_ts": basis_ts}, "prev_hash": "sha256:genesis"}
-    hv._sign_entry(prop, vseed, vpub)                    # device-signed (projection requires it)
+    hv._sign_entry(prop, FileSigner(vseed))                    # device-signed (projection requires it)
     entries.append(prop)
     return entries
 

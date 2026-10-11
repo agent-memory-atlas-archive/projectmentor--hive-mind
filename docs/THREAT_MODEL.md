@@ -475,6 +475,14 @@ second login or collaborator admitted by the gate. Tracked in hive-mind-private 
   the fleet for good, since ingest keeps the first copy of a `(node_id, seq)` and `sig` is inside the entry
   hash. No forgery was possible. The cofactorless equation stays, since RFC 8032 permits it. A node that
   has not updated to v2.0.3 still accepts malleated copies, so update every node.
+- **Signer seam (3.1).** Every signature core makes (journal entries, owner governance, Hive-Auth envelopes,
+  hello proofs) goes through `hivemind/crypto/signer.py`, and `tests/test_signer_seam.py` fails on a call to
+  `ed25519.sign` anywhere else in core. Callers hold `sign(bytes)`, never the seed. With the one backend
+  (the key file) nothing changes: the same bytes are signed and the signatures are identical, and a process that
+  has unlocked a key still holds its seed in memory, as before. The seam is what lets a later backend sign with a
+  key held elsewhere (hardware, TPM, gateway); verification stays fixed in core, so a bad backend can fail to sign
+  but cannot make a forgery verify. Out of scope: module signing (the module's own key) and capsule decryption
+  (X25519 secret material).
 - **Verification memo (v1.20.1).** Each process remembers which signatures it has verified, keyed on
   the exact signed bytes, signature and key, so a changed byte is always checked afresh. Only the
   cryptographic result is cached, never authorization (admission, revocation, owner-as-of, writer

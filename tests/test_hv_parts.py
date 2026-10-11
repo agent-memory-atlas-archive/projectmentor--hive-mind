@@ -55,8 +55,7 @@ def test_parts_are_exactly_the_directory_in_order():
     assert [Path(p).name for p in parts_of()] == on_disk, "PARTS must list every file in hivemind/parts, in order"
     assert all(re.fullmatch(r"\d\d_[a-z0-9_]+\.py", n) for n in on_disk), on_disk
     assert on_disk == sorted(on_disk) and len({n[:2] for n in on_disk}) == len(on_disk), "NN prefixes are unique"
-    assert not (PROJECT / "hivemind" / "__init__.py").exists() and not (PARTS_DIR / "__init__.py").exists(), \
-        "no package: a part is not importable"
+    assert not (PARTS_DIR / "__init__.py").exists(), "parts is not a package: a part is not importable"
 
 
 def test_the_parts_are_tracked_files():

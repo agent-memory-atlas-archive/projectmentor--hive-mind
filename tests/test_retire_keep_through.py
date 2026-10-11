@@ -19,6 +19,7 @@ PROJECT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT / "tests"))
 from test_links import _loadhv, _device, _gov, _entry, _project, _conf  # noqa: E402
 from test_bounded_timestamps import _hive, _journal, _marker, _mutated_hv, _contents, ts  # noqa: E402
+from _fs import FileSigner  # noqa: E402
 
 GENESIS_PREV = "sha256:genesis"
 
@@ -29,7 +30,7 @@ def _cfact(hv, dev, name, at, seq, prev):
     e = _entry(hv, dev, "fact", {"content": name, "tags": [], "importance": 0.5, "source": "manual"}, at)
     e.pop("sig"), e.pop("pub")
     e["prev_hash"] = prev
-    return hv._sign_entry(e, dev["seed"], dev["pub"])
+    return hv._sign_entry(e, FileSigner(dev["seed"]))
 
 
 def _chain(hv, dev, names):

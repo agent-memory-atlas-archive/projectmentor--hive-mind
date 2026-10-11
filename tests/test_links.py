@@ -30,6 +30,7 @@ from pathlib import Path
 PROJECT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT))
 import _planes  # noqa: E402  (which plane runs a command, 2.0)
+from _fs import FileSigner  # noqa: E402
 
 T0 = "2026-01-01T00:00:00Z"
 
@@ -58,7 +59,7 @@ def _device(hv):
 
 
 def _gov(hv, payload, oseed, opub, ts, seq):
-    p = hv._sign_governance_payload(payload, oseed, opub)
+    p = hv._sign_governance_payload(payload, FileSigner(oseed))
     return {"node_id": "ownerdev", "seq": seq, "type": "governance", "timestamp": ts, "payload": p}
 
 
@@ -66,9 +67,9 @@ def _entry(hv, dev, typ, payload, ts, owner=None):
     """A device-signed entry from `dev` (seq auto-incremented). `owner=(seed, pub)` owner-signs the payload."""
     dev["seq"] += 1
     if owner is not None:
-        payload = hv._sign_governance_payload(payload, owner[0], owner[1])
+        payload = hv._sign_governance_payload(payload, FileSigner(owner[0]))
     e = {"node_id": dev["id"], "seq": dev["seq"], "type": typ, "timestamp": ts, "payload": payload}
-    return hv._sign_entry(e, dev["seed"], dev["pub"])
+    return hv._sign_entry(e, FileSigner(dev["seed"]))
 
 
 def _fact(hv, dev, content, ts, source="manual", channel=None):

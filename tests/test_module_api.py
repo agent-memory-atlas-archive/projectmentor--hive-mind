@@ -26,6 +26,7 @@ import hive_sync_daemon as daemon  # noqa: E402
 import sync_common  # noqa: E402
 import test_links as TL  # noqa: E402
 from test_unforget import _act  # noqa: E402
+from _fs import FileSigner  # noqa: E402
 
 T = "2026-01-05T00:00:%02dZ"
 
@@ -79,7 +80,7 @@ class Hive:
 
 
 def signed(seed, method, path, query, body=b""):
-    return sync_common.signed_request_headers(seed, method, path, query, body)
+    return sync_common.signed_request_headers(FileSigner(seed), method, path, query, body)
 
 
 @pytest.fixture

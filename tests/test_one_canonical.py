@@ -33,6 +33,7 @@ PROJECT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT))
 
 import merkle  # noqa: E402
+from _fs import FileSigner  # noqa: E402
 
 
 def _loadhv(home, monkeypatch):
@@ -327,7 +328,7 @@ def test_golden_device_signature(tmp_path, monkeypatch):
     seed = bytes(range(32))
     pub = hv._ed25519.pub_from_seed(seed)
     assert hv._device_id_for_pub(pub) == NODE_ID
-    assert hv._sign_entry(_entry(), seed, pub) == e          # same bytes signed, same signature
+    assert hv._sign_entry(_entry(), FileSigner(seed)) == e          # same bytes signed, same signature
 
 
 def test_golden_governance_signature_election_id_and_hello_digest(tmp_path, monkeypatch):
@@ -336,7 +337,7 @@ def test_golden_governance_signature_election_id_and_hello_digest(tmp_path, monk
     hv = _loadhv(tmp_path, monkeypatch)
     owner_seed = bytes(range(32, 64))
     owner_pub = hv._ed25519.pub_from_seed(owner_seed)
-    gov = ownerkey.sign_governance(GOV_PAYLOAD, owner_seed, owner_pub)
+    gov = ownerkey.sign_governance(GOV_PAYLOAD, FileSigner(owner_seed))
     assert (gov["owner_pub"], gov["owner_sig"]) == (GOV_OWNER_PUB, GOV_OWNER_SIG)
     assert hv._verify_governance(gov) == OWNER_ID            # the verifier hashes through hv._canonical
     assert hv._election_id(GOV_OWNER_PUB, ELECTION_TS) == ELECTION_ID

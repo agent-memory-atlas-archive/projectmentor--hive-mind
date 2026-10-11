@@ -19,6 +19,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_links import _owner_key, _device, _gov, _entry, _fact, T0  # noqa: E402
 from test_unforget import _act, _hive, _transfer, PRE  # noqa: E402
+from _fs import FileSigner  # noqa: E402
 
 # `owner`: the genesis owner (seed, pub, id); `devs`: admitted devices; `policy_ts`: where a `forget_writers`
 # act goes (after genesis, before any later owner change); `expect`: see the module docstring; `absent_is`: what
@@ -102,10 +103,10 @@ def owner_succession_between(hv):
     nom = _entry(hv, d0, "governance", {"action": "nominate-successor", "successor_owner_pub": _B(o2[1]).decode()},
                  D3, owner=a[:2])
     claim = hv._sign_governance_payload({"action": "claim-succession", "owner_id": o2[2],
-                                         "owner_pub": _B(o2[1]).decode()}, o2[0], o2[1])
+                                         "owner_pub": _B(o2[1]).decode()}, FileSigner(o2[0]))
     d0["seq"] += 1
     carried = hv._sign_entry({"node_id": d0["id"], "seq": d0["seq"], "type": "governance", "timestamp": D4,
-                              "payload": claim}, d0["seed"], d0["pub"])
+                              "payload": claim}, FileSigner(d0["seed"]))
     es = [*fs, _act(hv, d1, fs[0], PRE), _act(hv, d1, fs[1], D2, owner=a[:2]), nom, carried,
           _act(hv, d1, fs[2], D5, owner=a[:2]),              # A after the claim: ignored
           _act(hv, d1, fs[3], D6, owner=o2[:2])]             # the successor: honoured
@@ -125,7 +126,7 @@ def owner_election_between(hv):
     d1["seq"] += 1
     prop = hv._sign_entry({"node_id": d1["id"], "seq": d1["seq"], "type": "governance", "timestamp": basis,
                            "payload": {"action": "propose-election", "proposal_id": hv._election_id(cpub, basis),
-                                       "new_owner_pub": cpub, "basis_ts": basis}}, d1["seed"], d1["pub"])
+                                       "new_owner_pub": cpub, "basis_ts": basis}}, FileSigner(d1["seed"]))
     es = [f_before, f_after_a, f_after_c, quorum, _act(hv, d1, f_before, PRE),
           _act(hv, d1, f_before, D2, owner=a[:2]),
           prop,

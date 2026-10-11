@@ -16,6 +16,7 @@ from pathlib import Path
 PROJECT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT))
 import _planes  # noqa: E402  (which plane runs a command, 2.0)
+from _fs import FileSigner  # noqa: E402
 
 
 def _run(home, *args, node_id=None, check=True):
@@ -72,7 +73,7 @@ def test_reader_ignores_forged_and_non_owner_governance():
     rogue_pub = hv._ed25519.pub_from_seed(rogue_seed)
 
     def gov_entry(payload, seed, pub, seq):
-        p = hv._sign_governance_payload(payload, seed, pub)
+        p = hv._sign_governance_payload(payload, FileSigner(seed))
         return {"node_id": "n", "seq": seq, "type": "governance",
                 "timestamp": f"2026-01-0{seq}T00:00:00Z", "payload": p, "prev_hash": "sha256:genesis"}
 
@@ -141,7 +142,7 @@ def test_owner_forget_authority():
     oid = hv._owner_id_for_pub(opub)
 
     def gov_owner(ts):
-        p = hv._sign_governance_payload({"action": "owner", "owner_id": oid}, oseed, opub)
+        p = hv._sign_governance_payload({"action": "owner", "owner_id": oid}, FileSigner(oseed))
         return {"node_id": "dev", "seq": 3, "type": "governance", "timestamp": ts, "payload": p,
                 "prev_hash": "sha256:genesis"}
 
@@ -151,7 +152,7 @@ def test_owner_forget_authority():
     def forget(ts, signed):
         pl = {"retracts_ref": ["dev", 1], "reason": "", "source": "owner:owner/owner"}
         if signed:
-            pl = hv._sign_governance_payload(pl, oseed, opub)
+            pl = hv._sign_governance_payload(pl, FileSigner(oseed))
         return {"node_id": "dev", "seq": 2, "type": "retract", "timestamp": ts, "payload": pl,
                 "prev_hash": "sha256:genesis"}
 

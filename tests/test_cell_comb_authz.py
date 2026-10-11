@@ -17,6 +17,7 @@ PROJECT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT))
 import ed25519  # noqa: E402
 import _planes  # noqa: E402  (which plane runs a command, 2.0)
+from _fs import FileSigner  # noqa: E402
 
 
 def _loadhv(home, monkeypatch):
@@ -40,7 +41,7 @@ def _device_key(hv):
 
 
 def _gov(hv, payload, oseed, opub, ts, seq=1, nid="ownerdev"):
-    p = hv._sign_governance_payload(payload, oseed, opub)
+    p = hv._sign_governance_payload(payload, FileSigner(oseed))
     return {"node_id": nid, "seq": seq, "type": "governance", "timestamp": ts, "payload": p}
 
 
@@ -50,9 +51,9 @@ def _content(hv, ctype, name, version, dseed, dpub, ts, seq=1, owner=None, extra
     if extra:
         payload.update(extra)
     if owner is not None:
-        payload = hv._sign_governance_payload(payload, owner[0], owner[1])
+        payload = hv._sign_governance_payload(payload, FileSigner(owner[0]))
     e = {"node_id": hv._device_id_for_pub(dpub), "seq": seq, "type": ctype, "timestamp": ts, "payload": payload}
-    return hv._sign_entry(e, dseed, dpub)
+    return hv._sign_entry(e, FileSigner(dseed))
 
 
 def test_cell_nonowner_declined_owner_honored(tmp_path, monkeypatch):
