@@ -1,5 +1,5 @@
 {
-  "digest": "edfd09d39462853bede2f1f818fbf9b4d2c0adfca1d01fca10bfda5ca50f5fb2",
+  "digest": "00113ae1b6f1c7bd3208a0cb13f318bb696a208f25b479ce2f2d6877f5906567",
   "files": {
     ".github/FUNDING.yml": "ca6c63d7539bb7d2f809b5068781c78de97c028a44c5ae252b11bc1695caf85d",
     ".github/ISSUE_TEMPLATE/bug_report.yml": "22df51b1e51c25f50726392c79811116b88c40370843ff2d4a3e76b643f1cb68",
@@ -10,7 +10,7 @@
     ".github/workflows/ci.yml": "757cc07ddfdafa609c315425dfe1000c838ba9a0caf938406d2604b2bdd779ad",
     ".github/workflows/cla.yml": "900240ebc0ee273c4e29e791790a357532b038ac0dcfe61fe9a76772b0c6896a",
     ".github/workflows/sign.yml": "ce497aa2a81d7218813774ba4a0f4defa21516ef60b9dafa42140d2184237c67",
-    "CHANGELOG.md": "8c69a262fcb4d562744c6116d123d1d6ad1502928fe8be7467db9d614bb5d66c",
+    "CHANGELOG.md": "b32de744d7eefa268466ea4e16a79afaeae5476691e477d10b2fe39e944166c2",
     "CLA.md": "78a00158ab3090dbb1a4de6ed03b150f22b5a0e99bcbba139a6244728780cc7b",
     "CONTRIBUTING.md": "1527741d6b89976213224bfe2e074ff7c10de799eba15df260503b5a2edc8d53",
     "README.md": "ec31c35d59653302f5b3798ed4b0588dde43be11fc9850f739027383588fbb4d",
@@ -18,7 +18,6 @@
     "advisories.json": "e1f7246819257c9cdcb8118aaee972ed89f22fb056d67230320d5ea7fdce6703",
     "cells/example-tool.json": "cdf871f60fb23a894a2b8a60849c4c20c05c7396c0e449302f04c3a155ed4369",
     "chacha20poly1305.py": "6c3bb50dc126dab128184280b4d11cb1494800651e97aea941a821f31ff012fd",
-    "changelog.d/fix-370-migrate-route.md": "33df78cc8f332b24969bc84a67b122791e16f3912460dc0ab7616a246f640904",
     "commandmap.py": "e2b88825cd5e37e16fed082cf6c8dc736b9edffea31c51d997db2d6ac6e47498",
     "config/.peers.json.example": "e81eb4533b4e06969946a8fa1c977e0692bc047275101bcdbae1504355866674",
     "config/nudge.env.example": "b278edb191f6588316383f5c095f6332fc3ccaf695c595dccd9b21c4322d5cf3",
@@ -29,9 +28,9 @@
     "dashboard/index.html": "7db6a9b312b40d6bd735391f9033810039c0a1210a6ccc2b9cf2ef128b2a1fdd",
     "dashboard/logo.svg": "a7a44c7994dda2788c3f89e095b790a3429ace2642746442d41b40de9031458a",
     "docs/ADVISORIES.md": "aee9fab7f28266625d7f9d29a8636197f898ae1e117aea8d62456740892a6422",
-    "docs/AGENT_INTEGRATION.md": "a583f3a4bda7ccf4b6af63ee773c18d0ae448e4b11f8dc8d6fe092c5a835abd8",
+    "docs/AGENT_INTEGRATION.md": "603a2f0470a938870c098f9b18d0ad9939d1e09d72d9882cca99e436d45628f6",
     "docs/CLI_REFERENCE.md": "b4ab67a138de66049df20d6ff3aa888433fe91d75439721dace2e252a4ca145d",
-    "docs/CONTRACT.md": "730ae07a92694dcb59fbca089eed2cc37ec7fad16ee8c09e5be8426b0bd6b122",
+    "docs/CONTRACT.md": "6fce683422828ed6c1773c8f62b69d1bc88f323584bd60c226ad1ad843f32064",
     "docs/CONTRACT_HISTORY.md": "c995588b50f947c6d6748f531623c2182f6100e06e16a2761a18b8eb4f645019",
     "docs/HV_ARCHITECTURE.md": "cfba1d6b9d8feae02011b9578ccfcd0c33746c53e28baa76c81e7767942bd217",
     "docs/INTERNALS.md": "4af5337542697b26ce6a8538cd5a0c24daf7a06e0fd106557820e1865a051e9b",
@@ -229,6 +228,6 @@
     "vocabulary.py": "3a6977fc89573561e6248748db90379acc810ff183556e220ce6bf1b2c0d0d3b",
     "x25519.py": "ec1967595a2306cde860afe4dffab40a3f833d089de6caf5c9c080df8fd45726"
   },
-  "sequence": 542,
+  "sequence": 544,
   "version": "3.0"
 }
