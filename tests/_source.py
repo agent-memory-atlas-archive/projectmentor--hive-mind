@@ -73,8 +73,7 @@ def loader_span(hv_bytes):
 
 def monolith(root=PROJECT):
     """`hv` as one file: the loader block replaced by the parts, joined in `PARTS` order with nothing inserted.
-    For the move PRs this is byte-equal to the pre-split `hv` (the move gate); for the linter it is the text
-    whose names have to resolve."""
+    The text the linter and the name checks read: the names in it have to resolve."""
     sources = hv_sources(root)
     body = sources[0][1]
     start, end = loader_span(body)

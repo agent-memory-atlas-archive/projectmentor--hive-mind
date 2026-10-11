@@ -150,10 +150,10 @@ changes: one runtime namespace, the same names, the same `__file__`. A part is n
   address proving), `15_doctor_control_join` (`doctor`, `owner`, `group`, `admit`, `migrate`, `config`, `peers`,
   `discover`, `join`), `16_telemetry`, `17_cli` (`build_parser`, dispatch). `hv` keeps the header, the loader and the
   `if __name__ == "__main__":` footer.
-- **The move PRs are gated against their base**: `python3 scripts/common/hv_move_gate.py <base-sha>` joins the parts
-  where the loader stands and requires the result to equal the base `hv` byte for byte. After the move there is
-  nothing to compare with, so what stays is the structural checks (list equals directory, size cap, the namespace is
-  the old one plus `PARTS`, every code object comes from `hv` or a listed part, undefined names via pyflakes).
+- **What guards the split**: the move PRs were checked against their base byte for byte; that gate is retired, since
+  there is no old `hv` left to compare with. What stays are the structural checks (list equals directory, size cap, the
+  namespace is the old one plus `PARTS`, every code object comes from `hv` or a listed part, undefined names via
+  pyflakes).
 
 ## Still one namespace
 
