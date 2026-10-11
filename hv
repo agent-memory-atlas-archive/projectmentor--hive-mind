@@ -2980,10 +2980,10 @@ def _content_evidence(entries, gov=None, links=True):
 
     Owner-forget authority: once an owner is established, a forget is honored only if it is
     OWNER-SIGNED by the owner AS OF its own journal position (`_owner_at`, the capsule/cell/link rule,
-    so a previous owner's forget survives a transfer, succession or election; #46 Q1), or its position
-    precedes the genesis owner never carries authority: 3.0 removed the pre-genesis grandfather (the
-    `forget_writers=legacy` arm of #122), so a forget no owner signed as of its position is ignored whatever
-    `forget_writers` says. Before any owner exists, the legacy source-tag forget (`owner:owner/owner`) is
+    so a previous owner's forget survives a transfer, succession or election; #46 Q1). A forget whose
+    position precedes the genesis owner has no owner to have signed it, so it is ignored: 3.0 removed the pre-genesis
+    grandfather (the `forget_writers=legacy` arm of #122), so a forget no owner signed as of its position is
+    ignored whatever `forget_writers` says. Before any owner exists, the legacy source-tag forget (`owner:owner/owner`) is
     honored — so existing forgets are never resurrected, and after `hive-mind owner init` a forged unsigned
     forget no longer carries authority.
 
