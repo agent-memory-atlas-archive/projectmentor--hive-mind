@@ -10,7 +10,12 @@ Git tags are `vMAJOR.MINOR.PATCH`. `vX.Y.0` marks the commit on `main` that comp
 without changing the contract are tagged `vX.Y.1`, `vX.Y.2`, … Dates are when each version was
 introduced (a contract) or tagged (a patch).
 
-## 3.0.0 — 2026-10-10 · `v3.0.0`
+## 3.0.1 — 2026-10-11 · `v3.0.1`
+
+- Fix: `hive-mind migrate forget` now routes through the dispatcher (it printed the usage and exited), and the update-gate and `migrate forget` notices tell the owner `hv sync now` instead of `hive-mind sync`, which does not run (#370).
+- Docs: `docs/AGENT_INTEGRATION.md` §7 puts the 2.0 amendment's four 1.x aliases in the past tense (3.0 removed them), `docs/CONTRACT.md` is titled for contract 3.0, and the 3.0.0 heading below is dated by its tag (#367).
+
+## 3.0.0 — 2026-10-11 · `v3.0.0`
 
 - Tests only (release 3.0 PR 1): the frozen 2.4 `_content_evidence` oracle (`tests/oracles/content_evidence_2_4.py`) and the forget corpus (`tests/forget_corpus.py`), with a test that the oracle equals the live function on every corpus journal under `forget_writers` absent, `legacy` and `owner`.
 - Removed the retired 2.x exit-2 aliases (3.0, #151): `hv rebuild`, `hv merkle`, `hv key`, `hv doctor wire-agent`, `hv doctor migrate-identity` and `hv migrate-device-identity` are now unknown commands (argparse exit 2, nothing on stdout, nothing written) instead of pointers naming a replacement. `commandmap.RENAMED`, `renamed()` and `renamed_text()` are gone, and `hive-mind` no longer suggests a renamed `hv` command. Use `hv doctor rebuild`, `hv doctor merkle`, `hv config identity` and `hv wire claude`.

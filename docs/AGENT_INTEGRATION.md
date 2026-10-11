@@ -254,9 +254,10 @@ The contract is **SemVer (`MAJOR.MINOR`)**, reported by `hv version`:
   change is not a pointer: a link written
   through `hv` as source `manual` on the owner device is now device-signed. The owner-signed form is the
   same verb through `hive-mind` (decision `h:34cc1dbcd3`). The four 1.x aliases promised for removal at
-  this major, `hv rebuild`, `hv merkle`, `hv key` and `hv doctor wire-agent`, point the same way, at the
-  `hv` command that replaced each (`hv doctor rebuild`, `hv doctor merkle`, `hv config identity`,
-  `hv wire claude`), and exit 2 (decision `h:af137f9421`). No adapter calls one.
+  this major, `hv rebuild`, `hv merkle`, `hv key` and `hv doctor wire-agent`, pointed the same way through
+  the 2.x line, at the `hv` command that replaced each (`hv doctor rebuild`, `hv doctor merkle`,
+  `hv config identity`, `hv wire claude`), and exited 2 (decision `h:af137f9421`). 3.0 removed them too: they
+  are unknown commands that name nothing. No adapter calls one.
 
 This is what makes future breaking changes safe: additive-within-major keeps old adapters running,
 the deprecation window + graceful degradation prevent hard breakage, and §0 tells each agent exactly

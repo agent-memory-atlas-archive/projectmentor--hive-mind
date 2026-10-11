@@ -1,4 +1,4 @@
-# The module contract (2.3)
+# The module contract (3.0)
 
 What the module API promises, and what it does not. A module author reads this file to know what may be relied on
 across releases; [`MODULE_API.md`](MODULE_API.md) is the route reference and
