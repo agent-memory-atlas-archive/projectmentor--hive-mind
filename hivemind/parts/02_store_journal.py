@@ -335,10 +335,10 @@ def _entry_signing_bytes(entry):
     return _canonical({k: v for k, v in entry.items() if k != "sig"})
 
 
-def _sign_entry(entry, seed, pub):
+def _sign_entry(entry, signer):
     """Attach `pub` (b64 signer key) then `sig` (b64 signature over the entry sans sig)."""
-    entry["pub"] = base64.b64encode(pub).decode()
-    entry["sig"] = base64.b64encode(_ed25519.sign(_entry_signing_bytes(entry), seed)).decode()
+    entry["pub"] = base64.b64encode(signer.public_key()).decode()
+    entry["sig"] = base64.b64encode(signer.sign(_entry_signing_bytes(entry))).decode()
     return entry
 
 
@@ -1002,9 +1002,9 @@ def append_journal(entry_type, payload, timestamp=None):
         problem = merkle.envelope_problem(entry)
         if problem is not None:
             raise ValueError(f"invalid {entry_type} entry: {problem}")
-        seed = _device_seed()
-        if seed is not None:
-            _sign_entry(entry, seed, _ed25519.pub_from_seed(seed))
+        sg = _device_signer()
+        if sg is not None:
+            _sign_entry(entry, sg)
         _append_line(_journal_path_for(timestamp), json.dumps(entry))
     return entry
 

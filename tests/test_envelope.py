@@ -11,6 +11,7 @@ import pytest
 
 import merkle
 from test_links import _loadhv, _device, _entry, _fact, _project
+from _fs import FileSigner  # noqa: E402
 
 TS = "2026-01-01T00:00:0%dZ"
 
@@ -27,7 +28,7 @@ def _on_disk(home):
 def _signed(hv, dev, seq, typ, payload, ts=TS % 1):
     """A device-signed entry with an arbitrary `seq` (the helpers only count up)."""
     e = {"node_id": dev["id"], "seq": seq, "type": typ, "timestamp": ts, "payload": payload}
-    return hv._sign_entry(e, dev["seed"], dev["pub"])
+    return hv._sign_entry(e, FileSigner(dev["seed"]))
 
 
 def _assert_refused_and_journal_reads(hv, home, bad):

@@ -151,20 +151,20 @@ def sign_sync_request(method, path, query, body_bytes=b""):
     """Return the Hive-Auth-* header dict for an outbound sync request, signed with THIS device's
     Ed25519 key. Returns {} when the device has no key yet (pre-key-init) — a permissive/off server
     still accepts, so signing is always safe to attempt."""
-    return signed_request_headers(load_hv()._device_seed(), method, path, query, body_bytes)
+    return signed_request_headers(load_hv()._device_signer(), method, path, query, body_bytes)
 
 
-def signed_request_headers(seed, method, path, query, body_bytes=b""):
-    """sign_sync_request with an explicit device `seed` ({} when it is None). hv's own probes pass their
-    hive's seed, so a freshly loaded hv signs as the hive it runs for."""
+def signed_request_headers(signer, method, path, query, body_bytes=b""):
+    """sign_sync_request with an explicit device `signer` ({} when it is None). hv's own probes pass their
+    hive's signer, so a freshly loaded hv signs as the hive it runs for."""
     hv = load_hv()
-    if seed is None or hv._ed25519 is None:
+    if signer is None:
         return {}
-    pub = hv._ed25519.pub_from_seed(seed)
+    pub = signer.public_key()
     ts = int(time.time())
     nonce = os.urandom(16).hex()
     msg = sync_signing_bytes(method, path, query, body_bytes or b"", ts, nonce)
-    sig = hv._ed25519.sign(msg, seed)
+    sig = signer.sign(msg)
     return {
         "Hive-Auth-Alg": HIVE_AUTH_ALG,
         "Hive-Auth-Device": hv._device_id_for_pub(pub),
@@ -196,15 +196,15 @@ def hello_signing_bytes(path, nonce, node_id, hive_id, advertised_addr, protocol
     return "\n".join(parts).encode()
 
 
-def sign_hello(body, nonce, path, seed, node_id):
+def sign_hello(body, nonce, path, signer, node_id):
     """The `hello_sig` for a /sync/hello or /hive/info response `body` asked for under `nonce`, or None
     when there is nothing to sign with: no well-formed nonce, no device key, or an identity that is not
     the key's (a HIVE_NODE_ID override or a legacy hostname node). Signs whether or not the caller's own
     envelope verified, so a caller this node does not yet admit still gets its proof."""
     hv = load_hv()
-    if not nonce_ok(nonce) or seed is None or hv._ed25519 is None:
+    if not nonce_ok(nonce) or signer is None:
         return None
-    pub = hv._ed25519.pub_from_seed(seed)
+    pub = signer.public_key()
     device = hv._device_id_for_pub(pub)
     if device != node_id:
         return None
@@ -212,7 +212,7 @@ def sign_hello(body, nonce, path, seed, node_id):
     msg = hello_signing_bytes(path, nonce, wire.get("node_id"), wire.get("hive_id"), wire.get("advertised_addr"),
                               wire.get("protocol_version"), hello_body_digest(wire))
     return {"alg": HELLO_SIG_ALG, "device": device, "pub": base64.b64encode(pub).decode(),
-            "sig": base64.b64encode(hv._ed25519.sign(msg, seed)).decode()}
+            "sig": base64.b64encode(signer.sign(msg)).decode()}
 
 
 def addr_of(url_or_addr):

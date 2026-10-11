@@ -1,3 +1,4 @@
+from hivemind.crypto import signer as _sigseam   # the signing seam: every device signature is made through it
 HIVE_HOME = Path(os.environ.get("HIVE_HOME", Path.home() / "projects" / "hive-mind"))
 DB_PATH = HIVE_HOME / "store.db"
 JOURNAL_DIR = HIVE_HOME / "journal"
@@ -105,6 +106,12 @@ def _device_seed():
         return seed if len(seed) == 32 else None
     except Exception:
         return None
+
+
+def _device_signer():
+    """This device's signer (key-file backend), or None when it has no key. Every device signature is made
+    through it: callers hold `sign(bytes)`, never the seed."""
+    return _sigseam.from_seed(_device_seed())
 
 
 def _device_id_for_pub(pub):

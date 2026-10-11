@@ -478,7 +478,7 @@ def _probe_headers(path):
     """Hive-Auth-* headers for a GET of `path` by one of hv's own probes, signed with THIS hive's device
     key ({} without one). Their nonce is what a protocol-3 responder signs its answer over (#107)."""
     import sync_common
-    return sync_common.signed_request_headers(_device_seed(), "GET", path, "")
+    return sync_common.signed_request_headers(_device_signer(), "GET", path, "")
 
 
 def _probe_peer_map(timeout=6, peerlist=None, identity=None):   # generous: mobile/Termux nodes over the tailnet can answer in 3-4s

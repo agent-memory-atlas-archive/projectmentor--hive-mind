@@ -33,6 +33,7 @@ import pytest
 PROJECT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT))
 import _planes  # noqa: E402  (which plane runs a command, 2.0)
+from _fs import FileSigner  # noqa: E402
 
 HIVE_ID = "h1:cf5b2e8adbe05936"
 T_GENESIS = "2026-01-01T00:00:00Z"
@@ -71,8 +72,8 @@ def _device_key(hv):
 def _gov(hv, payload, oseed, opub, ts, seq=1, nid="ownerdev", dev=None):
     """An owner-signed governance entry. `dev=(seed,pub)` also DEVICE-signs it, as a real node does."""
     e = {"node_id": nid, "seq": seq, "type": "governance", "timestamp": ts,
-         "payload": hv._sign_governance_payload(payload, oseed, opub)}
-    return hv._sign_entry(e, dev[0], dev[1]) if dev else e
+         "payload": hv._sign_governance_payload(payload, FileSigner(oseed))}
+    return hv._sign_entry(e, FileSigner(dev[0])) if dev else e
 
 
 def _owner_act(hv, key, ts, seq=1, nid="ownerdev", hive_id=HIVE_ID, dev=None):
@@ -84,7 +85,7 @@ def _owner_act(hv, key, ts, seq=1, nid="ownerdev", hive_id=HIVE_ID, dev=None):
 def _fact(hv, nid, ts, content, seq=1, dev=None):
     e = {"node_id": nid, "seq": seq, "type": "fact", "timestamp": ts,
          "payload": {"content": content, "tags": [], "source": "manual"}}
-    return hv._sign_entry(e, dev[0], dev[1]) if dev else e
+    return hv._sign_entry(e, FileSigner(dev[0])) if dev else e
 
 
 def _on_disk(hv, entries, day="2026-01-01"):

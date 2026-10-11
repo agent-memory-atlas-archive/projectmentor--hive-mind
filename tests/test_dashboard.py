@@ -16,6 +16,7 @@ import urllib.request
 from pathlib import Path
 
 import pytest
+from _fs import FileSigner  # noqa: E402
 
 PROJECT = Path(__file__).resolve().parent.parent
 HV = PROJECT / "hv"
@@ -302,7 +303,7 @@ def test_a_loopback_post_without_the_token_needs_a_valid_signed_envelope(daemon)
     path = "/sync/ingest"
 
     def env(b=body):
-        return sync_common.signed_request_headers(seed, "POST", path, "", b)
+        return sync_common.signed_request_headers(FileSigner(seed), "POST", path, "", b)
 
     # an unsigned claim of a device, and an envelope signed over a different body, do not stand in for the token
     assert _raw(daemon, "POST", path, {"Hive-Auth-Device": "k1:0000000000000000"}, body)[0] == 403

@@ -12,6 +12,7 @@ import importlib.machinery
 import importlib.util
 import os
 from pathlib import Path
+from _fs import FileSigner  # noqa: E402
 
 PROJECT = Path(__file__).resolve().parent.parent
 
@@ -88,7 +89,7 @@ def test_ingest_rejects_a_forged_entry(hive):
         "payload": {"content": "a genuine foreign fact", "tags": [], "source": "peer"},
         "prev_hash": "sha256:genesis",
     }
-    hv._sign_entry(entry, foreign_seed, foreign_pub)
+    hv._sign_entry(entry, FileSigner(foreign_seed))
     assert hv._verify_entry(entry) is True
 
     forged = copy.deepcopy(entry)

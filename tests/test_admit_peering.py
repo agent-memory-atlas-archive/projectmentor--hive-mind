@@ -14,6 +14,7 @@ from pathlib import Path
 PROJECT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT))
 import _planes  # noqa: E402  (which plane runs a command, 2.0)
+from _fs import FileSigner  # noqa: E402
 
 
 def _run(home, *args):
@@ -42,7 +43,7 @@ def _signed_join_request(hv, url=None):
         payload["url"] = url
     e = {"node_id": nid, "seq": 1, "type": "governance", "timestamp": "2026-05-01T00:00:00Z",
          "payload": payload, "prev_hash": "sha256:genesis"}
-    hv._sign_entry(e, seed, pub)
+    hv._sign_entry(e, FileSigner(seed))
     return nid, e
 
 
