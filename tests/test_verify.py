@@ -19,6 +19,7 @@ import pytest
 PROJECT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT))
 import ed25519  # noqa: E402
+from _source import copy_hv  # noqa: E402
 
 
 def _load_manifest_fn(install):
@@ -37,7 +38,7 @@ def install(tmp_path):
     # Every top-level module, not a hardcoded list: `hv` imports its siblings at module level, so a
     # missing one makes it crash on import and this test reports empty output instead of a verdict.
     # 2.0 adds modules (the signing module, then the control plane), and each would break this fixture.
-    shutil.copy(PROJECT / "hv", d / "hv")
+    copy_hv(d)             # hv and its parts tree (3.1): the manifest and the run both need the parts
     for f in sorted(PROJECT.glob("*.py")):
         shutil.copy(f, d / f.name)
     manifest_fn = _load_manifest_fn(d)

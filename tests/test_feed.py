@@ -16,6 +16,7 @@ PROJECT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT / "tests"))
 from test_links import _loadhv, _fact, _decision  # noqa: E402
 from test_unforget import _act, _hive  # noqa: E402
+from _source import hv_text  # noqa: E402
 
 HV = PROJECT / "hv"
 T = "2026-01-05T00:00:%02dZ"
@@ -172,7 +173,7 @@ def test_the_cli_prints_json_and_exits_2_on_a_bad_cursor(tmp_path):
 
 
 def test_feed_never_reads_the_owner_key():
-    src = (PROJECT / "hv").read_text()
+    src = hv_text()
     body = src[src.index("def _feed_cursor_parse"):src.index("def journal_keys")]
     for banned in ("ownerkey", "owner_seed", "_owner_seed", "hivemind_owner"):
         assert banned not in body

@@ -16,6 +16,7 @@ PROJECT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT))
 sys.path.insert(0, str(PROJECT / "tests"))
 from test_links import (_loadhv, _owned_hive, _fact, _decision, _link, _project, _entry, _gov)  # noqa: E402
+from _source import hv_text  # noqa: E402
 
 NOW = "2026-06-30T00:00:00Z"
 CONTENT = "the deploy succeeded at commit abc123"
@@ -195,7 +196,7 @@ def test_access_count_never_alters_importance_or_utility(tmp_path, monkeypatch):
     hv._recompute_utility(conn, entries)
     conn.commit()
     assert tuple(_fact_row(conn, CONTENT)) == before
-    src = (PROJECT / "hv").read_text()
+    src = hv_text()
     for fn in ("_link_attention", "_utility_evidence", "_recompute_importance", "_recompute_utility", "_salience_rows"):
         body = src.split(f"def {fn}(")[1].split("\ndef ")[0]
         assert "access_count" not in body.replace("`access_count` / `last_accessed` are never read", "") \

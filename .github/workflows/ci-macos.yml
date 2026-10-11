@@ -20,6 +20,7 @@ on:
     branches: [main]
     paths:
       - 'hv'
+      - 'hivemind/parts/**'                   # hv's body runs from these (3.1); a part-only PR must not skip macOS
       - 'hive_sync_daemon.py'
       - 'requirements.txt'
       - 'scripts/platform/macos/**'
@@ -50,7 +51,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install dependencies
-        run: pip install -r requirements.txt pytest pytest-xdist==3.8.0
+        run: pip install -r requirements.txt pytest pytest-xdist==3.8.0 pyflakes==4.0.0
       - name: Run offline test suite
         run: python3 -m pytest -q -n auto   # pytest-xdist: every core (the sign gate runs the same)
 
