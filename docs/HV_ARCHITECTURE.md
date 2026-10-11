@@ -27,7 +27,7 @@ an explicit act: typing `hive-mind`.
 | `hivemind_ctl.py` | control | The `hive-mind` entry point. Loads `hv` as a library, installs the owner steps, routes only control-plane commands, and refuses the rest with the `hv` form to type. |
 | `hivemind_owner.py` | control | Every owner step: reading the seed, producing an `owner_sig`, writing owner-key material, and the commands that exist only to do those things (`owner init`, `group admit`, `config set`, `unforget`, …). |
 | `ownerkey.py` | control | The one module that reads the owner seed and produces a governance signature. It holds no path constants: every caller passes paths in. |
-| `commandmap.py` | both (table) | What moved (`MOVED`, `FLAG_CONDITIONAL`), what stays (`STAYS`), which 1.x aliases were removed (`RENAMED`), and the pointer text. No secrets, no imports. |
+| `commandmap.py` | both (table) | Which commands `hive-mind` routes (`CONTROL_PLANE`), what stays on `hv` (`STAYS`), and the policy-refusal text (`FLAG_CONDITIONAL`). No secrets, no imports. |
 | `vocabulary.py` | both (table) | The reserved core names; `docs/NAMESPACES.md` is generated from it. No imports. |
 | `hive_sync_daemon.py`, `sync_client.py`, `sync_common.py` | data | The sync daemon and client. They load `hv` as a library (`sync_common.load_hv`) and never load the control plane. |
 | `merkle.py`, `ed25519.py`, `x25519.py`, `chacha20poly1305.py` | both | Journal hashing and the one canonicaliser (`merkle._canonical`), plus the bundled pure-Python crypto. A build without them refuses to run. |
@@ -44,22 +44,20 @@ extensionless second entry point would have shipped **unsigned**, and it is the 
 
 - a command's structure is written once, in `hv`, and its flags once, in `hv`'s parser (S1);
 - the owner step keeps the name, globals and signed bytes it always had;
-- on the data plane the placeholder raises `NotOnDataPlane`, and `hv` prints the `hive-mind` form to
-  run and exits **2**, having acted on nothing.
+- on the data plane the placeholder raises `NotOnDataPlane` and `hv` refuses, exit **2**, having acted on
+  nothing.
 
-`hv`'s `main` checks `commandmap` **before parsing**, so a moved or removed command acts on nothing
-whatever its arguments:
+`hv` has its own parser: `build_parser(plane="data")` does not define the commands that live on the control plane, and
+`hivemind_ctl` builds `build_parser(plane="control")`, the full one, so every flag is still defined once. A control-plane
+command typed on `hv` is argparse's unknown command (exit 2, nothing written), and `hv` does not name where it went.
+`commandmap.CONTROL_PLANE` is the routing table `hive-mind` reads, nothing more.
 
-- `MOVED` (for example `owner init`, `group admit`, `config set` and `unforget`): names the
-  `hive-mind` command, with this invocation's arguments carried over.
-- `RENAMED` (the 1.x aliases `hv rebuild`, `hv merkle`, `hv key`, `hv doctor wire-agent`): names the
-  `hv` command that replaced each.
-- `FLAG_CONDITIONAL`: `retract --owner` and `owner propose-election --mint` by their flag, and the
-  owner-policy capsule and cell writes from their handlers, once the hive's config is read.
+Two refusals remain, because they are current verbs refused by hive policy, not moved commands:
+`capsule put|rotate|rm` under `capsule_putters=owner` and `wire --add` under `cell_writers=owner`. `hv` says which
+policy needs the owner-signed write and the `hive-mind` form to run on the owner machine, and exits 2.
 
-Exit 2, never 0, so no script mistakes a pointer for success. The pointers stay through 2.x and are
-removed at 3.0: a deliberate amendment to contract §7, whose working-shim promise would otherwise have
-kept an owner-signing path in `hv`.
+Through 2.x `hv` printed the `hive-mind` form for every moved command (exit 2); 3.0 removed those pointers and closed
+the contract §7 amendment that allowed them (`docs/AGENT_INTEGRATION.md` §7).
 
 ## What stays on `hv`, and why
 
@@ -107,9 +105,9 @@ other checks were run by hand when each landed, and are recorded on its pull req
   signer loaded; a `hive-mind` process does.
 - **No owner signature within `hv`'s reach**: a static check that no `owner_sig` is produced anywhere `hv`
   can reach, including by an inline signer that imports nothing.
-- **The two planes agree** (`tests/test_control_plane.py`): every `MOVED` target is a real control-plane
+- **The two planes agree** (`tests/test_control_plane.py`): every `CONTROL_PLANE` target is a real control-plane
   command, every `STAYS` entry is a real `hv` command and is refused on the control plane, and the
-  dead-man verbs never move. `tests/test_removed_aliases.py` does the same for `RENAMED`.
+  dead-man verbs never move. `tests/test_removed_aliases.py` and `tests/test_removed_pointers.py` pin the 3.0 removals: each retired alias and each formerly pointing argv is an unknown command, exit 2, with nothing written.
 - **Every placeholder is replaced** on the control plane, and no adapter (MCP, Hermes) reaches the control
   plane or an owner signature.
 - **One seed reader** (`tests/test_ownerkey_boundary.py`): `ownerkey` never imports `hv`, owns no hive

@@ -86,9 +86,9 @@ loader.exec_module(hv)
 print(hv._manifest_sequence(sys.stdin.buffer.read()))' "$HIVE_DIR" 2>/dev/null || echo ""
 }
 
-# 2.0 (4c, decision h:696638b9b7): the update's last word on the pre-genesis forget grandfather. An owned hive
-# whose `forget_writers` is still open gets an ACTION REQUIRED block: the facts that depend on it and the one
-# command that closes it, `hive-mind doctor --fix`. Exit 3 means "print nothing more, fail the update"; 0 means
+# 2.0 (4c, decision h:696638b9b7), 3.0 (plan 3.4): the update's last word on the pre-genesis forgets. An owned hive
+# whose migration set is not empty gets an ACTION REQUIRED block: the facts that depend on it and the one
+# command that settles it, `hive-mind migrate forget`. Exit 3 means "print nothing more, fail the update"; 0 means
 # closed or no owner. Reads no stdin: the y/N belongs to `doctor --fix`, run by the owner.
 _forget_authz_gate() {
   HIVE_HOME="$HIVE_DIR" python3 - "$HIVE_DIR" 2>/dev/null <<'PY'
@@ -108,25 +108,42 @@ if c is None or not c.get("open"):
 here = hv._owner_key_state(gov) in ("held", "present")
 facts = c["facts"]
 print("")
-print("\033[0;33m[!!]\033[0m  \033[1mACTION REQUIRED: the pre-genesis forget grandfather is open (forget-authz)\033[0m")
-print("      2.0 is installed and running, and nothing that was forgotten has come back. But an unsigned")
-print("      owner forget dated before genesis is still honoured, and an admitted device can write one (#122).")
-if facts:
-    print(f"      {len(facts)} fact(s) are kept forgotten only by such a forget:")
-    for f in facts[:10]:
-        text = " ".join(f["content"].split())
-        print(f"        {f['sid']}  {text[:80]}{'…' if len(text) > 80 else ''}")
-    if len(facts) > 10:
-        print(f"        … and {len(facts) - 10} more (`hv doctor` lists them all)")
+print("\033[0;33m[!!]\033[0m  \033[1mACTION REQUIRED: facts depend on a pre-genesis unsigned forget (forget-authz)\033[0m")
+print("      3.0 no longer honours an unsigned owner forget dated before genesis, because an admitted device can")
+print("      write one (#122). These facts are hidden only by such a forget and show again until it is re-signed:")
+for f in facts[:10]:
+    text = " ".join(f["content"].split())
+    print(f"        {f['sid']}  {text[:80]}{'…' if len(text) > 80 else ''}")
+if len(facts) > 10:
+    print(f"        … and {len(facts) - 10} more (`hv doctor` lists them all)")
 print("      Run once, " + ("here (this device keeps an owner key):" if here else "on the owner machine:"))
-print("        hive-mind doctor --fix")
-if facts:
-    print("      It lists these facts and asks y/N. y re-signs those forgets, so the facts stay hidden, and closes")
-    print("      the hive. N writes nothing, and names how to let a fact back instead.")
-else:
-    print("      No fact depends on the grandfather, so it closes without asking.")
+print("        hive-mind migrate forget")
+print("      It lists these facts and asks y/N. y re-signs those forgets, so the facts stay hidden. N writes")
+print("      nothing, and names how to let a fact back instead.")
 print("      Until then `hv doctor` fails forget-authz, and every `hive-mind update` ends here.")
 sys.exit(3)
+PY
+}
+
+# 3.0 PR 9: after the rebuild, the entity store migration is checked. `hv doctor rebuild` opens the store through
+# `init_db`, which migrates a 2.4-shaped store once (drop, rebuild, stamp `schema_version`, one transaction) and
+# leaves a current one alone. This prints the `entity-identity` line, and warns (never fails the update) when it is not ok.
+_entity_identity_report() {
+  HIVE_HOME="$HIVE_DIR" python3 - "$HIVE_DIR" 2>/dev/null <<'PY'
+import importlib.util, sys
+from importlib.machinery import SourceFileLoader
+from pathlib import Path
+loader = SourceFileLoader("hv_update_entity", str(Path(sys.argv[1]) / "hv"))
+spec = importlib.util.spec_from_loader("hv_update_entity", loader)
+hv = importlib.util.module_from_spec(spec)
+loader.exec_module(hv)
+conn = hv.get_conn()
+try:
+    c = hv._entity_identity_check(conn, hv.merkle.read_all_entries(hv.JOURNAL_DIR))
+finally:
+    conn.close()
+print(("ok: " if c["status"] == "ok" else "FAIL: ") + c["detail"])
+sys.exit(0 if c["status"] == "ok" else 1)
 PY
 }
 
@@ -141,20 +158,117 @@ _daemon_port() {
 print(sync_common.load_peers().get('port', 9876))" "$HIVE_DIR" 2>/dev/null || echo 9876
 }
 
+# 3.0 (plan 3.3): the commit to return the tree to when this update's switch must be undone, empty when none is
+# identified. Args: the unix second this process started, the HEAD it read before its fetch, whether it took the
+# switch itself (1/0), the inherited marker (HIVE_UPDATE_SWITCHED / HIVE_UPDATE_PRE_HEAD). Never `ORIG_HEAD`, and never
+# a prefix match: only the exact subjects the updater itself writes count (`merge <40-hex>: Fast-forward`,
+# `reset: moving to <40-hex>`, the hex being the row's own new tip), and only when the whole reflog above the switch
+# is such rows, so a later commit, checkout or `pull` leaves HEAD alone. The rule is read from `git reflog`, newest first.
+_rollback_target() {
+  python3 -I - "$HIVE_DIR" "$_START" "$_HEAD" "$_SELF_SWITCHED" "${HIVE_UPDATE_SWITCHED:-}" "${HIVE_UPDATE_PRE_HEAD:-}" <<'PY' 2>/dev/null || true
+import re, subprocess, sys
+root, start, head0, self_switched, flag, pre = sys.argv[1:7]
+start, self_switched = int(start), self_switched == "1"
+BOUND = 5   # a few seconds: the old script execs the new one straight after its switch
+HEX = r"[0-9a-f]{40}"
+def git(*a):
+    r = subprocess.run(["git", "-C", root, *a], capture_output=True, text=True)
+    return r.stdout if r.returncode == 0 else ""
+cur = git("rev-parse", "HEAD").strip()
+rows = []                                   # newest first: (new sha, unix second, subject)
+for line in git("reflog", "show", "--date=unix", "--format=%H|%gd|%gs", "HEAD").splitlines():
+    sha, sel, subj = (line.split("|", 2) + ["", ""])[:3]
+    m = re.fullmatch(r"HEAD@\{(\d+)\}", sel)
+    if m and re.fullmatch(HEX, sha):
+        rows.append((sha, int(m.group(1)), subj))
+def switch_row(r):
+    m = re.fullmatch(rf"(?:merge ({HEX}): Fast-forward|reset: moving to ({HEX}))", r[2])
+    return bool(m) and (m.group(1) or m.group(2)) == r[0]
+# The latest reflog entry has to be a switch of the updater's own, landing on HEAD; else something moved HEAD since.
+if not rows or rows[0][0] != cur or not switch_row(rows[0]):
+    sys.exit(0)
+if flag == "1":                             # the pre-exec process switched: roll back to what it read
+    if re.fullmatch(HEX, pre) and git("cat-file", "-t", pre).strip() == "commit":
+        print(pre)
+    sys.exit(0)
+# No inherited flag: the oldest unbroken run of switch rows from the top, and the oldest of those inside the bound.
+run = 0
+while run < len(rows) and switch_row(rows[run]):
+    run += 1
+qual = [i for i in range(run) if start - BOUND <= rows[i][1] <= start]
+if qual:
+    i = max(qual)                           # the oldest qualifying row
+    if i + 1 < len(rows):
+        print(rows[i + 1][0])               # the HEAD that row replaced: the next older row, not its hex or parent
+    sys.exit(0)
+if self_switched and re.fullmatch(HEX, head0):
+    print(head0)                            # this process's own switch, in a later second than its start
+PY
+}
+
+# 3.0 (plan 3.3): step 0, the first thing the NEW script does after the re-exec guard and before anything else of it
+# (pin, commands, units, restart, rebuild, wire). The migration set must be empty before 3.0's code runs on this node.
+# `migrate forget --check` writes nothing. When it is open, `migrate forget` is run here (y/N on a terminal; the owner
+# key is unlocked only after y; no terminal is N); anything short of a passing check refuses. If this update's own
+# switch is identified the tree goes back to the pre-switch HEAD with `reset --keep` (never `--hard`: local edits stay),
+# else HEAD is left where it is and the exit is still 1. The daemon was never restarted and no unit was written.
+_forget_migration_step0() {
+  local _target _now
+  # No bytecode: a refused tree must be byte-identical, and the checks import the tree's own modules.
+  _mig() { PYTHONDONTWRITEBYTECODE=1 HIVE_HOME="$HIVE_DIR" python3 "$HIVE_DIR/hivemind_ctl.py" migrate forget "$@"; }
+  # Open = the migration set is not empty. The arm is gone, so an unset or `legacy` policy with an empty set is
+  # closed. A check that cannot run counts as open.
+  _open() { ! _mig --check >/dev/null 2>&1; }
+  info "Checking the pre-genesis forget migration (3.0)..."
+  if ! _open; then ok "No fact depends on a pre-genesis unsigned forget"; return 0; fi
+  _mig || true
+  if ! _open; then ok "Forget migration done"; return 0; fi
+  _target="$(_rollback_target)"; _now="$(git -C "$HIVE_DIR" rev-parse HEAD)"
+  echo "" >&2
+  echo "hive-mind update: REFUSED. This version needs the pre-genesis forgets re-signed first, and they are not." >&2
+  echo "  On the owner machine run:  hive-mind migrate forget    then:  hive-mind sync" >&2
+  echo "  On every other machine, after the owner's re-issues have synced:  hive-mind update" >&2
+  echo "  The owner machine should update first. There is no flag that skips this." >&2
+  if [ -n "$_target" ] && [ "$_target" != "$_now" ] \
+     && git -C "$HIVE_DIR" reset --keep -q "$_target" 2>/dev/null; then
+    echo "  This update's switch was undone: $_BR is back at ${_target:0:12} (was ${_now:0:12}); your local edits are kept." >&2
+  else
+    echo "  This update did not switch the tree (or the switch could not be identified): $_BR is left at ${_now:0:12}." >&2
+  fi
+  echo "  The daemon was not restarted and no unit was written." >&2
+  exit 1
+}
+
 echo ""
 echo -e "${BLD}hive-mind update${RST}"
 echo "────────────────────────────────────"
 
-info "Fetching latest from GitHub..."
 # VERIFY, THEN SWITCH. The fetch only fills remote-tracking refs and tags; nothing the node runs changes
 # until the commit it would switch to has passed the signed-manifest check against the key THIS install
 # pins. A refusal leaves the branch and the working tree exactly as they were.
 # Normally the switch is a fast-forward. But if upstream history was REWRITTEN (e.g. a force-push to scrub a
 # leaked secret from history), the local branch can no longer fast-forward; the switch is then a hard-reset,
 # but ONLY when the working tree is clean, so a node with genuine local edits is never silently clobbered.
+# 3.0 (plan 3.3): what step 0 below needs to undo THIS update's switch. The start second and the HEAD read before the
+# fetch are taken first. Only the pre-exec process (HIVE_UPDATE_REEXEC unset) exports the marker: the installed HEAD,
+# and HIVE_UPDATE_SWITCHED=1 only if that same process takes the switch below. A value a parent exported is not
+# overwritten; the re-exec'd process exports neither name. `_SELF_SWITCHED` is local: this process took the switch.
+_START="$(date +%s)"
+_HEAD="$(git -C "$HIVE_DIR" rev-parse HEAD)"
+_SELF_SWITCHED=0
+if [ -z "${HIVE_UPDATE_REEXEC:-}" ]; then
+  unset HIVE_UPDATE_SWITCHED
+  export HIVE_UPDATE_PRE_HEAD="${HIVE_UPDATE_PRE_HEAD:-$_HEAD}"
+fi
+# The re-exec'd process runs step 0 BEFORE its own fetch: the parent already switched the tree, and any command that
+# can exit below (a failed fetch, a diverged dirty tree, a refused rewind, a failed verify, a lower sequence, the major
+# gate) would otherwise leave that switch in place with the migration unchecked. It runs again after the fetch and
+# switch below, in case this process switched the tree once more.
+_BR="$(git -C "$HIVE_DIR" rev-parse --abbrev-ref HEAD)"
+if [ -n "${HIVE_UPDATE_REEXEC:-}" ]; then _forget_migration_step0; fi
+info "Fetching latest from GitHub..."
 git -C "$HIVE_DIR" fetch --tags origin
 _BR="$(git -C "$HIVE_DIR" rev-parse --abbrev-ref HEAD)"
-_HEAD="$(git -C "$HIVE_DIR" rev-parse HEAD)"
 _NEW="$(git -C "$HIVE_DIR" rev-parse "@{u}")"
 
 _switch_mode() {
@@ -266,10 +380,12 @@ else
 
   if [ "$_MODE" = ff ]; then
     git -C "$HIVE_DIR" merge --ff-only -q "$_NEW"
+    _SELF_SWITCHED=1; [ -n "${HIVE_UPDATE_REEXEC:-}" ] || export HIVE_UPDATE_SWITCHED=1
     ok "Repo updated"
   else
     info "Upstream history was rewritten — hard-resetting clean tree to origin/$_BR"
     git -C "$HIVE_DIR" reset -q --hard "$_NEW"
+    _SELF_SWITCHED=1; [ -n "${HIVE_UPDATE_REEXEC:-}" ] || export HIVE_UPDATE_SWITCHED=1
     ok "Repo re-synced to rewritten upstream"
   fi
 fi
@@ -284,6 +400,8 @@ if [ -z "${HIVE_UPDATE_REEXEC:-}" ]; then
   export HIVE_UPDATE_REEXEC=1
   exec bash "$HIVE_DIR/scripts/installer/_update.sh" "$@"
 fi
+
+_forget_migration_step0
 
 # Pin the genesis on an upgrading node (hive-mind-private #14). From this release a node that has not
 # pinned refuses inbound sync, so pin here. Pinning is operator state: since 2.0 it runs on the control plane
@@ -350,6 +468,11 @@ fi
 info "Rebuilding database..."
 if cd "$HIVE_DIR" && ./hv doctor rebuild; then
   ok "DB rebuilt"
+  if _ei="$(_entity_identity_report)"; then
+    ok "Entity identity: ${_ei#ok: }"
+  else
+    warn "Entity identity: ${_ei:-could not be checked}. Run 'hv doctor rebuild' and 'hv doctor' to see entity-identity."
+  fi
 else
   warn "Rebuild skipped (store busy). No need to rerun it: the daemon catches the store up on its next cycle, and so does the next hv command."
 fi

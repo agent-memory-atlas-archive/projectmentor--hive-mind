@@ -35,6 +35,7 @@ memory.
 | `hv search` | Search facts, decisions and ideas; `--id` looks one up by `sid` or `ref` |
 | `hv stats` | See a summary of your memory |
 | `hive-mind unforget` | Owner only: reverse an owner forget (`hive-mind retract --owner`) |
+| `hive-mind migrate forget` | Owner only (3.0): re-issue, owner-signed, the forgets that only the pre-genesis grandfather keeps in effect; `--check` lists them |
 | `hv sync` | Sync with peer nodes; `auth` sets the read-auth mode, `auth --outbound` what a peer must prove before this node pushes to it |
 | `hv telemetry` | Local-only session observability (never synced) |
 | `hv verify` | Check that this install is the official, signed release |
@@ -109,8 +110,7 @@ hive-mind config set quorum_by device       # count quorum by `device` or by `pr
 hive-mind config set dead_man_days 30       # owner silence required before an election can install (default 30)
 ```
 
-> *(2.0)* One command sets every governed key. The three older `set` forms under `hv config`
-> (`confidence set`, `quorum set` and plain `set`) name `hive-mind config set` and exit 2, acting on nothing.
+> One command sets every governed key: `hive-mind config set`. `hv config` has no `set` form (2.0 moved it to the control plane; 3.0 removed the pointers).
 
 `capsule_putters` and `cell_writers` are the two write policies: who may publish capsules, and who
 may publish cells and combs. Each is `owner` (the default) or `fertile` (any admitted device). Set
@@ -121,26 +121,28 @@ hive-mind config set capsule_putters fertile   # any admitted device may seal an
 hive-mind config set cell_writers owner        # only the owner may publish cells/combs (default)
 ```
 
-*(1.25, #122)* `forget_writers` decides which owner forgets count. `legacy` (the default) also honours an
-unsigned owner forget dated before the genesis owner, which an admitted device could have backdated. `owner`
-honours only a forget signed by the owner as of its position:
+*(1.25, #122; 3.0)* `forget_writers` once decided which owner forgets counted: `legacy` (the default) also honoured an
+unsigned owner forget dated before the genesis owner, which an admitted device could have backdated. **3.0 removed
+that**: only a forget signed by the owner as of its position hides a fact, whatever the key says. The key stays
+recognised (a 2.x peer reads it): `legacy` is refused with a sentence, and `owner` is accepted and records that the
+hive is migrated.
 
 ```
-hive-mind config set forget_writers owner   # close the pre-genesis grandfather (#122)
-hive-mind doctor --fix                      # the same close, re-signing what depends on it first (2.0)
+hive-mind migrate forget             # re-sign what a 2.x hive kept forgotten only by such a forget (3.0)
+hive-mind config set forget_writers owner   # record the close for 2.x peers (`migrate forget` does this)
 ```
 
-`config set` refuses, writing nothing, while closing would bring a fact back: it lists each fact kept forgotten
-only by such a forget, with the two ways to decide it, `hive-mind retract <sid> --owner` (keep it forgotten,
-now signed) or `hive-mind unforget <sid> --reason …` (let it back). Run it again once each is decided.
+`config set` refuses, writing nothing, while a 2.x peer would still keep a fact forgotten only by such a forget: it lists
+each, with the two ways to decide it, `hive-mind retract <sid> --owner` (keep it forgotten, now signed) or
+`hive-mind unforget <sid> --reason …` (let it back). Run it again once each is decided.
 
-*(2.0)* The default stays `legacy`, so nothing a hive forgot comes back when it upgrades. But `hv doctor` fails
-`forget-authz` on an owned hive whose policy is still open, and `hive-mind update` ends with an ACTION
-REQUIRED note until it is closed. `hive-mind doctor --fix` is the one command. With nothing depending on the
-grandfather it closes at once. Otherwise it lists each dependent fact by `h:` id with its text and asks, at a
-terminal, whether to re-sign those forgets so the facts stay hidden (default no). `y` re-signs each one
-owner-signed and then closes; `n`, or no terminal, writes nothing. Read the list first: an admitted device
-could have written one of those forgets, and `hive-mind unforget` lets such a fact back instead.
+*(3.0)* `hv doctor` fails `forget-authz` on an owned hive while the **migration set** (the facts the last 2.x hid by an
+unsigned pre-genesis forget alone) is not empty, and passes on an empty set whatever the key says. `hive-mind update`
+runs `hive-mind migrate forget` first and refuses until the set is empty. `hive-mind doctor --fix` does the same
+re-signing: it lists each dependent fact by `h:` id with its text and asks, at a terminal, whether to re-sign those
+forgets so the facts stay hidden (default no). `y` re-signs each one owner-signed; `n`, or no terminal, writes
+nothing. Read the list first: an admitted device could have written one of those forgets, and
+`hive-mind unforget` lets such a fact back instead.
 
 `same_device_lambda` is why two agents on one machine count for less than two on
 separate machines: the device contributes its strongest agent in full plus this
@@ -316,10 +318,13 @@ devices sealed the same capsule version before syncing, so one value lost a dete
 **capsule-authz** (a `capsule` entry the projection declines because its signer was not authorized
 under `capsule_putters`), **cell-authz** (the same for cells and combs under `cell_writers`),
 **link-authz** (a `supersedes`/`resolves` link was downgraded to evidence — re-issue it owner-signed),
-**forget-authz** (#122: an owner forget dated before the genesis owner needs no signature while
-`forget_writers` is open, so an admitted device could backdate one. In 2.0 the check FAILS on an owned
-hive whose policy is still open, listing by `h:` id each fact kept forgotten only by such a forget, and
-names `hive-mind doctor --fix`, which closes it; once closed the check reports it closed),
+**forget-authz** (#122: an owner forget dated before the genesis owner needed no signature through 2.x, so an
+admitted device could backdate one. 3.0 ignores such a forget. The check FAILS on an owned hive while facts
+the last 2.x hid by one are not yet re-signed, listing each by `h:` id and naming `hive-mind migrate forget`;
+it passes on none, reporting `closed: 0 facts depend on a pre-genesis unsigned forget`),
+*(3.0)* **entity-identity** (the store is at schema 3 and the name/identity split changed nothing for a legacy
+name group: it passes with `N entities, M names shared by more than one`, and fails a store left at the old schema,
+an entity without an identity ref, or a legacy name group split across entities; `hv doctor rebuild` repairs it),
 **trust-drift** (a device's recent reliability fell well below its baseline; advisory, see `hv peers`)
 and *(1.19 PR2b)* **fleet-contract** (an admitted peer advertises an agent contract below 1.19, or
 is unreachable so it cannot be verified — such a peer lands but does not honour the `link` entries
@@ -406,16 +411,16 @@ diverge.
 hv doctor merkle
 ```
 
-> `hv merkle`, the 1.x alias, was removed in 2.0: it names this command and exits 2.
+> `hv merkle`, the 1.x alias, was removed in 3.0 (it pointed here and exited 2 through 2.x): it is now an unknown command.
 
 ---
 
-### Moving a hostname-era node to a device key (removed in 2.0)
+### Moving a hostname-era node to a device key (1.x only)
 
 `hv doctor migrate-identity`, the one-time step that re-stamped a journal from hostname `node_id`s to
-device ids (1.3, #130), was removed in 2.0. A node whose journal is still under its hostname runs it on a
-1.x release (1.28 is the last), then upgrades. In 2.0, `hv doctor migrate-identity` and
-`hv migrate-device-identity` say so and exit 2.
+device ids (1.3, #130), exists only on 1.x. A node whose journal is still under its hostname runs it on a
+1.x release (1.28 is the last), then upgrades. 2.0 removed it; 2.x pointed at this step and exited 2, and
+since 3.0 `hv doctor migrate-identity` and `hv migrate-device-identity` are unknown commands.
 
 ---
 
@@ -431,15 +436,15 @@ unexpectedly.
 hv doctor rebuild
 ```
 
-(`hv rebuild`, the 1.x alias, was removed in 2.0: it names this command and exits 2,
+(`hv rebuild`, the 1.x alias, was removed in 3.0: it is now an unknown command, exit 2,
 having rebuilt nothing.)
 
 ---
 
 ### `hv wire claude` — Wire Claude Code
 
-*`hv doctor wire-agent`, deprecated since contract 1.13, was removed in 2.0: it writes nothing, names
-`hv wire claude` and exits 2.*
+*`hv doctor wire-agent`, deprecated since contract 1.13, was removed in 3.0: it is now an unknown
+command, writes nothing and exits 2. Use `hv wire claude`.*
 
 Wires the Claude Code dispatch shim and the `hive-memory` skill into `~/.claude`,
 migrating any older inline hooks to the shim as it goes. It's idempotent — your own
@@ -535,11 +540,11 @@ hv entity {add,list,show,link,join,unjoin} [options]
 
 | Sub-command | What it does |
 |---|---|
-| `add` | Create a new entity. Needs `--name` and `--type` (e.g. `person`, `project`, `concept`). Optionally add metadata with `--attr` as a JSON object. |
-| `list` | List all entities. |
-| `show` | Show an entity and all facts linked to it. Needs `--name`. *(2.1)* Also lists each module entity (`x-<module>:…`) a core `same-as` joins to it, with its facts; `--no-joins` prints the core entity only. |
-| `link` | Attach a fact to an entity. Needs `--name` and `--fact-id` (the fact's `sid` `h:…` or `ref`; a bare local id is refused). *(1.23)* `--source` names the writer, as on `hv remember`; omitted it is `manual`, and a `manual` link is owner-signed only through `hive-mind` (#114). Optionally set `--confidence` to indicate how strongly the fact relates. *(1.19 PR2b)* Journaled as one `entity` **link** (evidence-class: it never hides anything, so it needs no authority). |
-| `join` | *(2.1, #208)* Join a module's entity to a shared one: `--name x-<module>:<n> --to <n>` writes a core `same-as` link. `--name` must be a module-prefixed entity and `--to` an unprefixed one. A module cannot write this itself. |
+| `add` | Create an entity, or update the one of that name. Needs `--name` and `--type` (e.g. `person`, `project`, `concept`). Optionally add metadata with `--attr` as a JSON object. *(3.0)* `add` says which entity it writes: with one entity of the name it updates that one (`identity_ref`), with none it creates it (`new_identity`), with more than one it exits 1 and lists their `h:` ids. `--new` creates one even when the name is taken (two people called David). `--entity ID` (an `h:` id or `node_id:seq` ref) updates that entity, and is how you pick one of several. Only the entity's creator, or the owner, rewrites it; another device's update is journaled but does not replace it. |
+| `list` | List all entities. *(3.0)* A name more than one entity holds is shown with its id (`David · h:1f3a…`); a unique name is shown bare. |
+| `show` | Show an entity and all facts linked to it. Needs `--name`, or `--entity ID` (3.0; required when the name is shared). *(2.1)* Also lists each module entity (`x-<module>:…`) a core `same-as` joins to it, with its facts; `--no-joins` prints the core entity only. |
+| `link` | Attach a fact to an entity. Needs `--name` (or, since 3.0, `--entity ID`) and `--fact-id` (the fact's `sid` `h:…` or `ref`; a bare local id is refused). *(1.23)* `--source` names the writer, as on `hv remember`; omitted it is `manual`, and a `manual` link is owner-signed only through `hive-mind` (#114). Optionally set `--confidence` to indicate how strongly the fact relates. *(1.19 PR2b)* Journaled as one `entity` **link** (evidence-class: it never hides anything, so it needs no authority). |
+| `join` | *(2.1, #208)* Join a module's entity to a shared one: `--name x-<module>:<n> --to <n>` writes a core `same-as` link. `--name` must be a module-prefixed entity and `--to` an unprefixed one. A module cannot write this itself. *(3.0)* Either end may be given by id instead: `--entity ID` for the first, `--to-entity ID` for the second (the only way to name one of several same-named entities). |
 | `unjoin` | *(2.1)* Withdraw a join: the same flags. Plain `unjoin` withdraws **only the joins this device wrote** (one `retract` per join; another device's join stays live) and exits 1 if this device wrote none. `--owner` is the owner's withdrawal of every live join of the pair, and runs as `hive-mind entity unjoin --owner`. |
 
 **Examples:**
@@ -650,9 +655,8 @@ with its identity-derived one — that carried key is ignored, never trusted, an
 surfaced as a tamper signal. The same two conditions appear in `hv doctor` as the `device-keys`
 check.
 
-> *(2.0)* The lifecycle moved to the control plane. Run on `hv`, `group admit`, `revoke`, `deny`, `change`
-> and `purge`, and the older top-level `admit`, name the `hive-mind group` form and exit 2. `hv group` and
-> `hv group list` stay.
+> The lifecycle (`admit`, `revoke`, `deny`, `change`, `purge`, `retire`) is `hive-mind group …`, owner-only. `hv group` and
+> `hv group list` stay. The owner-only verbs moved to the control plane in 2.0; `hv` pointed at them through 2.x and since 3.0 does not define them.
 
 ---
 
@@ -980,6 +984,28 @@ hive-mind retract k1:597b3e0f5fb92d37:15 \
 
 ---
 
+### `hive-mind migrate forget` — Close the pre-genesis forget grandfather *(3.0)*
+
+Release 3.0 stops honouring an unsigned owner forget dated before the genesis owner. `hive-mind migrate forget`
+re-issues each such forget owner-signed first, so no fact comes back. It lists the dependent facts by `h:` id
+and text, asks y/N (default N; no terminal is N) before it unlocks the owner key, then appends the re-issues
+and sets `forget_writers=owner` through the #122 guard. It re-keys nothing and is idempotent: a second run
+finds an empty set and appends nothing. Owner machine only.
+
+```
+hive-mind migrate forget [--check]
+```
+
+| Flag | What it does |
+|---|---|
+| `--check` | Writes nothing. Prints the dependent facts, or `closed: 0 facts depend on a pre-genesis unsigned forget`; exit 0 only when there are none. |
+
+A forget that 2.x already ignored (`forget_writers=owner`) is not listed and is not re-signed. 3.0 PR 4 removed the
+grandfather arm, so after this command no fact is hidden by an unsigned pre-genesis forget on any node.
+While a migration is owed, `hv search`, `hv feed` and the session-start nudge print a one-line notice.
+
+---
+
 ### `hive-mind unforget` — Reverse an owner forget *(1.24, #46)*
 
 An owner forget (`hive-mind retract --owner`) floors a fact on every node. `hive-mind unforget`
@@ -1260,7 +1286,7 @@ checks, strongest last:
    `https://hivemind.projectmentor.org/.well-known/hivemind.pub`, a different origin from the code
    host. Catches a fork that ships its own key and a self-signed manifest.
 
-A healthy install prints `✓ Official HiveMind v2.4 from ProjectMentor — verified.` If you edited
+A healthy install prints `✓ Official HiveMind v3.0 from ProjectMentor — verified.` If you edited
 files yourself it says the install was modified locally.
 
 **Exit codes** (a script or CI step can rely on them):
@@ -1268,7 +1294,7 @@ files yourself it says the install was modified locally.
 | Code | Meaning |
 |---|---|
 | `0` | Verified: integrity, signature and key anchor all confirmed |
-| `1` | Failed: the install is modified, the signature is invalid, the signing key is not the published one (a fork), or there is no manifest. Do not trust it. (`2` is not used: argparse usage errors and the 2.0 pointers exit 2) |
+| `1` | Failed: the install is modified, the signature is invalid, the signing key is not the published one (a fork), or there is no manifest. Do not trust it. (`2` is not used: argparse usage errors exit 2) |
 | `3` | Could not fully check, nothing found wrong: the key anchor was unreachable (offline), or this build predates signed releases. A network outage does not look like tampering |
 
 A fresh checkout still waiting for its release re-sign exits `1`. `hv doctor` is the advisory view of
@@ -1283,7 +1309,7 @@ rather than failed while it is pending (see `hv doctor` above).
 ### `hv version` — Agent contract version
 
 ```
-hv version        # → hv contract-version 2.4
+hv version        # → hv contract-version 3.0
 ```
 
 The version of the agent contract (`docs/AGENT_INTEGRATION.md`). Adapters compare it with the

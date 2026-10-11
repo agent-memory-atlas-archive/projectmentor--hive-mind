@@ -1,34 +1,26 @@
-"""What moved to the control plane, in one table (2.0, public #136).
+"""Which commands belong to the control plane, in one table (2.0, public #136; a routing table since 3.0).
 
 The split gives `hv` (the agent data plane) and `hive-mind` (the owner/operator control plane) a shared
-problem: `hv` must tell an operator where a command went, and `hive-mind` must actually provide it. If
-those two lists live in two places they drift, and the failure is a pointer naming a command that does
-not exist — the operator is then stuck with no correct next step, which is worse than the command simply
-being gone.
+problem: `hive-mind` must route exactly the commands `hv` does not have. If that list lived in two places
+they would drift, so this is the single source of truth, read by `hivemind_ctl` and by the tests.
 
-So this is the single source of truth, imported by both. A test asserts every entry is reachable in the
-control plane and pointed at from `hv`.
+Since 3.0 `hv` no longer names these commands. Its parser (`build_parser(plane="data")`) does not define
+them, so a control-plane command typed on `hv` is argparse's unknown command: exit 2, nothing written. A test
+asserts every entry is reachable in the control plane and refused by the data-plane parser.
 
 Deliberately importable by `hv`: it holds no secret, reads no configuration, and imports nothing. It is
 a table. The module `hv` must NOT import is `ownerkey`, and nothing here reaches it.
 
-Each entry maps the OLD `hv` invocation to the NEW `hive-mind` one. `hv` prints the new form and exits
-**2** — never 0, which would let a script believe the old command had worked, and never acts. That is a
-deliberate amendment to contract §7, which promises the previous major keeps working as deprecated
-shims: for a command whose whole purpose is being removed from the data plane, a working shim would keep
-an owner-signing path in `hv` and undo S2. The window preserves discoverability, not behaviour.
-
-`RENAMED` gives the same treatment to the old `hv` names that 2.0 removes while the command itself stays
-on `hv` under its newer name.
+Each entry maps the `hv`-shaped argv prefix to the `hive-mind` argv prefix that implements it.
 """
 
-# (old hv argv prefix) -> (new hive-mind argv prefix, one-line why)
+# (argv prefix as typed on the control plane) -> (the library argv prefix, one-line why)
 #
 # Every target here must resolve to a real command on the control plane, and a test walks the library's
 # actual subparsers to prove it. `owner mint` joined in 2b, with the subcommand that implements it:
 # advertising a command that does not exist is the failure this table exists to prevent, and it is worse
 # than the command being missing, because the operator is told to type something that cannot work.
-MOVED = {
+CONTROL_PLANE = {
     # Owner identity and governance — every one of these produces an owner signature.
     ("owner", "init"):              ("owner init",              "mints and claims the owner key"),
     ("owner", "export"):            ("owner export",            "reads the owner key"),
@@ -62,6 +54,9 @@ MOVED = {
     ("config", "confidence", "set"): ("config set",             "owner-signed; collapsed into `config set`"),
     ("config", "quorum", "set"):    ("config set",              "owner-signed; collapsed into `config set`"),
 
+    # One-time migrations (release 3.0): the re-issues are owner-signed.
+    ("migrate", "forget"):          ("migrate forget",          "owner-signed; re-issues the grandfathered forgets"),
+
     # Owner acts on content. `hv retract` without --owner stays: that is peer evidence, not governance.
     ("unforget",):                  ("unforget",                "owner-signed"),
 }
@@ -82,16 +77,14 @@ STAYS = {
     ("doctor",):                    "read-only checks, and the peer-address repoint is data-plane self-heal",
 }
 
-# `hv retract --owner` and `hv capsule put` under an owner policy are flag-conditional rather than whole
-# commands, so they are pointed at from their own code paths rather than from this table.
+# Verbs that stay on `hv` but are refused by a hive POLICY (`capsule_putters=owner`, `cell_writers=owner`):
+# the handler reads the hive's config, so the refusal cannot be a parser fact. `policy_text` explains it.
 FLAG_CONDITIONAL = {
-    "retract --owner": ("retract --owner", "owner-signed; plain `hv retract` stays"),
     "capsule put (capsule_putters=owner)": ("capsule put", "owner-signed under that policy; reads and "
                                                           "fertile puts stay on hv"),
     "capsule rotate (capsule_putters=owner)": ("capsule rotate", "owner-signed under that policy"),
     "capsule rm (capsule_putters=owner)": ("capsule rm", "owner-signed under that policy"),
     "wire --add (cell_writers=owner)": ("wire --add", "owner-signed under that policy"),
-    "owner propose-election --mint": ("owner mint", "mints owner-key material; use --pub on hv"),
     "doctor --fix (key perms, genesis pin)": ("doctor --fix", "operator state: the owner key's permissions "
                                                              "and the genesis pin. `hv doctor --fix` keeps "
                                                              "every data-plane repair, the device key's "
@@ -103,68 +96,25 @@ FLAG_CONDITIONAL = {
 # `manual`, they are owner-signed (#114). Not pointers: `hv` keeps running them.
 OWNER_LINK_VERBS = ("remember", "decide", "entity")
 
-# Old `hv` names for commands that stay on `hv` under a new name. Through 1.x each was a hidden alias that
-# still worked; 2.0 removes them (S8). Each one now points like a moved command: it acts on nothing, exits
-# 2 and names the replacement, which is another `hv` command. They are kept through 2.x and deleted at 3.0
-# (decision h:af137f9421). A test walks `hv`'s real parser to prove every replacement exists.
-#
-# (old hv argv prefix) -> (new hv argv prefix, one-line why)
-RENAMED = {
-    ("rebuild",):                   ("doctor rebuild",          "folded under `hv doctor` in 1.8"),
-    ("merkle",):                    ("doctor merkle",           "folded under `hv doctor`"),
-    ("key",):                       ("config identity",         "the device key is `hv config identity`"),
-    ("doctor", "wire-agent"):       ("wire claude",             "`hv wire <agent>` is the one "
-                                                                "agent-neutral wiring verb"),
-}
-
-POINTER_EXIT = 2
+POLICY_EXIT = 2
 
 
-def pointer_text(old_argv, new_form, why=""):
-    """The message `hv` prints for a moved command. Names the exact replacement, because an operator who
-    reads this is mid-task and the next thing they need is something to type."""
-    old = "hv " + " ".join(old_argv)
-    lines = [f"`{old}` moved to the control plane in 2.0.",
-             f"  Run: hive-mind {new_form}"]
-    if why:
-        lines.append(f"  ({why}.)")
-    lines.append("  `hv` is the agent data plane and cannot owner-sign; see docs/HV_ARCHITECTURE.md.")
-    return "\n".join(lines)
+def policy_text(key):
+    """What `hv` prints when an owner-signed step is refused on the data plane: for a policy key, the policy
+    and where to run it; for any other step, that `hv` cannot sign it. Names what the operator needs next."""
+    if key in FLAG_CONDITIONAL and "(" in key:
+        verb, policy = key.split(" (", 1)
+        policy = policy.rstrip(")")
+        return (f"`hv {verb}` needs an owner-signed write on this hive (`{policy}`).\n"
+                f"  Run it on the owner machine with `hive-mind {FLAG_CONDITIONAL[key][0]}`.")
+    return "`hv` is the agent data plane and cannot owner-sign this step; see docs/HV_ARCHITECTURE.md."
 
 
 def lookup(argv):
-    """The longest matching MOVED prefix for an argv, or None. Longest-first so `config confidence set`
+    """The longest matching CONTROL_PLANE prefix for an argv, or None. Longest-first so `config confidence set`
     is not shadowed by `config set`."""
     for n in (3, 2, 1):
         key = tuple(argv[:n])
-        if key in MOVED:
-            return key, MOVED[key]
+        if key in CONTROL_PLANE:
+            return key, CONTROL_PLANE[key]
     return None
-
-
-def renamed(argv):
-    """The `hv` command an old name became, as the full argv to type, or None.
-
-    Returns `(old_key, new_argv, why)`. The rest of the invocation is carried over, so `hv key init --force`
-    names `hv config identity init --force`. `doctor wire-agent` is matched wherever `wire-agent` falls
-    after `doctor`, since `hv doctor --fix wire-agent` parsed as the same subcommand. It took no arguments
-    and always wired Claude, so its replacement is exactly `hv wire claude`."""
-    argv = list(argv)
-    if argv[:1] == ["doctor"] and "wire-agent" in argv[1:]:
-        key = ("doctor", "wire-agent")
-        new_form, why = RENAMED[key]
-        return key, new_form.split(), why
-    key = tuple(argv[:1])
-    if key in RENAMED:
-        new_form, why = RENAMED[key]
-        return key, new_form.split() + argv[1:], why
-    return None
-
-
-def renamed_text(old_argv, new_argv, why=""):
-    """The message `hv` prints for a removed alias. Unlike a moved command, the replacement is on `hv`."""
-    lines = [f"`hv {' '.join(old_argv)}` was removed in 2.0.",
-             f"  Run: hv {' '.join(new_argv)}"]
-    if why:
-        lines.append(f"  ({why}.)")
-    return "\n".join(lines)

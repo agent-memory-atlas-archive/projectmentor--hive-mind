@@ -49,7 +49,7 @@ import merkle  # noqa: E402
 # 2.0 S2 (public #136): `hv` does NOT import `ownerkey`, directly or through anything it imports, and
 # produces no `owner_sig` by any route. Reading the owner seed and owner signing live on the control plane
 # (`hivemind_ctl.py`, `hivemind_owner.py`); two static tests keep both facts true.
-import commandmap  # noqa: E402  (a table only: what moved to `hive-mind`, and the pointer text)
+import commandmap  # noqa: E402  (a table only: which commands the control plane routes, and the policy-refusal text)
 import vocabulary  # noqa: E402  (a table only: the names core reserves; docs/NAMESPACES.md is generated from it)
 try:
     import ed25519 as _ed25519  # bundled pure-Python signature verifier
@@ -293,11 +293,12 @@ _OWNER_SEALED_SIZES = range(128, 4097)   # the sealed envelope: about 240 bytes 
 
 
 class NotOnDataPlane(Exception):
-    """Raised by a data-plane placeholder for an owner step (2.0 S2, public #136). `hv` catches it in
-    `main`, prints the `hive-mind` form to run and exits 2, having acted on nothing. On the control plane
+    """Raised by a data-plane placeholder for an owner step (2.0 S2, public #136): the key boundary. `hv`
+    cannot owner-sign, so the step refuses and acts on nothing. On the control plane
     `hivemind_ctl.install` replaces every placeholder with the real owner step, so it is never raised there.
 
-    `key` is a `commandmap.MOVED` argv tuple or a `commandmap.FLAG_CONDITIONAL` key."""
+    `key` is a `commandmap.FLAG_CONDITIONAL` key when a hive policy (`capsule_putters`, `cell_writers`)
+    needs an owner-signed write, which `dispatch` explains; otherwise it only labels the refused step."""
 
     def __init__(self, key):
         super().__init__(key)
@@ -438,7 +439,7 @@ def _owner_unseal(env, passphrase):
 # output fields within a major). MAJOR = breaking; bump only when unavoidable, keep the previous
 # major working as deprecated shims through a window. Authoritative value; docs/AGENT_INTEGRATION.md
 # documents the same number. See `hv version`.
-CONTRACT_VERSION = "2.4"   # per-version history: docs/CONTRACT_HISTORY.md (newest first); add a new contract's entry there, not on this line (#106)
+CONTRACT_VERSION = "3.0"   # per-version history: docs/CONTRACT_HISTORY.md (newest first); add a new contract's entry there, not on this line (#106)
 
 
 # --------------------------------------------------------------------------
@@ -463,52 +464,17 @@ def get_conn():
     return conn
 
 
-def init_db():
-    """Initialize database schema (idempotent)."""
-    HIVE_HOME.mkdir(parents=True, exist_ok=True)
-    JOURNAL_DIR.mkdir(exist_ok=True)
-
-    conn = get_conn()
-    conn.executescript("""
-    CREATE TABLE IF NOT EXISTS meta (
-        key TEXT PRIMARY KEY,
-        value TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS facts (
-        id INTEGER PRIMARY KEY,
-        content TEXT NOT NULL,
-        tags TEXT,
-        importance REAL DEFAULT 0.5,
-        source_agent TEXT NOT NULL,
-        source_session TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        last_accessed TIMESTAMP,
-        access_count INTEGER DEFAULT 0,
-        confidence REAL DEFAULT 0.0
-    );
-
-    CREATE TABLE IF NOT EXISTS decisions (
-        id INTEGER PRIMARY KEY,
-        content TEXT NOT NULL,
-        rationale TEXT,
-        superseded_by INTEGER REFERENCES decisions(id),
-        source_agent TEXT NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        tags TEXT
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_facts_tags ON facts(tags);
-    CREATE INDEX IF NOT EXISTS idx_facts_source ON facts(source_agent, created_at);
-    CREATE INDEX IF NOT EXISTS idx_decisions_active ON decisions(id) WHERE superseded_by IS NULL;
-
+_ENTITY_DDL = """
     CREATE TABLE IF NOT EXISTS entities (
         id INTEGER PRIMARY KEY,
-        name TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,   -- a label (3.0), not unique: the identity is (ref_node, ref_seq)
         type TEXT, -- person, project, concept
         attributes TEXT, -- JSON
         first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        last_updated TIMESTAMP
+        last_updated TIMESTAMP,
+        ref_node TEXT,        -- 3.0: the identity, the journal ref of the entry that created the entity
+        ref_seq INTEGER,
+        UNIQUE (ref_node, ref_seq)
     );
 
     CREATE TABLE IF NOT EXISTS entity_facts (
@@ -552,7 +518,102 @@ def init_db():
         PRIMARY KEY (kind, from_kind, from_id, to_kind, to_id, signer)
     );
     CREATE INDEX IF NOT EXISTS idx_links_to ON links(to_kind, to_id, kind);
+"""
 
+
+# The store's schema version (`meta.schema_version`). 3 (3.0): `entities` is keyed by the creating entry's journal
+# ref and `name` is a non-unique label. `CREATE TABLE IF NOT EXISTS` cannot alter a table, so a store without
+# version 3 has the entity-bearing tables dropped and is rebuilt from the journal, which loses nothing: the store
+# is a projection.
+STORE_SCHEMA_VERSION = "3"
+
+
+def _ddl_statements(ddl):
+    """Split a DDL script into statements, so they can run inside a transaction (`executescript` commits)."""
+    out, cur = [], ""
+    for line in ddl.splitlines(keepends=True):
+        cur += line
+        if sqlite3.complete_statement(cur):
+            if cur.strip():
+                out.append(cur)
+            cur = ""
+    return out
+
+
+def _migrate_store_schema(conn):
+    """One-time, idempotent, ATOMIC: a store not at `STORE_SCHEMA_VERSION` has `entity_facts`, `entities`, `links`
+    and `journal_index` dropped, recreated and refilled from the journal in ONE transaction, and only then is
+    `schema_version` stamped. Every command reaches this through `init_db`, so none (doctor, version, sync, the
+    daemon) can see a store with the tables gone; a crash rolls back to the old tables and the old version, and
+    the next `init_db` migrates again. Runs after every other table exists. A store already in the new shape
+    (a fresh one) is only stamped. Loses nothing: the store is a projection."""
+    conn.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
+    row = conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
+    if row and row[0] == STORE_SCHEMA_VERSION:
+        return
+    conn.commit()
+    stamp = "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)"
+    if "ref_node" in {r[1] for r in conn.execute("PRAGMA table_info(entities)")}:
+        conn.execute(stamp, (STORE_SCHEMA_VERSION,))
+        conn.commit()
+        return
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        for t in ("entity_facts", "links", "entities", "journal_index"):
+            conn.execute(f"DROP TABLE IF EXISTS {t}")
+        for stmt in _ddl_statements(_ENTITY_DDL):
+            conn.execute(stmt)
+        _rebuild_in_transaction(conn, begun=True)
+        conn.execute(stamp, (STORE_SCHEMA_VERSION,))
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    _prune_ended_peers_after_rebuild()
+
+
+def init_db():
+    """Initialize database schema (idempotent)."""
+    HIVE_HOME.mkdir(parents=True, exist_ok=True)
+    JOURNAL_DIR.mkdir(exist_ok=True)
+
+    conn = get_conn()
+    conn.executescript("""
+    CREATE TABLE IF NOT EXISTS meta (
+        key TEXT PRIMARY KEY,
+        value TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS facts (
+        id INTEGER PRIMARY KEY,
+        content TEXT NOT NULL,
+        tags TEXT,
+        importance REAL DEFAULT 0.5,
+        source_agent TEXT NOT NULL,
+        source_session TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        last_accessed TIMESTAMP,
+        access_count INTEGER DEFAULT 0,
+        confidence REAL DEFAULT 0.0
+    );
+
+    CREATE TABLE IF NOT EXISTS decisions (
+        id INTEGER PRIMARY KEY,
+        content TEXT NOT NULL,
+        rationale TEXT,
+        superseded_by INTEGER REFERENCES decisions(id),
+        source_agent TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        tags TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_facts_tags ON facts(tags);
+    CREATE INDEX IF NOT EXISTS idx_facts_source ON facts(source_agent, created_at);
+    CREATE INDEX IF NOT EXISTS idx_decisions_active ON decisions(id) WHERE superseded_by IS NULL;
+
+    """)
+    conn.executescript(_ENTITY_DDL)
+    conn.executescript("""
     -- 1.20: ideas — hypotheses whose confidence is EARNED from links (never asserted, never
     -- corroborated by restatement). facts minus importance/access_count/last_accessed, plus utility.
     -- Two identical idea texts are two rows: identity is the journal entry, not the content.
@@ -616,6 +677,7 @@ def init_db():
     _init_fts(conn)
 
     conn.commit()
+    _migrate_store_schema(conn)
     conn.close()
 
 
@@ -2891,10 +2953,11 @@ def _content_evidence(entries, gov=None, links=True):
     Owner-forget authority: once an owner is established, a forget is honored only if it is
     OWNER-SIGNED by the owner AS OF its own journal position (`_owner_at`, the capsule/cell/link rule,
     so a previous owner's forget survives a transfer, succession or election; #46 Q1), or its position
-    precedes the genesis owner (grandfathered, signed or not) while the governed `forget_writers` policy is
-    `legacy`, the default; `forget_writers=owner` closes that grandfather (#122 step 2). Before any owner
-    exists, the legacy source-tag forget (`owner:owner/owner`) is honored — so existing forgets are never
-    resurrected, and after `hive-mind owner init` a forged unsigned forget no longer carries authority.
+    precedes the genesis owner never carries authority: 3.0 removed the pre-genesis grandfather (the
+    `forget_writers=legacy` arm of #122), so a forget no owner signed as of its position is ignored whatever
+    `forget_writers` says. Before any owner exists, the legacy source-tag forget (`owner:owner/owner`) is
+    honored — so existing forgets are never resurrected, and after `hive-mind owner init` a forged unsigned
+    forget no longer carries authority.
 
     Unforget (1.24, #46): an owner-signed `retract` carrying `unretracts_ref` (and no `retracts_ref`, so
     a pre-1.24 node skips it) reverses a forget. The owner acts on one CONTENT form a timeline sorted on
@@ -2935,9 +2998,6 @@ def _content_evidence(entries, gov=None, links=True):
         if ts > ev["last_ts"]:
             ev["last_ts"] = ts
     owner_acts = {}                        # content -> [(pos, is_forget, honored)], the #46 timeline
-    timeline = gov.get("owner_timeline") or []
-    # #122 step 2 (1.25): `forget_writers=owner` closes the pre-genesis grandfather; `legacy` (default) keeps it.
-    grandfather = (gov.get("config") or {}).get("forget_writers", "legacy") != "owner"
     for e in entries:
         if e.get("type") != "retract":
             continue
@@ -2954,12 +3014,11 @@ def _content_evidence(entries, gov=None, links=True):
         if app in OWNER_APPS or ctx == "owner":
             pos = (e.get("timestamp", ""), str(e.get("node_id", "")), e.get("seq", 0))
             if gov["owner_id"]:
-                # Owner established: honor only an act signed by the owner AS OF this position. A forget
-                # positioned before the genesis owner is grandfathered unless `forget_writers=owner`
-                # (#122); an unforget never is. An unsigned/forged owner act is ignored.
+                # Owner established: honor only an act signed by the owner AS OF this position. An act
+                # positioned before the genesis owner has no such owner, so none is honored (3.0 removed the
+                # pre-genesis grandfather). An unsigned/forged owner act is ignored.
                 signer = _verify_governance(p) if "owner_sig" in p else None
-                at = _owner_at(timeline, pos)
-                honored = _owner_signed_at(signer, pos, gov) or (at is None and not unforget and grandfather)
+                honored = _owner_signed_at(signer, pos, gov)
             else:
                 honored = not unforget   # pre-governance: legacy source-tag forget honored; no owner, no unforget
             owner_acts.setdefault(content, []).append((pos, not unforget, honored))
@@ -3683,6 +3742,55 @@ def persist_idea(conn, entry):
     return {"id": iid}
 
 
+_ENTITY_CONTEXT = threading.local()      # .identity_of while a projection holds a resolution (`_entity_identities`)
+
+
+@contextlib.contextmanager
+def _entity_identities(identity_of):
+    """Hold `_entity_resolution`'s identity map for the `persist_entity` calls of one projection (a rebuild, or the
+    one entry `entity add` projects). Without it `persist_entity` reads the entry's own fields, which is enough for a
+    create and for an update whose target is already in the store."""
+    prior = getattr(_ENTITY_CONTEXT, "identity_of", None)
+    _ENTITY_CONTEXT.identity_of = identity_of
+    try:
+        yield
+    finally:
+        _ENTITY_CONTEXT.identity_of = prior
+
+
+def _entity_form(entry):
+    """How an `entity` entry names the entity it writes (3.0 plan §4.2): ("new", None) carries `new_identity: true`
+    and creates one; ("update", ref) carries `identity_ref` and writes the entity that ref names; ("legacy", None)
+    carries neither (every entry a 2.x node wrote) and is read by name; ("both", None) is malformed. A field of the
+    wrong shape is absent, as `_payload_field` reads it."""
+    p = entry.get("payload") or {}
+    ref = tuple(p["identity_ref"]) if _valid_ref(p.get("identity_ref")) else None
+    new = p.get("new_identity") is True
+    if ref is not None and new:
+        return "both", None
+    if ref is not None:
+        return "update", ref
+    return ("new", None) if new else ("legacy", None)
+
+
+def _entity_identity_for(conn, entry):
+    """The identity ref an entry's write belongs to: the projection's resolution when one is held, else what the
+    entry itself says (a create is its own ref; an update names a ref that the store maps, or is the identity), else
+    None for the legacy reading, which folds by name."""
+    ref = (entry.get("node_id"), entry.get("seq"))
+    held = getattr(_ENTITY_CONTEXT, "identity_of", None)
+    if held is not None and ref in held:
+        return held[ref]
+    form, target = _entity_form(entry)
+    if form == "new":
+        return ref
+    if form == "update":
+        row = conn.execute("SELECT e.ref_node, e.ref_seq FROM journal_index j JOIN entities e ON e.id = j.local_id "
+                           "WHERE j.kind = 'entity' AND j.node_id = ? AND j.seq = ?", target).fetchone()
+        return (row[0], row[1]) if row and row[0] is not None else target
+    return None
+
+
 def persist_entity(conn, entry):
     if not _projectable(entry):
         return None
@@ -3701,21 +3809,34 @@ def persist_entity(conn, entry):
         attrs = None
     attrs_json = json.dumps(attrs if attrs is not None else {})
     etype = _payload_field(entry, "type")
-    cur.execute("""
-        INSERT INTO entities (name, type, attributes, first_seen, last_updated)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(name) DO UPDATE SET
-            type = excluded.type,
-            attributes = excluded.attributes,
-            last_updated = excluded.last_updated
-    """, (
-        payload["name"],
-        etype,
-        attrs_json,
-        _payload_field(entry, "created_at") or ts,
-        ts,
-    ))
-    eid = cur.execute("SELECT id FROM entities WHERE name = ?", (payload["name"],)).fetchone()[0]
+    seen = _payload_field(entry, "created_at") or ts
+    # The name lookup and the insert are one write transaction, as 2.4's single upsert was: a second writer must
+    # wait here and then see the first one's row, or two rows share a name (`name` is no longer UNIQUE).
+    if not conn.in_transaction:
+        conn.execute("BEGIN IMMEDIATE")
+    ident = _entity_identity_for(conn, entry)
+    if ident is None:
+        # The legacy reading (§4.2 of the 3.0 plan): an entry folds by name into the entity that name already has, and
+        # the first applied entry for a name creates it, its journal ref being the identity. Every entry any 2.x node
+        # wrote is read this way.
+        row = cur.execute("SELECT id FROM entities WHERE name = ? ORDER BY id LIMIT 1", (payload["name"],)).fetchone()
+        ident = (entry.get("node_id"), entry.get("seq"))
+    else:
+        row = cur.execute("SELECT id FROM entities WHERE ref_node = ? AND ref_seq = ?", tuple(ident)).fetchone()
+    if row is None:
+        cur.execute("""
+            INSERT INTO entities (name, type, attributes, first_seen, last_updated, ref_node, ref_seq)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (payload["name"], etype, attrs_json, seen, ts, ident[0], ident[1]))
+        eid = cur.lastrowid
+    else:
+        eid = row[0]
+        cur.execute("UPDATE entities SET type = ?, attributes = ?, last_updated = ? WHERE id = ?",
+                    (etype, attrs_json, ts, eid))
+        if tuple(ident) == (entry.get("node_id"), entry.get("seq")):
+            # The creating entry, replayed after an update of it that sorts earlier (a lower node_id): the row is the
+            # update's placeholder, and its creation time is the create's.
+            cur.execute("UPDATE entities SET first_seen = ? WHERE id = ?", (seen, eid))
     _record_index(conn, entry, "entity", eid)
     return {"id": eid, "name": payload["name"], "type": etype}
 
@@ -3733,21 +3854,42 @@ def _entity_declined(entries, gov):
 
 
 def _entity_verdicts(entries, gov):
-    """(module_declined, weigh_only), each a set of (node_id, seq) of `entity` entries the projection skips.
+    """(module_declined, weigh_only), each a set of (node_id, seq) of `entity` entries the projection skips; see
+    `_entity_resolution`, which also says which entity every other entry writes."""
+    declined, weigh_only, _identity_of = _entity_resolution(entries, gov)
+    return declined, weigh_only
+
+
+def _entity_resolution(entries, gov):
+    """(declined, weigh_only, identity_of): the `entity` entries the projection skips, and for every other one the
+    identity (the journal ref of its creating entry) it writes. Pure over the journal and governance, so every node
+    reaches the same verdicts whatever order entries arrived in. A skipped entry is not kept as evidence.
+
+    3.0 (plan §4.2). An entry is a CREATE (`new_identity: true`: a new identity, its own ref, whatever the name), an
+    UPDATE (`identity_ref`: the entity whose creating entry that ref names) or LEGACY (neither: what every 2.x node
+    writes, folded by name into the first identity the name has; the first entry for a name creates it, so a name
+    that only 2.x writers use has one identity, as before). A second create of a name is a second identity, and later
+    legacy entries for the name stay with the first. An update's ref may be the creating entry or any legacy entry
+    that folded into that identity; it may not name another update. An update that names nothing, names an entity of
+    another name, or carries both fields is declined, as an entry whose body does not match its type.
 
     2.1 (#208, option 3): a module device (the `module` admit marker, `gov["modules"]`) may write only
-    `x-<its module>:<name>` entities (the gate's `entity-prefix-required`), and may update one only if it is that
-    name's creator, the first APPLIED entity entry for the name in replay order `(node_id, seq)`, the order
-    `persist_entity`'s `ON CONFLICT(name)` folds in (the gate's `not-entity-owner`).
+    `x-<its module>:<name>` entities (the gate's `entity-prefix-required`), may update one only if it created it
+    (`not-entity-owner`), and may not create a second identity for a name that already has one (`entity-name-taken`):
+    its names stay unique, so the namespace rule and the `same-as` joins by ref are unchanged.
 
     SECREV B3 (hive-mind-private #51): every other device is held to the rule links use (`_link_authority`, the
-    creator's entry standing as the target). The creator, or an owner-signed write, rewrites the entity; any other
-    admitted device's write is weigh-only: it is skipped like a declined one, so it does not replace the entity.
-    Pre-owner, only the creator rule applies, as for links. Pure over the journal and governance, so every node
-    declines the same entries whatever order they arrived in. A declined entry is skipped, not kept as evidence.
-    The module marker is read as of the end of the journal, like the election exclusion."""
+    creator's entry standing as the target). The identity's creator, or an owner-signed write, rewrites the entity;
+    any other admitted device's write is weigh-only: it is skipped like a declined one, so it does not replace the
+    entity. Pre-owner, only the creator rule applies, as for links. A create needs no authority: it makes a new
+    identity and replaces nothing. The module marker is read as of the end of the journal, like the election
+    exclusion."""
     modules = gov.get("modules") or {}
-    declined, weigh_only, creator = set(), set(), {}
+    declined, weigh_only = set(), set()
+    creator = {}          # identity -> the entry that created it
+    group = {}            # name -> the first identity the name has: where the legacy reading folds
+    identity_of = {}      # (node_id, seq) -> identity, for every applied create and legacy entry
+    updates = []
     for e in entries:
         if e.get("type") != "entity":
             continue
@@ -3755,18 +3897,54 @@ def _entity_verdicts(entries, gov):
         if name is None:
             continue
         node = e.get("node_id")
+        key = (node, e.get("seq"))
         module = modules.get(node)
-        first = creator.get(name)
+        form, target = _entity_form(e)
+        if form == "both":
+            declined.add(key)
+            continue
         if module is not None:
             split = vocabulary.split_module_name(name)
-            if split is None or split[0] != module or (first is not None and first.get("node_id") != node):
-                declined.add((node, e.get("seq")))
+            if split is None or split[0] != module:
+                declined.add(key)
                 continue
-        elif first is not None and _link_authority(e, first, gov) != "hard":
-            weigh_only.add((node, e.get("seq")))
+        if form == "update":
+            updates.append((e, key, target))
             continue
-        creator.setdefault(name, e)
-    return declined, weigh_only
+        first = creator.get(group.get(name))
+        if form == "new":
+            if module is not None and first is not None:
+                declined.add(key)
+                continue
+        elif first is not None:
+            if module is not None:
+                if first.get("node_id") != node:
+                    declined.add(key)
+                    continue
+            elif _link_authority(e, first, gov) != "hard":
+                weigh_only.add(key)
+                continue
+            identity_of[key] = group[name]
+            continue
+        creator[key] = e
+        identity_of[key] = key
+        group.setdefault(name, key)
+    named = dict(identity_of)
+    for e, key, target in updates:
+        ident = named.get(target)
+        first = creator.get(ident)
+        if first is None or _entity_name(first) != _entity_name(e):
+            declined.add(key)
+        elif modules.get(key[0]) is not None:
+            if first.get("node_id") != key[0]:
+                declined.add(key)
+            else:
+                identity_of[key] = ident
+        elif _link_authority(e, first, gov) != "hard":
+            weigh_only.add(key)
+        else:
+            identity_of[key] = ident
+    return declined, weigh_only, identity_of
 
 
 # ── the module write policy (2.1; hive-mind-private #50) ───────────────────────────────────────────────────
@@ -3792,6 +3970,7 @@ _MODULE_BOUND_FIELDS = {
     "rationale": ("a string", lambda v: isinstance(v, str)),
     "access_count": ("an integer", lambda v: _is_int64(v)),
     "attributes": ("an object", lambda v: isinstance(v, dict)),
+    "new_identity": ("a boolean", lambda v: isinstance(v, bool)),
 }
 
 
@@ -4020,7 +4199,8 @@ _PAYLOAD_SHAPES = {
     "idea": {"content": (_is_str, None), "tags": (_is_tags, []), "source": (_is_str, "manual"),
              "source_session": (_is_str, None), "created_at": (_is_str, None)},
     "entity": {"name": (_is_str, None), "type": (_is_str, "unknown"), "attributes": (lambda v: isinstance(v, dict), {}),
-               "created_at": (_is_str, None)},
+               "created_at": (_is_str, None),
+               "identity_ref": (_valid_ref, None), "new_identity": (lambda v: isinstance(v, bool), None)},   # 3.0, §4.2
     "entity_fact": {"confidence": (_is_number, 1.0)},
     "link": {"kind": (_is_str, None), "from_ref": (_valid_ref, None), "to_ref": (_valid_ref, None),
              "channel": (_is_str, None), "source": (_is_str, "manual")},
@@ -4486,10 +4666,10 @@ def resolve_link(conn, entry, gov, by_ref, live_joins=None):
 
 
 def _forgets_grandfathered(entries, gov):
-    """#122 step 1: owner-source forgets honoured ONLY by the pre-genesis grandfather in `_content_evidence`
-    UNDER `forget_writers=legacy` (it answers for that policy whatever the current setting, so step 2's guard
-    can ask "what would come back if the grandfather closed?"),
-    which needs no owner signature there; ingest does not check timestamps, so an admitted device can backdate
+    """Migration and check only; the projection does not read this (3.0 removed the grandfather arm).
+    #122 step 1: owner-source forgets the last 2.x honoured ONLY by the pre-genesis grandfather in
+    `_content_evidence` under `forget_writers=legacy` (this answers for that policy whatever the current
+    setting), which needed no owner signature there; ingest does not check timestamps, so an admitted device can backdate
     one. Returns (hides, dangling) as 'forget <entry>→<target>' labels. `hides`: the forget is the latest
     honoured owner act on its fact's content, so it is what keeps that fact forgotten now. `dangling`: its
     target is not a fact in the journal, so it hides nothing. Pure over the journal and the same rules as
@@ -4538,7 +4718,8 @@ def _forgets_grandfathered(entries, gov):
 
 
 def _grandfather_facts(entries, hides):
-    """The facts behind `_forgets_grandfathered`'s `hides`, one per label, in its order:
+    """Migration and check only; the projection does not read this. The facts behind
+    `_forgets_grandfathered`'s `hides`, one per label, in its order:
     `{"sid", "ref": [node_id, seq], "content"}`. `sid` is the `h:` id, the one form `hive-mind retract
     --owner` and `hive-mind unforget` accept (2.0 refuses local ids), so every list and remedy that names
     these facts names them the same way (4c). Pure over the journal."""
@@ -4554,47 +4735,117 @@ def _grandfather_facts(entries, hides):
 
 def _forget_authz_check(entries, gov):
     """`hv doctor`'s `forget-authz` check, or None when it has nothing to say (no owner yet: nothing is
-    grandfathered before genesis). Shared with `hive-mind update`, which ends on it (4c).
+    grandfathered before genesis). Shared with `hive-mind update`, which ends on it.
 
-    2.0 (4c, decisions h:af137f9421 and h:696638b9b7): an owned hive whose `forget_writers` is not `owner`
-    FAILS, whether or not a fact depends on the pre-genesis grandfather. An unset policy still projects as
-    `legacy`, so nothing reappears; the open policy is the hole, because an admitted device can still
-    backdate an unsigned owner forget and have it honoured (#122). The close is the owner's
-    `hive-mind doctor --fix`: it re-signs the dependent forgets (after a y/N), then sets
-    `forget_writers=owner` through the #122 guard. The data plane cannot sign, so it only points there.
-    A dependent fact is listed by its `h:` id, the form both remedies accept."""
-    if not gov.get("owner_id"):
+    3.0 (plan 3.4): the projection no longer honours an unsigned pre-genesis owner forget, so the check is
+    about the MIGRATION SET (`_forget_migration`): the facts the last 2.x still hid by such a forget, which
+    3.0 would show until the owner re-issues them. ok iff the set is empty, stated as a list and never as
+    silence; fail iff it is not, naming each fact by its `h:` id (the form `retract --owner` and `unforget`
+    accept) and `hive-mind migrate forget`. `forget_writers` is not read here: a hive with the key unset or
+    `legacy` and nothing dependent passes. The data plane cannot sign, so it only points there."""
+    m = _forget_migration(entries, gov)
+    if not m["owner"]:
         return None
-    hides, dangling = _forgets_grandfathered(entries, gov)
-    n_dangling = (f"; {len(dangling)} more pre-genesis owner forget(s) target nothing in the journal"
-                  if dangling else "")
-    if (gov.get("config") or {}).get("forget_writers", "legacy") == "owner":
-        # 1.28 (#135): say `closed` even with nothing left to ignore. A hive born by `owner init` re-issues
-        # its grandfathered forgets owner-signed, so both lists come back empty and the closed state would
-        # otherwise be reported by silence.
-        n = len(hides) + len(dangling)
+    n_dangling = (f"; dangling: {len(m['dangling'])} pre-genesis owner forget(s) target nothing in this journal "
+                  f"({', '.join(m['dangling'][:10])})" if m["dangling"] else "")
+    facts = m["facts"]
+    if not facts:
         return {"name": "forget-authz", "status": "ok",
-                "detail": (f"closed (forget_writers=owner): {n} unsigned pre-genesis owner forget(s) are "
-                           f"ignored (#122)") if n else
-                          "closed (forget_writers=owner): every fact forgotten here is hidden by a forget the "
-                          "owner signed; none depends on the pre-genesis grandfather (#122, #135)"}
+                "detail": f"closed: 0 facts depend on a pre-genesis unsigned forget{n_dangling}"}
     where = ("here (this device keeps an owner key)" if _owner_key_state(gov) in ("held", "present")
              else "on the owner machine")
-    facts = _grandfather_facts(entries, hides)
-    if facts:
-        sids = [f["sid"] for f in facts]
-        more = f" and {len(sids) - 10} more" if len(sids) > 10 else ""
-        detail = (f"open (forget_writers=legacy): {len(facts)} fact(s) kept forgotten only by an unsigned "
-                  f"pre-genesis owner forget, which an admitted device could also have written (#122): "
-                  f"{', '.join(sids[:10])}{more}. Run `hive-mind doctor --fix` {where}: it lists them, and on "
-                  f"`y` re-signs those forgets so the facts stay hidden, then closes. Or decide each: keep it "
-                  f"forgotten `hive-mind retract <h:id> --owner`, let it back `hive-mind unforget <h:id> "
-                  f"--reason …`{n_dangling}")
-    else:
-        detail = (f"open (forget_writers=legacy): no fact depends on the pre-genesis grandfather, but an "
-                  f"unsigned owner forget dated before genesis would still be honoured (#122). Close it: "
-                  f"`hive-mind doctor --fix` {where}{n_dangling}")
+    sids = [f["sid"] for f in facts]
+    more = f" and {len(sids) - 10} more" if len(sids) > 10 else ""
+    detail = (f"open: {len(facts)} fact(s) are hidden only by an unsigned pre-genesis owner forget, which an "
+              f"admitted device could also have written (#122), and would show again without a migration: "
+              f"{', '.join(sids[:10])}{more}. Run `hive-mind migrate forget` {where}: it lists them, and on "
+              f"`y` re-signs those forgets so the facts stay hidden. Or decide each: keep it forgotten "
+              f"`hive-mind retract <h:id> --owner`, let it back `hive-mind unforget <h:id> --reason …`"
+              f"{n_dangling}")
     return {"name": "forget-authz", "status": "fail", "detail": detail, "open": True, "facts": facts}
+
+
+def _forget_migration(entries, gov):
+    """3.0 (plan 3.2, 3.4): what `hive-mind migrate forget` has to re-issue, and what its check reports.
+
+    The MIGRATION SET is the facts the last 2.x projection hides that this one shows: the content whose latest
+    honoured owner act, under the 2.x rule, was an unsigned forget positioned before the genesis owner. 2.x
+    applied that rule only while `forget_writers` was not `owner` (`_forgets_grandfathered` counts such a
+    forget whatever the key says), so on a hive whose key is `owner` the set is empty by construction and the
+    migration neither lists nor re-signs forgets 2.x already ignored. A purged device's content is dropped
+    first, as the projection drops it (`_purge_unkept`): a forget by a since-purged writer hid nothing.
+    The differential against the frozen 2.4 oracle (tests/oracles) proves this equals what 2.4 hid and 3.0
+    shows, on every corpus journal.
+
+    Returns {"facts": [{"sid", "ref", "content"}], "hides": [labels, narrowed to the set], "dangling": [...],
+    "key": the live `forget_writers`, "owner": bool}. `owner` is False before any owner exists, when nothing
+    is grandfathered and the set is empty."""
+    if not gov.get("owner_id"):
+        return {"facts": [], "hides": [], "dangling": [], "key": None, "owner": False}
+    key = (gov.get("config") or {}).get("forget_writers", "legacy")
+    kept = _purge_unkept(entries, gov)
+    hides, dangling = _forgets_grandfathered(kept, gov)
+    shown = hides if key != "owner" else []
+    return {"facts": _grandfather_facts(kept, shown), "hides": shown, "dangling": dangling,
+            "key": key, "owner": True}
+
+
+def _forget_migration_lines(m):
+    """The explicit positive-check text: an empty set is printed as a list, never as silence."""
+    n = len(m["facts"])
+    out = [f"closed: {n} facts depend on a pre-genesis unsigned forget" if not n else
+           f"open: {n} fact(s) depend on a pre-genesis unsigned forget and would show again without a "
+           f"migration:"]
+    for f in m["facts"]:
+        text = " ".join(f["content"].split())
+        out.append(f"  {f['sid']}  {text[:100]}" + ("…" if len(text) > 100 else ""))
+    if m["dangling"]:
+        out.append(f"dangling: {len(m['dangling'])} pre-genesis owner forget(s) target nothing in this journal "
+                   f"(not re-issued): {', '.join(m['dangling'][:10])}")
+    return out
+
+
+def _forget_migration_open_count():
+    """How many facts the migration would re-issue, for the node-local notices; 0 when none, unknown or on
+    any error. Cached against the journal files' (name, size, mtime) so a read verb does not re-project the
+    journal each time. Never raises."""
+    try:
+        fp = [(f.name, f.stat().st_size, f.stat().st_mtime_ns) for f in sorted(JOURNAL_DIR.glob("*.jsonl"))]
+        cache = HIVE_HOME / ".nudge_state" / "forget-migration.json"
+        try:
+            c = json.loads(cache.read_text())
+            if c.get("fp") == json.loads(json.dumps(fp)):
+                return int(c.get("n", 0))
+        except Exception:
+            pass
+        entries = merkle.read_all_entries(JOURNAL_DIR)
+        n = len(_forget_migration(entries, _governance_state(entries))["facts"])
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text(json.dumps({"fp": fp, "n": n}))
+        return n
+    except Exception:
+        return 0
+
+
+def _forget_migration_stderr_notice():
+    """The read verbs' node-local notice (stderr, so stdout stays machine-readable). Never raises."""
+    try:
+        line = _forget_migration_notice()
+        if line:
+            print(line, file=sys.stderr)
+    except Exception:
+        pass
+
+
+def _forget_migration_notice():
+    """One line for `hv search` / `hv feed` (stderr) and the session-start nudge, or ''. Silent unless a
+    migration is owed."""
+    n = _forget_migration_open_count()
+    if not n:
+        return ""
+    return (f"[hive] NOTICE: {n} forgotten fact(s) depend on an unsigned pre-genesis forget that release 3.0 "
+            f"no longer honours, so 3.0 would show them again. On the owner machine run: "
+            f"hive-mind migrate forget  (hive-mind migrate forget --check lists them)")
 
 
 def _links_unauthorized(entries, gov):
@@ -4632,7 +4883,13 @@ def _links_unauthorized(entries, gov):
 
 
 def _index_lookup(conn, kind, local_id):
-    """Reverse map: local row id -> its journal identity [node_id, seq]."""
+    """Reverse map: local row id -> its journal identity [node_id, seq]. An entity's is the ref of its creating
+    entry, which the row holds (3.0): the lowest entry mapped to it would move when an update from a lower node_id
+    arrives."""
+    if kind == "entity":
+        e = conn.execute("SELECT ref_node, ref_seq FROM entities WHERE id = ?", (local_id,)).fetchone()
+        if e is not None and e["ref_node"] is not None:
+            return [e["ref_node"], e["ref_seq"]]
     r = conn.execute(
         "SELECT node_id, seq FROM journal_index WHERE kind = ? AND local_id = ? ORDER BY node_id, seq LIMIT 1",
         (kind, local_id),
@@ -5141,7 +5398,8 @@ def retract(args):
         print(f"retract: no fact {args.fact_id}", file=sys.stderr)
         sys.exit(1)
     content = row["content"]
-    if args.owner:
+    owner = getattr(args, "owner", False)       # only the control plane's parser defines --owner
+    if owner:
         rentry = _owner_forget(ref, args.reason)      # the owner step: control plane only (2.0 S2)
         if rentry is None:
             return
@@ -5163,14 +5421,8 @@ def retract(args):
         conn.close()
     except sqlite3.OperationalError as e:                # after the append: never report failure (#70)
         _store_deferred(rentry, e, "Retraction")
-    kind = "FORGOTTEN (owner)" if args.owner else "retracted"
+    kind = "FORGOTTEN (owner)" if owner else "retracted"
     print(f"Fact {sid} (#{row['id']}) {kind} → confidence {conf:.2f}")
-
-
-def unforget(args):
-    """Owner only (1.24, #46): reverse an owner-forget. The command moved to the control plane in 2.0
-    (`hive-mind unforget`, `hivemind_owner.py`); this placeholder refuses (S2)."""
-    raise NotOnDataPlane(("unforget",))
 
 
 def _fts_query(raw):
@@ -6338,13 +6590,18 @@ def _entity_facts(conn, entity_id, hide_forgotten):
              "confidence": r["link_confidence"]} for r in rows]
 
 
-def entity_view(conn, name, joins=True, hide_forgotten=False):
+def entity_view(conn, name, joins=True, hide_forgotten=False, entity_id=None):
     """One entity and its linked facts, and (2.1, #208) with `joins` each `x-<module>:` entity a core `same-as`
     joins to it, under its own name with the join's ref (`node_id:seq`) and signer and that entity's own facts.
     Only a join `_same_as_live` counts is listed, so a withdrawn or module-written one is absent on every node.
-    None when there is no such entity."""
-    row = conn.execute("SELECT id, name, type, attributes, first_seen, last_updated FROM entities WHERE name = ?",
-                       (name,)).fetchone()
+    None when there is no such entity. `entity_id` (a local row id, from `_pick_entity`) names one entity when several
+    share `name`; by name alone the view is the first of them, by identity."""
+    if entity_id is not None:
+        row = conn.execute("SELECT id, name, type, attributes, first_seen, last_updated FROM entities WHERE id = ?",
+                           (entity_id,)).fetchone()
+    else:
+        row = conn.execute("SELECT id, name, type, attributes, first_seen, last_updated FROM entities WHERE name = ? "
+                           "ORDER BY id LIMIT 1", (name,)).fetchone()
     if not row:
         return None
     view = {"id": row["id"], "name": row["name"], "type": row["type"], "attributes": row["attributes"],
@@ -6376,45 +6633,158 @@ def _print_entity_facts(facts, indent):
         print(f"{indent}  [{lf['sid']} · {lf['id']}] {lf['content'][:60]} (conf={lf['confidence']:.2f})")
 
 
+def _shared_entity_names(conn):
+    """The names more than one entity holds (3.0, §4.2). A unique name is shown bare, a repeated one with its id."""
+    return {r[0] for r in conn.execute("SELECT name FROM entities GROUP BY name HAVING count(*) > 1")}
+
+
+def _entity_identity_check(conn, entries):
+    """`hv doctor`'s `entity-identity` check (3.0, §4.4). Fails when the store is not at the current schema, or an
+    entity has no identity ref, or one legacy name group (the entries that carry neither `identity_ref` nor
+    `new_identity`) maps to more than one entity: the split must change nothing for a hive that never created a
+    second same-named entity. Otherwise `ok: N entities, M names shared by more than one`."""
+    row = conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
+    have = row[0] if row else None
+    if have != STORE_SCHEMA_VERSION:
+        return {"name": "entity-identity", "status": "fail",
+                "detail": f"the store is at schema {have or 'none'}, 3.0 reads {STORE_SCHEMA_VERSION}: run `hv doctor rebuild`"}
+    n = conn.execute("SELECT count(*) FROM entities").fetchone()[0]
+    bare = conn.execute("SELECT count(*) FROM entities WHERE ref_node IS NULL OR ref_seq IS NULL").fetchone()[0]
+    if bare:
+        return {"name": "entity-identity", "status": "fail",
+                "detail": f"{bare} of {n} entities have no identity ref: run `hv doctor rebuild`"}
+    groups = {}
+    for e in _projection_entries(entries):
+        if e.get("type") != "entity" or _entity_form(e)[0] != "legacy":
+            continue
+        r = conn.execute("SELECT local_id FROM journal_index WHERE kind = 'entity' AND node_id = ? AND seq = ?",
+                         (e.get("node_id"), e.get("seq"))).fetchone()
+        if r is not None:
+            groups.setdefault(e["payload"]["name"], set()).add(r[0])
+    split = sorted(name for name, ids in groups.items() if len(ids) > 1)
+    if split:
+        return {"name": "entity-identity", "status": "fail",
+                "detail": f"{len(split)} legacy name group(s) map to more than one entity ({', '.join(split[:3])}): "
+                          f"run `hv doctor rebuild`"}
+    shared = len(_shared_entity_names(conn))
+    return {"name": "entity-identity", "status": "ok",
+            "detail": f"{n} entit{'y' if n == 1 else 'ies'}, {shared} name{'' if shared == 1 else 's'} shared by more than one"}
+
+
+def api_entities():
+    """Dashboard Entities panel: every entity with its `h:` id, and `label`, which carries the id suffix only for
+    a name more than one entity holds (the CLI's `_entity_label`)."""
+    conn = get_conn()
+    try:
+        shared = _shared_entity_names(conn)
+        rows = conn.execute("SELECT e.id, e.name, e.type, e.ref_node, e.ref_seq, "
+                            "(SELECT count(*) FROM entity_facts f WHERE f.entity_id = e.id) AS facts "
+                            "FROM entities e ORDER BY e.name, e.ref_node, e.ref_seq").fetchall()
+        return {"entities": [{"id": r["id"], "name": r["name"], "type": r["type"], "label": _entity_label(r, shared),
+                              "shared": r["name"] in shared, "ref": _ref_str([r["ref_node"], r["ref_seq"]]),
+                              "sid": _short_id(r["ref_node"], r["ref_seq"]), "facts": r["facts"]} for r in rows],
+                "shared_names": len(shared)}
+    finally:
+        conn.close()
+
+
+def _entity_label(row, shared):
+    """`David` for a unique name, `David · h:1f3a…` (the entity's `h:` id, which `--entity` takes) for a repeated one."""
+    return f"{row['name']} · {_short_id(row['ref_node'], row['ref_seq'])}" if row["name"] in shared else row["name"]
+
+
+def _entity_row_by_token(conn, token):
+    """The entity an `h:` id or `node_id:seq` names: the entity that entry was written for, whether it created it or
+    updated it. ValueError when it names nothing, or something that is not an entity."""
+    kind, ref = _parse_ref_arg(conn, token)
+    if kind != "entity":
+        raise KindMismatch(f"{token!r} is a {kind}, not an entity")
+    return conn.execute("SELECT e.* FROM journal_index j JOIN entities e ON e.id = j.local_id "
+                        "WHERE j.kind = 'entity' AND j.node_id = ? AND j.seq = ?", ref).fetchone()
+
+
+def _pick_entity(conn, name, token, action, flag="--entity"):
+    """The one entity a command names (3.0, §4.2). `token` (an `h:` id or `node_id:seq`) always names one. A bare `name`
+    names one when exactly one entity holds it; with none, None; with more than one it is an error that lists them,
+    exit 1, and writes nothing. A `token` and a `name` that disagree are an error too."""
+    if token:
+        try:
+            row = _entity_row_by_token(conn, token)
+        except ValueError as e:
+            print(f"entity {action}: {flag}: {e}", file=sys.stderr)
+            sys.exit(1)
+        if row is None:
+            print(f"entity {action}: {flag}: {token!r} names no entity in this node's store", file=sys.stderr)
+            sys.exit(1)
+        if name and row["name"] != name:
+            print(f"entity {action}: {flag} {token} is '{row['name']}', not '{name}'", file=sys.stderr)
+            sys.exit(1)
+        return row
+    rows = conn.execute("SELECT * FROM entities WHERE name = ? ORDER BY ref_node, ref_seq", (name,)).fetchall()
+    if len(rows) > 1:
+        print(f"entity {action}: '{name}' names {len(rows)} entities; pick one with {flag}:", file=sys.stderr)
+        for r in rows:
+            print(f"  {_short_id(r['ref_node'], r['ref_seq'])}  {r['name']} ({r['type']})  "
+                  f"ref {r['ref_node']}:{r['ref_seq']}  since {r['first_seen']}", file=sys.stderr)
+        sys.exit(1)
+    return rows[0] if rows else None
+
+
+def _entity_ref_of(row):
+    return [row["ref_node"], row["ref_seq"]]
+
+
+def _join_ids(conn, p):
+    """(from entity id, to entity id) of a `same-as` payload, or None when an end is not a projected entity."""
+    src, dst = _index_row(conn, p.get("from_ref")), _index_row(conn, p.get("to_ref"))
+    return (src[1], dst[1]) if src and dst and src[0] == dst[0] == "entity" else None
+
+
 def _entity_join(conn, args, withdraw):
     """`entity join|unjoin --name x-<module>:<n> --to <n>`: write a core `same-as` (2.1, #208), or withdraw it:
     plain `unjoin` withdraws every live join this device wrote, `--owner` every live join (the owner's withdrawal,
-    on the control plane)."""
-    to_name = getattr(args, "to", None)
-    if not args.name or not to_name:
-        print(f"entity {args.action}: --name (the `x-<module>:` entity) and --to (the unprefixed one) are required",
-              file=sys.stderr)
+    on the control plane). Either end is named by its name, or by `--entity` / `--to-entity` (an `h:` id or ref),
+    which is the only way to name one of several entities that share a name (3.0)."""
+    to_name, entity_tok, to_tok = getattr(args, "to", None), getattr(args, "entity", None), getattr(args, "to_entity", None)
+    if not (args.name or entity_tok) or not (to_name or to_tok):
+        print(f"entity {args.action}: --name or --entity (the `x-<module>:` entity) and --to or --to-entity "
+              f"(the unprefixed one) are required", file=sys.stderr)
         sys.exit(1)
-    refs = []
-    for n in (args.name, to_name):
-        erow = conn.execute("SELECT id FROM entities WHERE name = ?", (n,)).fetchone()
-        refs.append(_index_lookup(conn, "entity", erow["id"]) if erow else None)
-        if erow is None:
+    rows = []
+    for n, tok, flag in ((args.name, entity_tok, "--entity"), (to_name, to_tok, "--to-entity")):
+        row = _pick_entity(conn, n, tok, args.action, flag=flag)
+        if row is None:
             print(f"entity {args.action}: no entity named '{n}'", file=sys.stderr)
             sys.exit(1)
+        rows.append(row)
+    refs = [_entity_ref_of(r) for r in rows]
+    frm, to = rows[0]["name"], rows[1]["name"]
     entries = merkle.read_all_entries(JOURNAL_DIR)
     by_ref = {(e.get("node_id"), e.get("seq")): e for e in entries}
     if _same_as_pair({"from_ref": refs[0], "to_ref": refs[1]}, by_ref) is None:
-        print(f"entity {args.action}: --name must be an `x-<module>:` entity and --to an unprefixed one",
+        print(f"entity {args.action}: the first entity must be an `x-<module>:` entity and the second an unprefixed one",
               file=sys.stderr)
         sys.exit(1)
+    shared = _shared_entity_names(conn)
+    frm_l, to_l = _entity_label(rows[0], shared), _entity_label(rows[1], shared)
     if not withdraw:
         entry = append_journal("link", _link_payload("same-as", refs[0], refs[1], _write_source(args)))
-        print(f"Joined '{args.name}' to '{to_name}' {_signing_note(entry)}")
+        print(f"Joined '{frm_l}' to '{to_l}' {_signing_note(entry)}")
         rebuild_db()
         return
     gov = _governance_state(entries)
+    ends = (rows[0]["id"], rows[1]["id"])
     live = [r for r in sorted(_same_as_live(entries, gov, by_ref))
-            if _same_as_pair(by_ref[r]["payload"], by_ref) == (args.name, to_name)]
+            if _same_as_pair(by_ref[r]["payload"], by_ref) is not None and _join_ids(conn, by_ref[r]["payload"]) == ends]
     if not live:
-        print(f"entity unjoin: '{args.name}' is not joined to '{to_name}'", file=sys.stderr)
+        print(f"entity unjoin: '{frm_l}' is not joined to '{to_l}'", file=sys.stderr)
         sys.exit(1)
     owner = getattr(args, "owner", False)
     if not owner:                                    # a device withdraws only the joins it wrote
         mine = _resolve_node_id()
         live = [r for r in live if r[0] == mine]
         if not live:
-            print(f"entity unjoin: this device wrote no live join of '{args.name}' to '{to_name}'; "
+            print(f"entity unjoin: this device wrote no live join of '{frm_l}' to '{to_l}'; "
                   f"another device's join is withdrawn by its writer, or by the owner with --owner", file=sys.stderr)
             sys.exit(1)
     for r in live:                                   # one retract per entry: each join is judged on its own
@@ -6428,53 +6798,85 @@ def _entity_join(conn, args, withdraw):
                                        "source": _write_source(args)})
     rebuild_db()
     refs_ = ", ".join(f"{r[0]}:{r[1]}" for r in live)
-    print(f"Withdrew {len(live)} join{'s' if len(live) != 1 else ''} of '{args.name}' to '{to_name}' ({refs_}); "
+    print(f"Withdrew {len(live)} join{'s' if len(live) != 1 else ''} of '{frm_l}' to '{to_l}' ({refs_}); "
           f"it holds only if this device wrote the join, or the owner signed the withdrawal.")
 
 
 def entity(args):
     """Register or query an entity."""
-    if args.action == "add":
+    action = args.action
+    name, token = args.name, getattr(args, "entity", None)
+    if action in ("add", "show", "link") and not (name or token):
+        print(f"entity {action}: --name or --entity is required", file=sys.stderr)
+        sys.exit(1)
+    if action == "add":
         attrs = json.loads(args.attr) if args.attr else {}
         if not isinstance(attrs, dict):
             print("Error: --attr must be a JSON object", file=sys.stderr)
             sys.exit(2)
-        payload = {"name": args.name, "type": args.type or "unknown", "attributes": attrs}
+        if getattr(args, "new", False) and token:
+            print("entity add: --new makes a new entity and --entity updates an existing one; use one", file=sys.stderr)
+            sys.exit(2)
+        if getattr(args, "new", False) and not name:
+            print("entity add: --new needs --name", file=sys.stderr)
+            sys.exit(1)
+        # 3.0 (§4.2): the write says which entity it is. `--new` creates one even when the name is taken (the two-Davids
+        # case); otherwise one entity of that name is updated by its identity, none is created, and several are an error.
+        conn = get_conn()
+        try:
+            row = None if getattr(args, "new", False) else _pick_entity(conn, name, token, "add")
+        finally:
+            conn.close()
+        name = name or row["name"]
+        payload = {"name": name, "type": args.type or "unknown", "attributes": attrs}
+        if row is not None:
+            payload["identity_ref"] = _entity_ref_of(row)
+        else:
+            payload["new_identity"] = True
         entry = append_journal("entity", payload)
+        key = (entry["node_id"], entry["seq"])
         pentries = _projection_entries(merkle.read_all_entries(JOURNAL_DIR))
-        if (entry["node_id"], entry["seq"]) in _entity_verdicts(pentries, _governance_state(pentries))[1]:
+        declined, weigh_only, identity_of = _entity_resolution(pentries, _governance_state(pentries))
+        if key in weigh_only:
             # Weigh-only (#51): the same verdict `rebuild_db` reaches. The entry is journaled (permanent) and stays so.
-            print(f"Entity '{args.name}' was created by another device: this write is journaled but does not replace "
+            print(f"Entity '{name}' was created by another device: this write is journaled but does not replace "
                   f"it. Only its creator, or the owner, rewrites an entity.", file=sys.stderr)
+            sys.exit(1)
+        if key in declined:
+            print(f"Entity '{name}': this write is journaled but the projection does not apply it.", file=sys.stderr)
             sys.exit(1)
         try:
             conn = get_conn()
-            res = persist_entity(conn, entry)
+            with _entity_identities(identity_of):
+                res = persist_entity(conn, entry)
+            label = _entity_label({"name": name, "ref_node": identity_of[key][0], "ref_seq": identity_of[key][1]},
+                                  _shared_entity_names(conn))
             _mark_projected(conn, merkle.read_all_entries(JOURNAL_DIR), [entry])
             conn.commit()
             conn.close()
         except sqlite3.OperationalError as e:            # after the append: never report failure (#70)
             _store_deferred(entry, e, "Entity")
-        print(f"Entity #{res['id']}: {res['name']} ({res['type']})")
+        print(f"Entity #{res['id']}: {label} ({res['type']})")
         return
 
-    if args.action in ("join", "unjoin"):
+    if action in ("join", "unjoin"):
         conn = get_conn()
         try:
-            _entity_join(conn, args, args.action == "unjoin")
+            _entity_join(conn, args, action == "unjoin")
         finally:
             conn.close()
         return
 
-    if args.action == "link":
+    if action == "link":
         # Link a fact to this entity: hv entity link --name X --fact-id N
         conn = get_conn()
-        erow = conn.execute("SELECT id FROM entities WHERE name = ?", (args.name,)).fetchone()
+        erow = _pick_entity(conn, name, token, "link")
         if not erow:
-            print(f"No entity named '{args.name}'")
+            print(f"No entity named '{name}'")
             conn.close()
             return
-        entity_ref = _index_lookup(conn, "entity", erow["id"])
+        entity_ref = _entity_ref_of(erow)
+        label = _entity_label(erow, _shared_entity_names(conn))
         try:
             fact_ref = _resolve_id_arg(conn, args.fact_id, "fact", "--fact-id")
         except ValueError as e:
@@ -6497,28 +6899,32 @@ def entity(args):
             conn.close()
         except sqlite3.OperationalError as e:            # after the append: never report failure (#70)
             _store_deferred(entry, e, "Link")
-        print(f"Linked fact {_short_id(*fact_ref)} → entity '{args.name}' {_signing_note(entry)}")
+        print(f"Linked fact {_short_id(*fact_ref)} → entity '{label}' {_signing_note(entry)}")
         return
 
     # Read-only actions
     conn = get_conn()
-    if args.action == "list":
+    if action == "list":
         rows = conn.execute(
-            "SELECT id, name, type, attributes, first_seen FROM entities ORDER BY name"
+            "SELECT id, name, type, attributes, first_seen, ref_node, ref_seq FROM entities "
+            "ORDER BY name, ref_node, ref_seq"
         ).fetchall()
         if not rows:
             print("No entities registered.")
+        shared = _shared_entity_names(conn)
         for r in rows:
-            print(f"  [{r['id']}] {r['name']} ({r['type']})  since {r['first_seen']}")
+            print(f"  [{r['id']}] {_entity_label(r, shared)} ({r['type']})  since {r['first_seen']}")
         conn.close()
 
-    elif args.action == "show":
-        view = entity_view(conn, args.name, joins=not getattr(args, "no_joins", False))
+    elif action == "show":
+        erow = _pick_entity(conn, name, token, "show")
+        view = entity_view(conn, erow["name"], joins=not getattr(args, "no_joins", False),
+                           entity_id=erow["id"]) if erow else None
         if not view:
-            print(f"No entity named '{args.name}'")
+            print(f"No entity named '{name}'")
             conn.close()
             return
-        print(f"Entity #{view['id']}: {view['name']} ({view['type']})")
+        print(f"Entity #{view['id']}: {_entity_label(erow, _shared_entity_names(conn))} ({view['type']})")
         print(f"  Attributes: {view['attributes']}")
         print(f"  First seen: {view['first_seen']}  Last updated: {view['last_updated']}")
         if view["facts"]:
@@ -6548,10 +6954,11 @@ def rebuild_db():
         conn.close()
 
 
-def _rebuild_in_transaction(conn):
+def _rebuild_in_transaction(conn, begun=False):
     """The body of `rebuild_db`: ONE transaction from the first delete to the last insert, and no commit
     inside (#206). Statements run one by one because `executescript` commits."""
-    conn.execute("BEGIN IMMEDIATE")
+    if not begun:
+        conn.execute("BEGIN IMMEDIATE")
     # Drop the FTS index + triggers first: deleting every content row through
     # the external-content delete triggers can desync FTS5 ("disk image is
     # malformed"). We recreate and backfill the index after replay instead.
@@ -6569,11 +6976,13 @@ def _rebuild_in_transaction(conn):
     # Governance is pure over the entries, so it is read before pass 1: an entity write by a module is judged
     # against the module marker and the name's creator (#208).
     gov = _governance_state(entries)
-    declined = _entity_declined(entries, gov)
+    entity_declined, entity_weigh_only, identity_of = _entity_resolution(entries, gov)
+    declined = entity_declined | entity_weigh_only
     # Pass 1: row-producing entries (records journal_index).
-    for entry in entries:
-        if entry["type"] in _PASS1 and (entry["node_id"], entry["seq"]) not in declined:
-            persist_entry(conn, entry)
+    with _entity_identities(identity_of):
+        for entry in entries:
+            if entry["type"] in _PASS1 and (entry["node_id"], entry["seq"]) not in declined:
+                persist_entry(conn, entry)
     # Pass 2: cross-row links. The three legacy mechanisms keep their resolvers forever (append-only
     # journal, nothing is migrated); 1.19 `link` entries go through the one generic resolver.
     by_ref = {(e.get("node_id"), e.get("seq")): e for e in entries}
@@ -7037,6 +7446,16 @@ def whoami_cmd(args):
                                else "`hv join --principal <you>` to request write access"))
 
 
+def _print_forget_migration():
+    """SessionStart: one line while a forget migration is owed (3.0 plan 3.3); silent otherwise."""
+    try:
+        line = _forget_migration_notice()
+        if line:
+            print(line)
+    except Exception:
+        return
+
+
 def _spec_update_check(agent):
     """§0 of the Agent Integration Spec: compare the running hv's CONTRACT_VERSION
     (SemVer MAJOR.MINOR) to what this agent last integrated against, and nudge to
@@ -7110,6 +7529,7 @@ def nudge(args):
             _print_open_ideas(cfg)
             _print_pending_admissions()
             _print_self_status()
+            _print_forget_migration()
             _spec_update_check(getattr(args, "agent", "agent") or "agent")
             _freshness_check()
             _audit_boot_summary()
@@ -7662,7 +8082,7 @@ def _resign_pending_hint(root):
             "is probably still pending on GitHub; run `hive-mind update` again in a few minutes)")
 
 
-# `hv verify` exit codes (#190). Not 2: argparse usage errors and the 2.0 pointers already exit 2.
+# `hv verify` exit codes (#190). Not 2: argparse usage errors.
 VERIFY_EXIT_VERIFIED = 0     # official: integrity, signature and key anchor all confirmed
 VERIFY_EXIT_FAILED = 1       # modified, signature invalid, fork key, or no manifest: do not trust this install
 VERIFY_EXIT_UNCHECKED = 3    # nothing wrong found, but a layer could not be checked (anchor unreachable, unsigned build)
@@ -7685,7 +8105,7 @@ def verify_cmd(args):
     return _verify_exit_code(v["level"])
 
 
-# 2.0 (#136) removed `hv doctor migrate-identity`, the one-time 1.3 re-keying of a hostname journal (#130).
+# `hv doctor migrate-identity`, the one-time 1.3 re-keying of a hostname journal (#130), exists only on 1.x.
 _MIGRATION_GONE = ("A node whose journal is still under its hostname re-stamps it with `hv doctor migrate-identity` "
                    "on a 1.x release (1.28 is the last), then upgrades to 2.0.")
 
@@ -9217,13 +9637,25 @@ def _doctor_status():
     except Exception:
         pass
 
-    # 3f2. The pre-genesis forget grandfather (#122, #135). An owned hive whose `forget_writers` is still
-    #      open FAILS (2.0, 4c): an admitted device can backdate an unsigned owner forget and have it honoured.
-    #      `_forget_authz_check` lists every fact that depends on it; `hive-mind doctor --fix` closes it.
+    # 3f2. The pre-genesis forget migration (3.0, plan 3.4). The grandfather is gone, so the check is about the
+    #      MIGRATION SET: FAILS while a fact is hidden only by an unsigned pre-genesis owner forget (the facts 2.x
+    #      still hid and 3.0 would show), listing each by `h:` id; OK on an empty list, whatever `forget_writers`
+    #      says. `hive-mind migrate forget` re-issues them owner-signed; it also runs in `hive-mind update`.
     try:
         c = _forget_authz_check(entries, gov)
         if c is not None:
             checks.append(c)
+    except Exception:
+        pass
+
+    # 3f3. Entity identity (3.0, §4.4): the store is at the current schema and the name -> identity split changed
+    #      nothing for a legacy name group. Reports how many names more than one entity holds.
+    try:
+        _c = get_conn()
+        try:
+            checks.append(_entity_identity_check(_c, entries))
+        finally:
+            _c.close()
     except Exception:
         pass
 
@@ -10168,13 +10600,13 @@ def _heal_genesis_pin(entries, dry):
 
 
 def _heal_forget_authz(entries, dry):
-    """Placeholder for closing the pre-genesis forget grandfather (4c). The close re-signs forgets and sets
-    `forget_writers=owner`, both owner-signed, so it is `hive-mind doctor --fix` (`hivemind_owner.py`
-    replaces this). Here it only says so, and `hv doctor` keeps failing `forget-authz` until it is done."""
+    """Placeholder for settling the migration set (4c, 3.0). Re-signing the forgets is owner-signed, so it is
+    `hive-mind migrate forget` or `hive-mind doctor --fix` (`hivemind_owner.py` replaces this). Here it only says
+    so, and `hv doctor` keeps failing `forget-authz` until it is done."""
     c = _forget_authz_check(entries, _governance_state(entries))
     if c is not None and c.get("open"):
-        print("\n--fix: the pre-genesis forget grandfather is open (forget-authz). Closing it is an owner act: "
-              "run `hive-mind doctor --fix` on the owner machine.")
+        print("\n--fix: facts depend on a pre-genesis unsigned forget (forget-authz). Re-signing them is an owner act: "
+              "run `hive-mind migrate forget` on the owner machine.")
 
 
 def _append_governance(action_payload):
@@ -10227,7 +10659,7 @@ def _grandfather_remedy(sids):
     for sid in sids:
         print(f"    {sid}   keep it forgotten: hive-mind retract {sid} --owner   |   "
               f"let it back: hive-mind unforget {sid} --reason …")
-    print("    Then close the grandfather by hand:  hive-mind config set forget_writers owner")
+    print("    Then record the close for 2.x peers:  hive-mind migrate forget")
 
 
 # `_close_grandfather_at_genesis` (#135 part 1) moved with `owner init` to the control plane
@@ -10299,10 +10731,6 @@ def owner_cmd(args):
         if _ed25519 is None:
             print("ed25519 unavailable; cannot propose an election.")
             return
-        if getattr(args, "mint", False):
-            # Minting writes owner-key material, so it is `hive-mind owner mint` (2.0 S2). Proposing the
-            # minted key is device-signed and stays here: `hv owner propose-election --pub <b64>`.
-            raise NotOnDataPlane("owner propose-election --mint")
         new_pub = _canon_pub(getattr(args, "pub", "") or "")
         if not new_pub:
             print("Provide the proposed owner key: `--pub <base64>` (mint one with `hive-mind owner mint`).")
@@ -10467,12 +10895,6 @@ def _add_peer(url, label):
     except Exception:
         return False
     return True
-
-
-def admit_cmd(args):
-    """Placeholder: admitting a device is owner-signed, so it is `hive-mind group admit` (2.0 S2,
-    `hivemind_owner.py`). The pending list is also `hv group list`."""
-    raise NotOnDataPlane(("group", "admit"))
 
 
 def _group_change(action, device_id, principal=None):
@@ -11127,7 +11549,13 @@ def _telemetry_list(args):
 # CLI
 # --------------------------------------------------------------------------
 
-def build_parser():
+def build_parser(plane="data"):
+    """The command line. `plane="data"` is `hv`: it has no owner-signed verb and no owner flag, so a command
+    that lives on the control plane is argparse's own unknown command (exit 2, nothing written). `plane="control"`
+    is the full parser `hive-mind` routes through, so every flag is still defined once."""
+    control = plane == "control"
+    if plane not in ("data", "control"):
+        raise ValueError(f"unknown plane {plane!r}")
     parser = argparse.ArgumentParser(
         description="Hive Mind CLI — shared, confidence-weighted institutional memory.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -11138,8 +11566,7 @@ def build_parser():
             '  hv search "X" [--min-confidence -1] [--format json]        # ranked by effective confidence\n'
             '  hv decide "chose Y" --rationale "because"                  # record a decision\n'
             "  hv retract <fact-id> [--reason ...]                        # peer negative evidence (rejected)\n"
-            "  hive-mind retract <fact-id> --owner                               # owner forget (decisive, -1.0)\n"
-            "  hv stats | sync now|daemon\n"
+                        "  hv stats | sync now|daemon\n"
             "  hv doctor [--format json] [--fix]                          # health check (+ self-heal)\n"
             "  hv doctor merkle | rebuild                                 # sync diag / rebuild db\n"
             "  hv wire claude                                             # (re)wire the Claude Code hooks + skill\n"
@@ -11244,17 +11671,19 @@ def build_parser():
                                     "`node_id:seq`, both shown by `hv search` (2.0 refuses local ids), resolved "
                                     "before anything is written")
 
-    unforget_parser = subparsers.add_parser("unforget", help="Owner only: reverse an owner-forget (`retract --owner`)")
-    unforget_parser.add_argument("fact_id", help="The forgotten fact: its `h:` short id or `ref` (2.0 refuses local ids)")
-    unforget_parser.add_argument("--reason", required=True, help="Why the forget is reversed (journaled)")
+    if control:
+        unforget_parser = subparsers.add_parser("unforget", help="Owner only: reverse an owner-forget (`retract --owner`)")
+        unforget_parser.add_argument("fact_id", help="The forgotten fact: its `h:` short id or `ref` (2.0 refuses local ids)")
+        unforget_parser.add_argument("--reason", required=True, help="Why the forget is reversed (journaled)")
 
     retract_parser = subparsers.add_parser("retract", help="Record negative evidence against a fact (soft-forget)")
     retract_parser.add_argument("fact_id", metavar="FACT",
                                 help="The fact to retract: its `h:` short id or `ref` (2.0 refuses local ids)")
     retract_parser.add_argument("--reason", help="Why")
     retract_parser.add_argument("--source", help="Retractor identity (default: env/manual)")
-    retract_parser.add_argument("--owner", action="store_true",
-                                help="Owner forget — governance, decisive (drives to the forget floor)")
+    if control:
+        retract_parser.add_argument("--owner", action="store_true",
+                                    help="Owner forget — governance, decisive (drives to the forget floor)")
 
     entity_parser = subparsers.add_parser("entity", help="Manage entities")
     entity_parser.add_argument("action", choices=["add", "list", "show", "link", "join", "unjoin"], help="Sub-command")
@@ -11265,6 +11694,15 @@ def build_parser():
     entity_parser.add_argument("--confidence", type=float, help="Link confidence")
     entity_parser.add_argument("--to", help="`join`/`unjoin`: the unprefixed entity a module's `x-<module>:` "
                                            "entity (`--name`) is the same as (2.1, #208)")
+    entity_parser.add_argument("--new", action="store_true",
+                               help="`add`: create a new entity even when one has this name (two people called "
+                                    "David); without it `add` updates the one entity of that name (3.0)")
+    entity_parser.add_argument("--entity", metavar="ID",
+                               help="The entity itself, by its `h:` id or `node_id:seq` ref (`entity list` shows "
+                                    "the id of a repeated name): `add` updates it, `show`, `link`, `join` and "
+                                    "`unjoin` act on it. A name that more than one entity holds needs this (3.0)")
+    entity_parser.add_argument("--to-entity", metavar="ID",
+                               help="`join`/`unjoin`: the unprefixed entity by `h:` id or ref, instead of `--to`")
     entity_parser.add_argument("--no-joins", action="store_true",
                                help="`show`: the core entity only, without the module entities joined to it")
     entity_parser.add_argument("--owner", action="store_true",
@@ -11331,78 +11769,86 @@ def build_parser():
     owner_parser = subparsers.add_parser("owner", help="Show or create the governance owner identity")
     owner_sub = owner_parser.add_subparsers(dest="owner_action")
     owner_sub.add_parser("show", help="Show the established owner + governance state")
-    owner_init = owner_sub.add_parser("init", help="Mint the owner key and claim ownership")
-    owner_init.add_argument("--force", action="store_true", help="Replace an existing owner key / override an established owner")
-    owner_pin = owner_sub.add_parser("pin", help="Show or set the pinned genesis declaration (no arg shows)")
-    owner_pin.add_argument("--set", action="store_true",
-                           help="Pin the journal's single self-signed owner declaration (refuses if there are 0 or 2+)")
-    owner_pin.add_argument("--fingerprint", metavar="FP",
-                           help="Pin from an invite's genesis fingerprint (<hive_id>/<owner_id>/<hash8>), before the first sync")
-    owner_pin.add_argument("--force", action="store_true", help="With --set/--fingerprint: replace an existing pin (a deliberate fork)")
-    owner_export = owner_sub.add_parser("export", help="Back up this device's owner key to a passphrase-encrypted file (for recovery)")
-    owner_export.add_argument("--out", help="Output file (default ./hive-owner-<owner_id>.key)")
-    owner_export.add_argument("--passphrase", action="store_true", help=argparse.SUPPRESS)  # the default now; kept so old scripts run
-    owner_export.add_argument("--plaintext", action="store_true",
-                              help="Write the seed UNENCRYPTED (default: encrypted with a prompted passphrase)")
-    owner_import = owner_sub.add_parser("import", help="Install an owner key from a backup file (resume governance here)")
-    owner_import.add_argument("file", help="The exported owner-key file")
-    owner_import.add_argument("--force", action="store_true", help="Install even if it doesn't match the journal's established owner")
-    owner_standby = owner_sub.add_parser("standby", help="Declare/remove a standby device that may hold the owner key (advisory)")
-    owner_standby.add_argument("device_id", help="The standby device's device_id (k1:…)")
-    owner_standby.add_argument("--off", action="store_true", help="Remove the standby declaration")
-    owner_sub.add_parser("escrow", help="Store the owner key, passphrase-encrypted, IN the hive (syncs to all nodes)")
-    owner_sub.add_parser("restore", help="Recover the owner key from the hive's escrow (needs the passphrase)")
-    owner_nominate = owner_sub.add_parser("nominate", help="Nominate a successor owner key (the successor then `claim`s)")
-    owner_nominate.add_argument("successor_pub", help="The successor's owner pubkey (base64; from `hive-mind owner claim --mint`)")
-    owner_unnominate = owner_sub.add_parser("unnominate", help="Withdraw a pending successor nomination")
-    owner_unnominate.add_argument("successor_pub", help="The nominated successor's owner pubkey (base64)")
-    owner_claim = owner_sub.add_parser("claim", help="Claim ownership on this device against an open nomination (successor side)")
-    owner_claim.add_argument("--mint", action="store_true", help="Mint a fresh owner key for this device first")
-    owner_claim.add_argument("--force", action="store_true", help="With --mint, replace an existing owner key on this device")
-    owner_transfer = owner_sub.add_parser("transfer", help="Immediately hand ownership to a key (the target must already hold it)")
-    owner_transfer.add_argument("new_owner_pub", help="The new owner's pubkey (base64)")
-    owner_revoke_escrow = owner_sub.add_parser("revoke-escrow", help="Tombstone an escrowed key so `restore` skips it")
-    owner_revoke_escrow.add_argument("ref", help="Escrow ref `node_id:seq`, or `all`")
-    owner_sub.add_parser("heartbeat", help="Refresh owner liveness (resets the dead-man timer; owner key holder)")
-    owner_sub.add_parser("freeze-timestamps", help="Arm the bounded entry timestamps (#217): freeze every device's "
-                                                   "chain at its tip, so only later entries are checked (owner key holder)")
-    owner_mint = owner_sub.add_parser("mint", help="[hive-mind] Mint a prospective owner key on this device, "
-                                                  "to propose with `hv owner propose-election --pub`")
-    owner_mint.add_argument("--force", action="store_true", help="Replace an owner key already on this device")
-    owner_sub.add_parser("seal", help="[hive-mind] Seal a plaintext owner key at rest under a passphrase (2.0)")
+    if control:
+        owner_init = owner_sub.add_parser("init", help="Mint the owner key and claim ownership")
+        owner_init.add_argument("--force", action="store_true", help="Replace an existing owner key / override an established owner")
+        owner_pin = owner_sub.add_parser("pin", help="Show or set the pinned genesis declaration (no arg shows)")
+        owner_pin.add_argument("--set", action="store_true",
+                               help="Pin the journal's single self-signed owner declaration (refuses if there are 0 or 2+)")
+        owner_pin.add_argument("--fingerprint", metavar="FP",
+                               help="Pin from an invite's genesis fingerprint (<hive_id>/<owner_id>/<hash8>), before the first sync")
+        owner_pin.add_argument("--force", action="store_true", help="With --set/--fingerprint: replace an existing pin (a deliberate fork)")
+        owner_export = owner_sub.add_parser("export", help="Back up this device's owner key to a passphrase-encrypted file (for recovery)")
+        owner_export.add_argument("--out", help="Output file (default ./hive-owner-<owner_id>.key)")
+        owner_export.add_argument("--passphrase", action="store_true", help=argparse.SUPPRESS)  # the default now; kept so old scripts run
+        owner_export.add_argument("--plaintext", action="store_true",
+                                  help="Write the seed UNENCRYPTED (default: encrypted with a prompted passphrase)")
+        owner_import = owner_sub.add_parser("import", help="Install an owner key from a backup file (resume governance here)")
+        owner_import.add_argument("file", help="The exported owner-key file")
+        owner_import.add_argument("--force", action="store_true", help="Install even if it doesn't match the journal's established owner")
+        owner_standby = owner_sub.add_parser("standby", help="Declare/remove a standby device that may hold the owner key (advisory)")
+        owner_standby.add_argument("device_id", help="The standby device's device_id (k1:…)")
+        owner_standby.add_argument("--off", action="store_true", help="Remove the standby declaration")
+        owner_sub.add_parser("escrow", help="Store the owner key, passphrase-encrypted, IN the hive (syncs to all nodes)")
+        owner_sub.add_parser("restore", help="Recover the owner key from the hive's escrow (needs the passphrase)")
+        owner_nominate = owner_sub.add_parser("nominate", help="Nominate a successor owner key (the successor then `claim`s)")
+        owner_nominate.add_argument("successor_pub", help="The successor's owner pubkey (base64; from `hive-mind owner claim --mint`)")
+        owner_unnominate = owner_sub.add_parser("unnominate", help="Withdraw a pending successor nomination")
+        owner_unnominate.add_argument("successor_pub", help="The nominated successor's owner pubkey (base64)")
+        owner_claim = owner_sub.add_parser("claim", help="Claim ownership on this device against an open nomination (successor side)")
+        owner_claim.add_argument("--mint", action="store_true", help="Mint a fresh owner key for this device first")
+        owner_claim.add_argument("--force", action="store_true", help="With --mint, replace an existing owner key on this device")
+        owner_transfer = owner_sub.add_parser("transfer", help="Immediately hand ownership to a key (the target must already hold it)")
+        owner_transfer.add_argument("new_owner_pub", help="The new owner's pubkey (base64)")
+        owner_revoke_escrow = owner_sub.add_parser("revoke-escrow", help="Tombstone an escrowed key so `restore` skips it")
+        owner_revoke_escrow.add_argument("ref", help="Escrow ref `node_id:seq`, or `all`")
+        owner_sub.add_parser("heartbeat", help="Refresh owner liveness (resets the dead-man timer; owner key holder)")
+        owner_sub.add_parser("freeze-timestamps", help="Arm the bounded entry timestamps (#217): freeze every device's "
+                                                       "chain at its tip, so only later entries are checked (owner key holder)")
+        owner_mint = owner_sub.add_parser("mint", help="[hive-mind] Mint a prospective owner key on this device, "
+                                                      "to propose with `hv owner propose-election --pub`")
+        owner_mint.add_argument("--force", action="store_true", help="Replace an owner key already on this device")
+        owner_sub.add_parser("seal", help="[hive-mind] Seal a plaintext owner key at rest under a passphrase (2.0)")
     owner_propose = owner_sub.add_parser("propose-election", help="Propose electing a new owner (admitted devices; needs quorum + a dark owner)")
-    owner_propose.add_argument("--mint", action="store_true", help="[moved] minting is `hive-mind owner mint` (2.0)")
     owner_propose.add_argument("--pub", help="Propose this base64 owner pubkey (mint one with `hive-mind owner mint`)")
     owner_vote = owner_sub.add_parser("vote", help="Vote for an open election proposal (admitted devices)")
     owner_vote.add_argument("proposal_id", help="The election's proposal_id (from `hv owner elections`)")
     owner_sub.add_parser("elections", help="List open owner-election proposals and their tallies")
 
-    admit_parser = subparsers.add_parser("admit", help="[alias of `hive-mind group admit`] Admit a device; no arg lists pending")
-    admit_parser.add_argument("device_id", nargs="?", help="The peer's device_id (k1:…). Omit to list devices awaiting admission")
-    admit_parser.add_argument("--principal", help="Tag the person or agent who owns this device")
-    admit_parser.add_argument("--module", help="Mark the device as module NAME's (2.1): it never votes in an election")
+    if control:
+        admit_parser = subparsers.add_parser("admit", help="[alias of `hive-mind group admit`] Admit a device; no arg lists pending")
+        admit_parser.add_argument("device_id", nargs="?", help="The peer's device_id (k1:…). Omit to list devices awaiting admission")
+        admit_parser.add_argument("--principal", help="Tag the person or agent who owns this device")
+        admit_parser.add_argument("--module", help="Mark the device as module NAME's (2.1): it never votes in an election")
 
+        migrate_parser = subparsers.add_parser("migrate", help="Owner only: one-time migrations (3.0): `migrate forget`")
+        migrate_sub = migrate_parser.add_subparsers(dest="migrate_action", required=True)
+        m_forget = migrate_sub.add_parser("forget", help="Re-issue, owner-signed, every forget that only the pre-genesis "
+                                                         "grandfather keeps in effect (idempotent)")
+        m_forget.add_argument("--check", action="store_true",
+                              help="Write nothing: list the facts that depend on such a forget; exit 0 only if none")
     group_parser = subparsers.add_parser("group", help="Membership lifecycle (owner-only): admit/revoke/deny/change/purge/retire/list")
     group_sub = group_parser.add_subparsers(dest="group_action")
-    g_admit = group_sub.add_parser("admit", help="Admit a device; no arg lists pending requests")
-    g_admit.add_argument("device_id", nargs="?", help="The peer's device_id (k1:…). Omit to list pending")
-    g_admit.add_argument("--principal", help="Tag the person or agent who owns this device")
-    g_admit.add_argument("--module", help="Mark the device as module NAME's (2.1): it never votes in an election")
-    g_revoke = group_sub.add_parser("revoke", help="Un-admit a device (reversible) → returns to STERILE")
-    g_revoke.add_argument("device_id")
-    g_deny = group_sub.add_parser("deny", help="Reject a pending join-request (a later admit overrides)")
-    g_deny.add_argument("device_id")
-    g_change = group_sub.add_parser("change", help="Re-tag a device's principal (admission unchanged)")
-    g_change.add_argument("device_id")
-    g_change.add_argument("--principal", required=True, help="The new owner tag (person or agent)")
-    g_purge = group_sub.add_parser("purge", help="Tombstone a compromised device (permanent; none of its content counts)")
-    g_purge.add_argument("device_id")
-    g_retire = group_sub.add_parser("retire", help="Tombstone an honest device but keep its past content (purge with keep_through)")
-    g_retire.add_argument("device_id")
-    g_retire.add_argument("--through", type=int, metavar="SEQ",
-                          help="Keep the device's chain up to this seq (default: the highest seq this node holds)")
-    g_retire.add_argument("--confirm", action="store_true",
-                          help="Needed to retire a device that is already purged: its kept prefix counts again")
+    if control:
+        g_admit = group_sub.add_parser("admit", help="Admit a device; no arg lists pending requests")
+        g_admit.add_argument("device_id", nargs="?", help="The peer's device_id (k1:…). Omit to list pending")
+        g_admit.add_argument("--principal", help="Tag the person or agent who owns this device")
+        g_admit.add_argument("--module", help="Mark the device as module NAME's (2.1): it never votes in an election")
+        g_revoke = group_sub.add_parser("revoke", help="Un-admit a device (reversible) → returns to STERILE")
+        g_revoke.add_argument("device_id")
+        g_deny = group_sub.add_parser("deny", help="Reject a pending join-request (a later admit overrides)")
+        g_deny.add_argument("device_id")
+        g_change = group_sub.add_parser("change", help="Re-tag a device's principal (admission unchanged)")
+        g_change.add_argument("device_id")
+        g_change.add_argument("--principal", required=True, help="The new owner tag (person or agent)")
+        g_purge = group_sub.add_parser("purge", help="Tombstone a compromised device (permanent; none of its content counts)")
+        g_purge.add_argument("device_id")
+        g_retire = group_sub.add_parser("retire", help="Tombstone an honest device but keep its past content (purge with keep_through)")
+        g_retire.add_argument("device_id")
+        g_retire.add_argument("--through", type=int, metavar="SEQ",
+                              help="Keep the device's chain up to this seq (default: the highest seq this node holds)")
+        g_retire.add_argument("--confirm", action="store_true",
+                              help="Needed to retire a device that is already purged: its kept prefix counts again")
     group_sub.add_parser("list", help="Show the membership roster")
 
     join_parser = subparsers.add_parser("join", help="Request admission to this device's hive (after syncing it)")
@@ -11410,11 +11856,12 @@ def build_parser():
 
     config_parser = subparsers.add_parser("config", help="Settings: device identity + owner-signed confidence/quorum params")
     config_sub = config_parser.add_subparsers(dest="config_action")
-    # back-compat alias: `hv config set <key> <value>` == `hv config confidence set …`
-    config_set = config_sub.add_parser("set", help="[alias] Set an owner-signed governed parameter")
-    config_set.add_argument("key", help="a governed key, e.g. cap_self, importance_self_cap, capsule_putters "
-                                        "(an unknown key lists them all)")
-    config_set.add_argument("value", help="numeric value")
+    if control:
+        # back-compat alias: `hv config set <key> <value>` == `hv config confidence set …`
+        config_set = config_sub.add_parser("set", help="[alias] Set an owner-signed governed parameter")
+        config_set.add_argument("key", help="a governed key, e.g. cap_self, importance_self_cap, capsule_putters "
+                                            "(an unknown key lists them all)")
+        config_set.add_argument("value", help="numeric value")
     # canonical: identity (this device's key) + confidence (owner-signed hive params)
     config_id = config_sub.add_parser("identity", help="Show or mint this device's identity key")
     config_id_sub = config_id.add_subparsers(dest="config_identity_action")
@@ -11422,17 +11869,18 @@ def build_parser():
     config_id_sub.add_parser("show", help="Show this device's device_id and pubkey")
     config_id_init = config_id_sub.add_parser("init", help="Mint a device key (fresh install)")
     config_id_init.add_argument("--force", action="store_true", help="Replace an existing key / skip the populated-journal guard")
-    config_conf = config_sub.add_parser("confidence", help="Set an owner-signed confidence parameter")
-    config_conf_sub = config_conf.add_subparsers(dest="config_confidence_action")
-    config_conf_set = config_conf_sub.add_parser("set", help="Set an owner-signed confidence, salience or trust parameter")
-    config_conf_set.add_argument("key", help="e.g. same_device_lambda, cap_self, introspect_support_weight, "
-                                             "importance_self_cap, halflife_fact (an unknown key lists them all)")
-    config_conf_set.add_argument("value", help="numeric value")
-    config_quorum = config_sub.add_parser("quorum", help="Set an owner-signed quorum-election parameter")
-    config_quorum_sub = config_quorum.add_subparsers(dest="config_quorum_action")
-    config_quorum_set = config_quorum_sub.add_parser("set", help="Set quorum_m, quorum_by or dead_man_days")
-    config_quorum_set.add_argument("key", help="quorum_m | quorum_by | dead_man_days")
-    config_quorum_set.add_argument("value", help="value (quorum_m=int, quorum_by=device|principal, dead_man_days=float)")
+    if control:
+        config_conf = config_sub.add_parser("confidence", help="Set an owner-signed confidence parameter")
+        config_conf_sub = config_conf.add_subparsers(dest="config_confidence_action")
+        config_conf_set = config_conf_sub.add_parser("set", help="Set an owner-signed confidence, salience or trust parameter")
+        config_conf_set.add_argument("key", help="e.g. same_device_lambda, cap_self, introspect_support_weight, "
+                                                 "importance_self_cap, halflife_fact (an unknown key lists them all)")
+        config_conf_set.add_argument("value", help="numeric value")
+        config_quorum = config_sub.add_parser("quorum", help="Set an owner-signed quorum-election parameter")
+        config_quorum_sub = config_quorum.add_subparsers(dest="config_quorum_action")
+        config_quorum_set = config_quorum_sub.add_parser("set", help="Set quorum_m, quorum_by or dead_man_days")
+        config_quorum_set.add_argument("key", help="quorum_m | quorum_by | dead_man_days")
+        config_quorum_set.add_argument("value", help="value (quorum_m=int, quorum_by=device|principal, dead_man_days=float)")
 
     discover_parser = subparsers.add_parser("discover", help="Scan the tailnet for hives (Tailscale + /hive/info probe)")
     discover_parser.add_argument("--format", choices=["text", "json"], default="text")
@@ -11486,60 +11934,15 @@ _STORE_COMMANDS = {"remember", "search", "decide", "propose", "retract", "entity
 
 
 def main():
-    parser = build_parser()
-    argv = sys.argv[1:]
-    # 2.0 S8 (#136): the 1.x aliases `hv rebuild`, `hv merkle`, `hv key` and `hv doctor wire-agent` are
-    # removed. Each names the `hv` command it became and exits 2, having acted on nothing, like a moved
-    # command, so a script still calling one fails loudly (decision h:af137f9421).
-    old = commandmap.renamed(argv)
-    if old is not None:
-        _key, new_argv, why = old
-        print(commandmap.renamed_text(argv, new_argv, why), file=sys.stderr)
-        return commandmap.POINTER_EXIT
-    # 2.0 (#136): the June-era hostname-to-device-key migration is gone. Say what to do instead of letting
-    # argparse report an unknown command, and act on nothing (exit 2, like the moved commands).
-    if argv[:2] == ["doctor", "migrate-identity"] or argv[:1] == ["migrate-device-identity"]:
-        print(f"hv: `{' '.join(argv[:2] if argv[:1] == ['doctor'] else argv[:1])}` was removed in 2.0. "
-              f"{_MIGRATION_GONE}", file=sys.stderr)
-        sys.exit(2)
-    # 2.0 S2/S6 (public #136): a command that moved to the control plane is pointed at BEFORE parsing, so
-    # it acts on nothing whatever its arguments, and exits 2 so no script mistakes it for success.
-    moved = _moved_key(argv)
-    if moved is not None:
-        return _point(argv, moved)
-    args = parser.parse_args(argv)
-
+    args = build_parser(plane="data").parse_args(sys.argv[1:])
     return dispatch(args)
 
 
-def _moved_key(argv):
-    """The `commandmap` key an `hv` invocation moved under, or None. Whole commands by longest argv
-    prefix (`MOVED`); two flag-conditional ones by their flag. The policy-conditional capsule and wire
-    writes can only be told once the hive's config is read, so their handlers raise `NotOnDataPlane`."""
-    hit = commandmap.lookup(argv)
-    if hit is not None:
-        return hit[0]
-    if argv[:1] == ["retract"] and "--owner" in argv:
-        return "retract --owner"
-    if argv[:2] == ["owner", "propose-election"] and "--mint" in argv:
-        return "owner propose-election --mint"
-    return None
-
-
-def _point(argv, key):
-    """Print where a moved command went — the exact `hive-mind` command to type, this invocation's
-    arguments included — and return the pointer exit code (2). Acts on nothing."""
-    argv = list(argv)
-    if isinstance(key, tuple) and key in commandmap.MOVED:
-        new_form, why = commandmap.MOVED[key]
-        run = new_form.split() + argv[len(key):]          # renames and collapses keep the rest as typed
-    elif key in commandmap.FLAG_CONDITIONAL:
-        new_form, why = commandmap.FLAG_CONDITIONAL[key]
-        run = new_form.split() if key == "owner propose-election --mint" else argv
-    else:
-        why, run = "", argv
-    print(commandmap.pointer_text(argv, " ".join(run), why), file=sys.stderr)
-    return commandmap.POINTER_EXIT
+def _refuse_policy(key):
+    """A current verb refused by hive policy (`capsule_putters=owner`, `cell_writers=owner`): say what the
+    policy needs and where to run it. Exit 2, acting on nothing, so no script mistakes it for success."""
+    print(commandmap.policy_text(key), file=sys.stderr)
+    return commandmap.POLICY_EXIT
 
 
 def dispatch(args):
@@ -11553,8 +11956,8 @@ def dispatch(args):
     directly then minted an owner key against an uninitialised store."""
     try:
         return _dispatch(args)
-    except NotOnDataPlane as e:            # an owner step reached on the data plane (2.0 S2)
-        return _point(sys.argv[1:], e.key)
+    except NotOnDataPlane as e:            # an owner-signed step reached on the data plane (S2)
+        return _refuse_policy(e.key)
     except JournalLockError as e:          # #253: one line naming cause and remedy, not a traceback
         print(str(e), file=sys.stderr)
         return 1
@@ -11574,6 +11977,7 @@ def _dispatch(args):
     if args.command == "remember":
         remember(args)
     elif args.command == "search":
+        _forget_migration_stderr_notice()
         search(args)
     elif args.command == "decide":
         decide(args)
@@ -11588,6 +11992,7 @@ def _dispatch(args):
     elif args.command == "stats":
         stats(args)
     elif args.command == "feed":
+        _forget_migration_stderr_notice()
         feed(args)
     elif args.command == "version":
         version_cmd(args)
@@ -11603,6 +12008,8 @@ def _dispatch(args):
         owner_cmd(args)
     elif args.command == "admit":
         admit_cmd(args)
+    elif args.command == "migrate":
+        return migrate_cmd(args)
     elif args.command == "group" and args.group_action == "retire":
         group_retire_cmd(args)
     elif args.command == "group":

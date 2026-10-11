@@ -1,1 +1,0 @@
-- `hive-mind status` probes each peer's `/sync/hello` with a signed request, so a peer in sync read-auth `enforce` shows as reachable instead of "unreachable (HTTP Error 401)"; an unsigned 401 now reads "reachable, read-auth required" (#349).

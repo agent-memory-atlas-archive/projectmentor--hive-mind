@@ -107,7 +107,8 @@ READERS = {
         ("hv", "_doctor_status"),
         ("hv", "_join_request_urls"),
         ("hv", "_join_request_label"),
-        ("hv", "_entity_verdicts"),            # 2.1 (#208), #51: an entity write, judged in replay order
+        ("hv", "_entity_resolution"),          # 2.1 (#208), #51, 3.0: an entity write, judged in replay order
+        ("hv", "_entity_identity_check"),      # 3.0 (PR 9): `hv doctor` entity-identity, the legacy entity entries
         ("hv", "_module_policy_declined"),       # 2.1 (#50): a module's entry judged by the write policy; governance is left alone
         ("hv", "_same_as_pair"),                # a `same-as` end must be an entity entry
         ("hv", "_same_as_live"),                # which `same-as` joins count, and the retracts that withdraw them

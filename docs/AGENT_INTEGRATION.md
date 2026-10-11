@@ -1,6 +1,6 @@
 # HiveMind Agent Integration Spec
 
-`Contract-Version: 2.4`  *(SemVer `MAJOR.MINOR`; authoritative value: `hv version`)*
+`Contract-Version: 3.0`  *(SemVer `MAJOR.MINOR`; authoritative value: `hv version`)*
 
 > **Audience: any AI agent** (Claude Code, Hermes, OpenClaw, an MCP host, any CLI agent).
 > You are reading this because you are joining a HiveMind — a shared, local-first memory.
@@ -242,13 +242,13 @@ The contract is **SemVer (`MAJOR.MINOR`)**, reported by `hv version`:
   through a migration window; §0 fires a loud re-integrate nudge; and — because every adapter call
   is best-effort and `exit 0` (§4) — an un-migrated adapter **degrades gracefully** (its nudges
   silently no-op) rather than crashing. Migrate to the new major within the window.
-- **The 2.0 amendment: owner-only commands do not get working shims** (public #136, S6). 2.0 moves every
+- **The 2.0 amendment, closed in 3.0: owner-only commands did not get working shims** (public #136, S6). 2.0 moved every
   command that reads the owner seed, writes owner-key material or owner-signs off `hv`, onto the control
-  plane, `hive-mind`. For those commands only, `hv` does not keep a working shim, because a working shim
-  would keep an owner-signing path in `hv` and undo the split (S2). Instead, through the 2.x line, it
-  prints the exact `hive-mind` command to run — this invocation's arguments included — and **exits 2**,
-  acting on nothing. Exit 0 would let a script believe the old command worked. The pointers are removed at
-  3.0. **No adapter calls an owner-only command**: no MCP or Hermes tool ever did. The adapter-visible
+  plane, `hive-mind`. For those commands only, `hv` kept no working shim, because a working shim
+  would have kept an owner-signing path in `hv` and undone the split (S2). Instead, through the 2.x line, it
+  printed the exact `hive-mind` command to run and **exited 2**, acting on nothing. 3.0 removed the pointers: the
+  moved commands are now argparse's unknown command, exit 2, with no shim and no replacement named. The amendment
+  closes because the commands are gone, not because a shim returned. **No adapter calls an owner-only command**: no MCP or Hermes tool ever did. The adapter-visible
   breaks this major does make are on the data plane, promised for it since 1.x, and listed in the `2.0`
   entry below: local ids refused, `tags` a list, and no `$HERMES_AGENT` source fallback. One visible
   change is not a pointer: a link written
@@ -267,6 +267,7 @@ governance actions, config keys, channels and the rest) is listed in [`NAMESPACE
 generated from `vocabulary.py`, and a name anything else adds takes a prefix.
 
 **Changelog.** The full per-version record is [`CONTRACT_HISTORY.md`](CONTRACT_HISTORY.md).
+- `3.0` — **removes what 2.x deprecated; forget grandfather gone; entity identity by ref** (public #136 close-out, #151). **MAJOR: re-integrate (§0) by re-reading; no adapter calls a removed name.** The 2.0 exit-2 pointers and the 1.x aliases are gone (an unknown command on `hv`, still exit 2); `forget_writers=legacy` and the pre-genesis honouring branch are removed, and `hive-mind update` re-issues the forgets that depended on them, owner-signed, before the new code runs; an entity is identified by its creating ref (`hv entity add --new`, `--entity` by `h:` id). Update the owner machine first. No signing, manifest or sync change. Full entry: [`CONTRACT_HISTORY.md`](CONTRACT_HISTORY.md).
 - `2.4` — **`hv search --chain`; a superseded decision names its superseder** (#157, #283). **Additive: no re-integration.** Nothing an adapter calls changes. New: `hv search --chain SID|REF` follows one decision's supersede chain to the decision in effect and exits 1 when the id names no decision; and a superseded decision carries `superseded_by_sid`, `superseded_by_ref`, `superseded_by_authority` and `supersede_evidence` in `hv search` and `hv search --id` JSON, the dashboard and the MCP tools (an adapter that ignores unknown fields is unaffected; the node-local `superseded_by` rowid is unchanged). The hive's governance reading tightens in the way §7 allows a MINOR: an owner-signed act, an entry whose body does not match its type, a module device's out-of-policy entry and a non-creator's entity rewrite stop projecting, and a revoked or purged device leaves .peers.json; they stay in the journal. Full entry: [`CONTRACT_HISTORY.md`](CONTRACT_HISTORY.md).
 - `2.3` — **module-author additions: `/v1/` node fields, `stop_grace`, `module config`, a non-owner install**
   (#270, #274, #277, #272, #278, #279). **Additive: no re-integration.** Nothing an adapter calls changes. New for
@@ -595,7 +596,7 @@ generated from `vocabulary.py`, and a name anything else adds takes a prefix.
   unaffected.
 - `1.8` — footprint trim. `hv rebuild` is folded into **`hv doctor rebuild`** (joining `hv doctor
   merkle`/`migrate-identity`); the top-level `hv rebuild` kept working as a hidden deprecated alias
-  through 1.x. In 2.0 that alias names `hv doctor rebuild` and exits 2, having rebuilt nothing.
+  through 1.x. The alias named `hv doctor rebuild` and exited 2 through 2.x; 3.0 removed it (an unknown command, exit 2).
   No new capability in 1.8 — purely a
   surface change; adapters that call `hv rebuild` need no edit.
 - `1.7` — owner resilience (pt.2): **succession**. `hv owner nominate <pub>` + the successor's

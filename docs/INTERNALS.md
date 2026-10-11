@@ -197,9 +197,10 @@ escrow passphrase is truly remediated only by rotating the owner key via success
 - Owner retraction (`hive-mind retract --owner`) → drives confidence to the floor.
   Once an owner exists it must be **owner-signed** by the owner **as of its journal
   position** (`_owner_at`, so a previous owner's forget survives a handoff; 1.24);
-  forgets positioned before the genesis owner are grandfathered while the governed
-  `forget_writers` policy is `legacy` (the default); `forget_writers=owner` closes that (1.25,
-  #122), and `_forgets_grandfathered` answers what the grandfather would honour either way.
+  forgets positioned before the genesis owner carry no authority (3.0 removed the grandfather of 1.25, #122; the
+  governed `forget_writers` key is still parsed but the projection does not read it), and
+  `_forgets_grandfathered` / `_forget_migration` answer which facts the last 2.x hid by one, for `migrate forget` and
+  the `forget-authz` check only.
 - Owner unforget (`hive-mind unforget`, 1.24) → an owner-signed `retract` with
   `unretracts_ref`. Per fact text, the owner forgets and unforgets are sorted on
   `(timestamp, node_id, seq)` and the **latest honoured act wins**; an unforget is

@@ -56,7 +56,7 @@ def _parser_paths():
                     out |= walk(sub, prefix + (name,))
         return out
 
-    return walk(hivemind_ctl.hv().build_parser())
+    return walk(hivemind_ctl.hv().build_parser(plane="control"))
 
 
 def test_every_moved_command_resolves_to_a_real_command():
@@ -64,11 +64,11 @@ def test_every_moved_command_resolves_to_a_real_command():
     leaving them mid-task with nothing correct to type.
 
     An earlier version of this test checked only ROUTING (`_is_control_plane`), never that the library
-    parser accepts the command — so it passed while `MOVED` advertised `owner mint`, which does not
+    parser accepts the command — so it passed while `CONTROL_PLANE` advertised `owner mint`, which does not
     exist. A test that names the right property and does not check it is worse than no test."""
     paths = _parser_paths()
     broken = []
-    for (new, _why) in commandmap.MOVED.values():
+    for (new, _why) in commandmap.CONTROL_PLANE.values():
         lib = tuple(hivemind_ctl._to_library_argv(new.split()))
         if lib not in paths:
             broken.append(f"{new!r} -> {' '.join(lib)!r}")
@@ -155,10 +155,10 @@ def test_the_control_plane_runs_the_store_prologue(tmp_path):
 
 def test_hv_cannot_owner_sign_after_the_split(tmp_path):
     """The inversion of 2a's `test_hv_still_owner_signs_in_this_slice` — the security change, visible on
-    its own. `hv owner init` points at the control plane and acts on nothing; the loaded library has no
+    its own. `hv owner init` is an unknown command and acts on nothing; the loaded library has no
     signer and never imported `ownerkey`."""
     r = _run_hv(tmp_path, "owner", "init")
-    assert r.returncode == 2 and "Run: hive-mind owner init" in r.stderr
+    assert r.returncode == 2 and "invalid choice" in r.stderr and "hive-mind" not in r.stderr
     assert not _keys.key_path(tmp_path, "owner-key").exists()
     import importlib.machinery
     import importlib.util

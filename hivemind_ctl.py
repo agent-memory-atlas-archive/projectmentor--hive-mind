@@ -68,7 +68,7 @@ def install(lib):
 
 # Control-plane argv -> the library argv that implements it. The only entries that differ are the ones
 # the split renames or collapses, and each is named here rather than inferred, so a reader can see
-# exactly what `hive-mind X` runs. Built against commandmap.MOVED, which is the source of truth for what
+# exactly what `hive-mind X` runs. Built against commandmap.CONTROL_PLANE, which is the source of truth for what
 # belongs on this plane at all.
 _RENAMED = {
     ("owner", "revoke"): ("owner", "revoke-escrow"),        # S5: the hyphen goes with the move
@@ -119,14 +119,9 @@ def main(argv=None):
     if not argv:
         print(__doc__.strip().splitlines()[0])
         return 2
-    # A 1.x `hv` alias removed in 2.0 is suggested by its new name: suggesting `hv rebuild` would send the
-    # operator to a second pointer rather than to something that runs. Checked first, because
-    # `doctor --fix wire-agent` would otherwise route here and die in argparse without naming anything.
-    old = commandmap.renamed(argv)
-    if old is not None or not _is_control_plane(argv):
-        suggest = old[1] if old is not None else argv
+    if not _is_control_plane(argv):
         print(f"hive-mind: `{' '.join(argv)}` is not a control-plane command.\n"
-              f"  The agent data plane is `hv`; try `hv {' '.join(suggest)}`.", file=sys.stderr)
+              f"  The agent data plane is `hv`; try `hv {' '.join(argv)}`.", file=sys.stderr)
         return 2
     if argv[0] == "module":
         import hive_modules
@@ -136,7 +131,7 @@ def main(argv=None):
             print(f"hive-mind: {e}", file=sys.stderr)
             return 1
     m = hv()
-    parser = m.build_parser()                     # the library owns every flag definition
+    parser = m.build_parser(plane="control")                     # the library owns every flag definition
     args = parser.parse_args(_to_library_argv(argv))
     try:
         m._unlock_before_writing(args)            # a link verb: a locked key aborts before any write (#167)

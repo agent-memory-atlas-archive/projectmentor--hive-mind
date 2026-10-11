@@ -279,19 +279,36 @@ def _check_link_ends(module, payload):
 
 def _check_entity(ctx, payload):
     """#208 (option 3): a module writes only `x-<its module>:<name>` entities (`entity-prefix-required`), and may
-    update one only if it created it (`not-entity-owner`), the creator being the name's first applied entity entry
-    on this node. The projection decides the same on every node (`_entity_declined`); this is the early, clear
-    refusal that writes nothing."""
+    update one only if it created it (`not-entity-owner`). 3.0 (§4.2): an entity is its creating entry, so a module
+    names the one it updates by `identity_ref`, may not create a second entity of a name it already holds
+    (`entity-name-taken`), and may not carry both fields. An entry with neither is read by name, as 2.x did. The
+    projection decides the same on every node (`_entity_resolution`); this is the early, clear refusal that writes
+    nothing."""
     hv = daemon.hv
     name, module = payload["name"], ctx["module"]
     split = vocabulary.split_module_name(name)
     if split is None or split[0] != module:
         raise _refused(403, "entity-prefix-required", field="name",
                        detail=f"a module's entity is named `{vocabulary.module_prefix(module)}<name>`")
+    form, target = hv._entity_form({"payload": payload})
+    if form == "both":
+        raise _refused(400, "an entity entry carries identity_ref or new_identity, not both", field="identity_ref")
     conn = hv.get_conn()
     try:
-        row = conn.execute("SELECT id FROM entities WHERE name = ?", (name,)).fetchone()
-        creator = hv._index_lookup(conn, "entity", row["id"]) if row else None
+        if form == "update":
+            row = conn.execute("SELECT e.id, e.name, e.ref_node FROM journal_index j JOIN entities e ON e.id = j.local_id "
+                               "WHERE j.kind = 'entity' AND j.node_id = ? AND j.seq = ?", target).fetchone()
+            if row is None:
+                raise _refused(403, "unknown-entity", field="identity_ref", detail="no entity this core holds was created by that entry")
+            if row["name"] != name:
+                raise _refused(400, "identity_ref names an entity of another name", field="identity_ref")
+            creator = [row["ref_node"]]
+        else:
+            row = conn.execute("SELECT id FROM entities WHERE name = ? ORDER BY ref_node, ref_seq LIMIT 1", (name,)).fetchone()
+            if form == "new" and row is not None:
+                raise _refused(403, "entity-name-taken", field="name",
+                               detail="a module's entity names are unique: update it with identity_ref")
+            creator = hv._index_lookup(conn, "entity", row["id"]) if row else None
     finally:
         conn.close()
     if creator is not None and creator[0] != ctx["device_id"]:

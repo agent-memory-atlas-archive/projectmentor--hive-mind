@@ -1,1 +1,0 @@
-- `hive-mind group admit` exits 1, with the message on stderr, when it refuses and writes no act: a purged device, an invalid module name, or no owner key on this device. It used to exit 0, so a caller that trusts the exit code recorded the refusal as done (#350).

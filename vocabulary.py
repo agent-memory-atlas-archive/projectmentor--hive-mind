@@ -145,8 +145,8 @@ CONFIG_KEYS = {
                                                     "reports a flood; 2000 by default. Detection only."),
     "flood_per_minute":          _v(WRITTEN, "2.1", "Entries one device may stamp into a minute before `hv doctor` "
                                                     "reports a flood; 120 by default. Detection only."),
-    "forget_writers":            _v(WRITTEN, "1.25", "Whether an unsigned owner forget dated before genesis "
-                                                     "still counts: `legacy` or `owner`."),
+    "forget_writers":            _v(WRITTEN, "1.25", "Read by 2.x peers only: whether an unsigned owner "
+                                                     "forget dated before genesis counted. 3.0 never counts it."),
     "halflife_fact":             _v(WRITTEN, "1.20", "Half-life, in days, of a fact's confidence and "
                                                      "importance."),
     "halflife_idea":             _v(WRITTEN, "1.20", "Half-life, in days, of an idea's confidence and "
@@ -472,6 +472,9 @@ REF_FIELDS = {
                        "meaning": "A pre-Phase-2 `entity_fact` entry's fact, as a local id; read when `fact_ref` is absent."},
     "supersedes":     {"types": ("decision",), "shape": "local_id", "status": LEGACY,
                        "meaning": "A pre-Phase-2 decision's replaced decision, as a local id; read when `supersedes_ref` is absent."},
+    "identity_ref":   {"types": ("entity",), "shape": "pair", "status": WRITTEN,
+                       "meaning": "3.0: the entity an `entity` entry updates, named by the journal ref of the entry that "
+                                  "created it (an entry that carries neither this nor `new_identity` is read by name)."},
     "escrow_ref":     {"types": ("governance",), "shape": "ref", "status": WRITTEN,
                        "meaning": "The escrow a `revoke-escrow` act tombstones: `all`, a pair or `node_id:seq`."},
     "from":           {"types": ("link",), "shape": "ref", "status": RESERVED,
