@@ -239,6 +239,7 @@ def test_config_set_refuses_an_unknown_value_and_needs_no_decision_when_nothing_
     base = _legacy_hive(tmp_path, run)
     run("remember", "a fact nobody forgot")
     assert "must be 'owner'" in run("config", "set", "forget_writers", "sometimes").stdout
-    assert "no longer honoured" in run("config", "set", "forget_writers", "legacy").stdout      # 3.0: refused with a sentence
+    r = run("config", "set", "forget_writers", "legacy", check=False)      # 3.0: refused with a sentence, exit 1 (#368)
+    assert "no longer honoured" in r.stdout and r.returncode == 1
     assert len(_policy_acts(tmp_path)) == base
     assert "set forget_writers = owner" in run("config", "set", "forget_writers", "owner").stdout

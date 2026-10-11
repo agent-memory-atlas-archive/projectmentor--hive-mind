@@ -180,3 +180,10 @@ def test_join_and_unjoin_take_the_unprefixed_end_by_id(hive):
 def test_the_mcp_tool_passes_entity_through():
     src = (PROJECT / "integrations" / "mcp" / "hive_mcp.py").read_text()
     assert 'entity: str = ""' in src and 'args += ["--entity", entity.strip()]' in src
+
+
+def test_entity_add_attr_not_json_is_a_usage_error_naming_the_json_form(tmp_path):
+    """#368: `--attr k=v` is a usage error (exit 2) that names the JSON form, not a JSONDecodeError traceback."""
+    r = _run(tmp_path, "dev-a", "entity", "add", "--name", "Alice", "--attr", "k=v")
+    assert r.returncode == 2, (r.stdout, r.stderr)
+    assert "Traceback" not in r.stderr and "JSON object" in r.stderr and '{"k": "v"}' in r.stderr

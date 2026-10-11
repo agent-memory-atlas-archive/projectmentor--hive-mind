@@ -1203,7 +1203,7 @@ def _config_set(key, value):
         if val == "legacy":
             print("forget_writers=legacy is no longer honoured (3.0): a forget no owner signed as of its position "
                   "never hides a fact. Nothing was set. `owner` is accepted and records that the hive is migrated.")
-            return
+            sys.exit(1)           # a refusal sets nothing: a caller that trusts the exit code must not read it as done
         if val != "owner":
             print("forget_writers must be 'owner' (only forgets signed by the owner as of their position count)")
             return

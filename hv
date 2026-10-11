@@ -6838,7 +6838,12 @@ def entity(args):
         print(f"entity {action}: --name or --entity is required", file=sys.stderr)
         sys.exit(1)
     if action == "add":
-        attrs = json.loads(args.attr) if args.attr else {}
+        try:
+            attrs = json.loads(args.attr) if args.attr else {}
+        except ValueError:
+            print(f"entity add: --attr must be a JSON object, e.g. --attr '{{\"k\": \"v\"}}' (got {args.attr!r})",
+                  file=sys.stderr)
+            sys.exit(2)
         if not isinstance(attrs, dict):
             print("Error: --attr must be a JSON object", file=sys.stderr)
             sys.exit(2)
