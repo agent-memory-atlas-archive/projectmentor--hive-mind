@@ -1,0 +1,1 @@
+- Document the S2 exec ban's limits in `docs/THREAT_MODEL.md`: what a static name list cannot catch, and that only a writer of signed core can plant it (#384); docs only.
