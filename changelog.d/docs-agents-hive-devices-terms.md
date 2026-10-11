@@ -1,1 +1,0 @@
-- Docs: `README.md` and `docs/WORKING_TOGETHER.md` now say agents, hive and devices instead of helpers, notebook and computers, matching the site (#339).
