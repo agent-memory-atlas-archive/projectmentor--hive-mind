@@ -122,9 +122,29 @@ other checks were run by hand when each landed, and are recorded on its pull req
 - **Extensions talk to the core from outside.** This is the internal layout of the core, not a plugin
   design: a module never imports the core's internals.
 
-## Still one file
+## The parts (3.1)
 
-`hv` stays monolithic for the reasons it always did: it is a signed artifact that runs on the Python 3
+`hv` is being split into ordered **part files**, `hivemind/parts/NN_<name>.py`, that `hv` executes into its own single
+namespace (3.1 PRs 1 and 2; plan in the private design notes, "3.1 plan" section 2). Nothing a user or a node can observe
+changes: one runtime namespace, the same names, the same `__file__`. A part is not a module and cannot be imported.
+
+- **`PARTS` in `hv` is the whole list**: a tuple of package-relative paths. The loader (a `for` over it, marked
+  `# --- part loader (3.1)` in `hv`) reads each file as bytes, compiles it under its own path (so a traceback names
+  the part) and executes it into `hv`'s globals. There is no glob, no configuration path and nothing under
+  `HIVE_HOME`; paths resolve through the real path of `hv`, so an installed `hv` runs the installed parts and a symlinked
+  `hv` works. It is the only `exec` in the tree, and a test says so.
+- **Guards read what runs.** The tests that scan `hv` for a property (S2's import graph, `owner_sig` writes, the seed
+  reader, the sealed-key opener, the control-plane and module-management imports) read `hv` plus each part named in
+  `PARTS`, through `tests/_source.py`; none reads `hv` alone. `tests/test_hv_parts.py` plants a violation in a part and
+  shows each of those guards failing.
+- **The move PRs are gated against their base**: `python3 scripts/common/hv_move_gate.py <base-sha>` joins the parts
+  where the loader stands and requires the result to equal the base `hv` byte for byte. After the move there is
+  nothing to compare with, so what stays is the structural checks (list equals directory, size cap, the namespace is
+  the old one plus `PARTS`, every code object comes from `hv` or a listed part, undefined names via pyflakes).
+
+## Still one namespace
+
+`hv` stays one runtime namespace for the reasons it always did: it is a signed artifact that runs on the Python 3
 standard library alone, is updated by `git pull`, and has one dispatch surface. The split removed the
 largest reason to break it up, owner authority, by moving that out. The seams that remain, in order of
 safety, if the navigation cost ever outweighs that simplicity:

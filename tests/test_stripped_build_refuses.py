@@ -18,6 +18,7 @@ def _stripped(tmp_path, missing):
     for f in PROJECT.iterdir():
         if f.is_file() and (f.suffix == ".py" or f.name == "hv") and f.name != missing:
             shutil.copy2(f, build / f.name)
+    shutil.copytree(PROJECT / "hivemind", build / "hivemind")      # hv's parts (3.1)
     return build
 
 

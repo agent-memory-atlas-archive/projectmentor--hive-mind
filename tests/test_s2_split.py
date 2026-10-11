@@ -33,6 +33,7 @@ sys.path.insert(0, str(PROJECT))
 import commandmap  # noqa: E402
 import hivemind_ctl  # noqa: E402
 import _keys  # noqa: E402  (where a hive's keys are, 2.0 PR 3a)
+from _source import hv_text  # noqa: E402  (the source `hv` executes, 3.1)
 
 # Module names `hv` must never reach: the signer, and the control plane that imports it.
 FORBIDDEN = {"ownerkey", "hivemind_owner", "hivemind_ctl"}
@@ -57,13 +58,19 @@ def _imported_names(src):
     return names
 
 
+def _source_text(path):
+    """What a file executes: for `hv`, the file and each part its loader names (3.1); else the file."""
+    path = Path(path)
+    return hv_text(path.parent) if path.name == "hv" else path.read_text()
+
+
 def import_closure(entry, root):
     """The local modules reachable from `entry` (a path), following imports that resolve to `root/<name>.py`.
     Returns the set of module names reached, `entry` excluded."""
     seen, todo = set(), [Path(entry)]
     while todo:
         path = todo.pop()
-        for name in _imported_names(path.read_text()):
+        for name in _imported_names(_source_text(path)):
             if name in seen:
                 continue
             seen.add(name)
@@ -97,7 +104,7 @@ def owner_sig_writes(src):
 
 def _hv_graph_sources(hv_path, root):
     """`hv` plus every local module it reaches, as (name, source)."""
-    out = [("hv", Path(hv_path).read_text())]
+    out = [("hv", _source_text(hv_path))]
     for name in sorted(import_closure(hv_path, root)):
         f = Path(root) / f"{name}.py"
         if f.exists():
@@ -121,13 +128,19 @@ def test_the_module_api_never_reaches_the_signer_or_the_control_plane():
     assert not owner_sig_writes((PROJECT / "hive_module_api.py").read_text())
 
 
-def _mutant(tmp_path, extra_hv="", helpers=None):
-    """A copy of the project's modules with `extra_hv` appended to `hv` and optional helper modules."""
+def _mutant(tmp_path, extra_hv="", helpers=None, into_part=None):
+    """A copy of the project's modules with `extra_hv` appended to `hv` (or to the part `into_part`) and optional
+    helper modules."""
     root = tmp_path / "mutant"
     root.mkdir()
     for f in PROJECT.glob("*.py"):
         shutil.copy(f, root / f.name)
+    shutil.copytree(PROJECT / "hivemind", root / "hivemind")
     (root / "hv").write_text((PROJECT / "hv").read_text() + "\n" + extra_hv + "\n")
+    if into_part:       # plant it in a part instead: code the loader runs, in a file the old guards never read
+        part = root / "hivemind" / "parts" / f"{into_part}.py"
+        part.write_text(part.read_text() + "\n" + extra_hv + "\n")
+        (root / "hv").write_text((PROJECT / "hv").read_text())
     for name, src in (helpers or {}).items():
         (root / f"{name}.py").write_text(src)
     return root
@@ -181,7 +194,7 @@ def test_the_owner_sig_check_fails_on_an_inline_signer(tmp_path, shape):
     """The mutant the import-graph check cannot catch: signing inline imports nothing."""
     root = _mutant(tmp_path, INLINE_SIGNERS[shape])
     assert import_closure(root / "hv", root).isdisjoint(FORBIDDEN), "the mutant must pass check 1"
-    assert owner_sig_writes((root / "hv").read_text()), f"inline signer ({shape}) not caught"
+    assert owner_sig_writes(_source_text(root / "hv")), f"inline signer ({shape}) not caught"
 
 
 def test_the_owner_sig_check_ignores_reads():
@@ -417,7 +430,7 @@ def _placeholders(src):
 
 
 def test_every_placeholder_is_replaced_on_the_control_plane():
-    hv_placeholders = _placeholders((PROJECT / "hv").read_text())
+    hv_placeholders = _placeholders(hv_text())
     owner_defs = {n.name for n in ast.parse((PROJECT / "hivemind_owner.py").read_text()).body
                   if isinstance(n, ast.FunctionDef)}
     # owner_cmd raises for its moved actions but keeps its data-plane ones; the control plane wraps it.

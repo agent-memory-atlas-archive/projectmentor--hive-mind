@@ -256,6 +256,15 @@ at once). Concretely:
 
 ## Known limitations (in scope to document, NOT yet closed)
 
+- **`hv`'s code is in several files (3.1).** The body of `hv` runs from `hivemind/parts/*.py`, chosen by one list,
+  `PARTS`, in `hv` itself (no glob, no config, nothing under `HIVE_HOME`), read as bytes and run into `hv`'s own
+  namespace. A part has exactly the authority `hv` has, no more. Parts are tracked `.py` files, so the signed source
+  manifest hashes them as it hashes `hv`, and `hv verify` and the update gate see a changed or added part as they see a
+  changed `hv`. A file in `hivemind/parts/` that `PARTS` does not name never runs. Residual: whoever can write the
+  install directory can replace a part as they can replace `hv`, which is the same position as before the split (an
+  operator or admitted-device compromise, accepted in 3.x). Operator rule: the install directory is writable only by the
+  operator. The S2 guards that scan `hv` read the parts too (`tests/_source.py`).
+
 - **Outbound verification is opt-in.** The outbound mode defaults to `permissive`, which flags and never
   withholds a push, so a node is protected from an impostor at a peer's address only after it runs
   `hv sync auth --outbound enforce`; `hv doctor` (`peer-identity`) says when every peer is ready. A peer on

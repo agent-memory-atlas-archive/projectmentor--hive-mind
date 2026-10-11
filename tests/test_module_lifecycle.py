@@ -19,6 +19,7 @@ import _keys  # noqa: E402
 import ed25519  # noqa: E402
 import hive_modules  # noqa: E402
 from test_succession import _run, _gov, _device_id  # noqa: E402
+from _source import hv_text  # noqa: E402
 
 LINUX_ONLY = pytest.mark.skipif(not sys.platform.startswith("linux"), reason="2.1 module management is Linux-only")
 
@@ -298,7 +299,8 @@ def test_the_data_plane_cannot_reach_module_management():
 
     def imports(path):
         got = set()
-        for n in ast.walk(ast.parse(Path(path).read_text())):
+        text = hv_text(Path(path).parent) if Path(path).name == "hv" else Path(path).read_text()
+        for n in ast.walk(ast.parse(text)):
             if isinstance(n, ast.Import):
                 got |= {a.name.split(".")[0] for a in n.names}
             elif isinstance(n, ast.ImportFrom) and n.module:

@@ -25,9 +25,10 @@ import pytest
 
 PROJECT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT))
+from _source import hv_text  # noqa: E402
 
 OWNERKEY_SRC = (PROJECT / "ownerkey.py").read_text()
-HV_SRC = (PROJECT / "hv").read_text()
+HV_SRC = hv_text()          # hv and its parts: the source that executes (3.1)
 
 
 def _loadhv(home, monkeypatch):
