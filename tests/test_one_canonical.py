@@ -129,6 +129,9 @@ def _is_pure_delegation(source):
             and isinstance(call.args[0], ast.Name) and call.args[0].id == a.args[0].arg)
 
 
+_PARTS_DIR = "hivemind/parts/"
+
+
 def violations(files):
     """Every canonicaliser in `files` ({relpath: Path}) other than the one implementation and the one
     delegation, and a missing implementation. An empty list means the tree is as #153 left it."""
@@ -137,7 +140,8 @@ def violations(files):
         text = path.read_text(encoding="utf-8", errors="replace")
         if rel == "hv" or rel.endswith(".py"):
             try:
-                sites += _sites(rel, text)
+                # the parts are `hv` (3.1): one namespace, so a site in a part is a site in hv
+                sites += _sites("hv" if rel.startswith(_PARTS_DIR) else rel, text)
             except SyntaxError as e:
                 problems.append(f"{rel}: does not parse ({e.msg}), so it cannot be scanned")
         elif not rel.endswith(".md") and all(p.search(text) for p in _TEXT_CANONICAL) \
@@ -155,7 +159,9 @@ def violations(files):
     if counts[impl[0]] != 1 or counts[impl[1]] != 1:
         problems.append("merkle._canonical is missing or defined more than once: the one definition "
                         "must live in merkle.py")
-    if "hv" in files and not _is_pure_delegation(files["hv"].read_text(encoding="utf-8")):
+    hv_text = "\n".join(files[r].read_text(encoding="utf-8") for r in sorted(files)
+                        if r == "hv" or r.startswith(_PARTS_DIR))
+    if "hv" in files and not _is_pure_delegation(hv_text):
         problems.append("hv._canonical is not a pure delegation to merkle._canonical")
     return problems
 
@@ -199,7 +205,7 @@ MUTANTS = {
         "merkle.py", lambda s: s + '\ncanon = lambda o: json.dumps(o, sort_keys=True, separators=(",", ":"))\n',
         "merkle.py: <lambda>"),
     "hv's own copy restored (the tree before #153)": (
-        "hv",
+        "hivemind/parts/02_store_journal.py",
         lambda s: s.replace("    return merkle._canonical(obj)\n",
                             '    return json.dumps(obj, sort_keys=True, separators=(",", ":")).encode()\n', 1),
         "hv._canonical is not a pure delegation"),

@@ -124,7 +124,7 @@ other checks were run by hand when each landed, and are recorded on its pull req
 
 ## The parts (3.1)
 
-`hv` is being split into ordered **part files**, `hivemind/parts/NN_<name>.py`, that `hv` executes into its own single
+`hv` is split into ordered **part files**, `hivemind/parts/NN_<name>.py`, that `hv` executes into its own single
 namespace (3.1 PRs 1 and 2; plan in the private design notes, "3.1 plan" section 2). Nothing a user or a node can observe
 changes: one runtime namespace, the same names, the same `__file__`. A part is not a module and cannot be imported.
 
@@ -137,6 +137,19 @@ changes: one runtime namespace, the same names, the same `__file__`. A part is n
   reader, the sealed-key opener, the control-plane and module-management imports) read `hv` plus each part named in
   `PARTS`, through `tests/_source.py`; none reads `hv` alone. `tests/test_hv_parts.py` plants a violation in a part and
   shows each of those guards failing.
+- **The parts, in load order** (the order in `PARTS`; each is under 1,500 lines):
+  `01_identity` (key directories, device and node ids, owner seal/unseal), `02_store_journal` (schema, FTS, journal
+  signing and append, timestamp bounds, quarantine, arrivals, feed), `03_ingest` (`append_foreign_entries`, the
+  first-pull door), `04_projection` (persistence, confidence, governance state, genesis pin, content evidence),
+  `05_trust_validation` (trust velocity, salience, entity verdicts, module policy, payload validators),
+  `06_links_forget` (links, refs, supersede and resolve, forget authorisation), `07_data_commands` (`remember`,
+  `retract`, `search`, `propose`, `decide`), `08_read_api` (`api_*`, `dash`, the probe and fleet-contract block),
+  `09_entity_store_ops` (`entity`, `rebuild`, `stats`, `merkle`, `sync`), `10_agent_loop` (nudge, audit, whoami,
+  digest), `11_release_node` (`version`, `verify`, identity commands, daemon management, `wire`), `12_capsules_keys`
+  (`capsule`, key-file hygiene), `13_doctor_status` (`_doctor_status` and helpers), `14_peers` (peer candidates,
+  address proving), `15_doctor_control_join` (`doctor`, `owner`, `group`, `admit`, `migrate`, `config`, `peers`,
+  `discover`, `join`), `16_telemetry`, `17_cli` (`build_parser`, dispatch). `hv` keeps the header, the loader and the
+  `if __name__ == "__main__":` footer.
 - **The move PRs are gated against their base**: `python3 scripts/common/hv_move_gate.py <base-sha>` joins the parts
   where the loader stands and requires the result to equal the base `hv` byte for byte. After the move there is
   nothing to compare with, so what stays is the structural checks (list equals directory, size cap, the namespace is

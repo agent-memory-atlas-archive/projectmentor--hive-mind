@@ -27,7 +27,7 @@ jobs:
 
   # 3.1 PRs 1 and 2 only (the PRs that move code out of `hv` into hivemind/parts/): `hv` with its loader block
   # replaced by the parts must equal `hv` at the PR's base, byte for byte. Not a permanent check: once the move is
-  # done there is no old `hv` to compare with, and a permanent copy would freeze the parts. PR 2 deletes this job.
+  # done there is no old `hv` to compare with, and a permanent copy would freeze the parts. Kept through PR 2 (it gates PR 2 too); a follow-up removes it.
   hv-move-gate:
     if: github.event_name == 'pull_request' && (startsWith(github.head_ref, 'feat/3.1-pr1-') || startsWith(github.head_ref, 'feat/3.1-pr2-'))
     runs-on: ubuntu-latest
