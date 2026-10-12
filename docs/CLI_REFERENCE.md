@@ -356,6 +356,15 @@ twice), and relinks the skill — leaving your own hooks untouched and taking a
 `peer-address` check finds a peer's device verified at a new address, `--fix` updates
 that one URL in `.peers.json` (see [SYNC_API.md](SYNC_API.md#configuration-peersjson)); that includes a
 peer found by the signed `/hive/info` probe, which never contacted this node.
+**`hv doctor --boot`** *(3.1, #344)* is the boot pass: the `hive-doctor-boot.service` user unit runs it once per boot (after
+`hive-sync.service`, which it `Wants=`). It sets `HIVE_DOCTOR_MODE=boot` for each module's own `doctor`, waits for the
+sync daemon to answer (`HIVE_BOOT_SYNC_WAIT` seconds, default 90, at most 600; after half of it, it restarts the managed
+daemon once), adds the platform checks (**boot-linger**: linger is on; **boot-logon-task** on WSL: the Windows logon
+task `HiveMind-WSL-<distro>` that starts the distro; **boot-platform** on macOS: the launchd agent), runs `--fix`, rechecks,
+and records one fact tagged `boot` per node and boot (`node N booted T; sync ok; peers: …; modules ok; runtimes: …;
+fixed: …; needs operator: …`). Peers are reported, never a fault. The checks only verify linger and the logon task; the
+installer and `hive-mind update` write them. `--dry-run` prints the line and records nothing.
+
 Because the 15-minute `hive-doctor.timer` runs `hv doctor
 --fix`, a node that drifts heals itself with no one re-running the installer. Without
 `--fix`, doctor only reports — it never kills or writes anything, so it stays safe to
@@ -1496,6 +1505,8 @@ hive-mind uninstall [--keep-hive] [--keep-identity] [--yes]
 | `--keep-identity` | Delete the Hive data but preserve only this device's **identity** (its keys) to `~/.config/hive-mind/identity/` — a stable location that survives uninstall. A reinstall then offers to resume the same `device_id`, so the owner's prior **admission still applies (no re-admit)**. Lighter than `--keep-hive`. |
 | `-y`, `--yes` | Skip the `Continue? [y/N]` confirmation prompt and proceed — for unattended or scripted removal. |
 | `-h`, `--help` | Print usage and exit. |
+
+Uninstall also removes the boot-pass unit (`hive-doctor-boot.service`) and, on WSL2, the Windows logon task `HiveMind-WSL-<distro>`.
 
 On the next `hive-mind install`, if a preserved identity is found it offers to **resume** it (so a sterile/fertile device keeps its standing); decline to mint a fresh one. A plain `uninstall` (no flag) is a clean slate — identity is gone and a reinstall mints a new `device_id`.
 

@@ -81,6 +81,29 @@ StandardOutput=journal
 StandardError=journal
 UNIT
 
+  # ── boot pass: `hv doctor --boot` once per boot, after the sync daemon is asked for ───────
+  # The same doctor as the timer (no second code path): it waits, within a bound, for the daemon to answer, checks,
+  # fixes, rechecks and records one `boot` fact. Wants= (not Requires=): a daemon that fails must still be reported.
+  cat > "$unit_dir/hive-doctor-boot.service" << UNIT
+[Unit]
+Description=Hive Mind boot pass (hv doctor --boot)
+After=network.target hive-sync.service
+Wants=hive-sync.service
+
+[Service]
+Type=exec
+WorkingDirectory=$hive_dir
+ExecStart=/usr/bin/python3 $hive_dir/hv doctor --boot
+Environment=HIVE_HOME=$hive_dir
+Environment=HIVE_DOCTOR_MODE=boot
+TimeoutStartSec=600
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
+UNIT
+
   # ── timer: heal shortly after boot, then every 15 min ──────────────────────
   cat > "$unit_dir/hive-doctor.timer" << UNIT
 [Unit]
@@ -98,4 +121,21 @@ UNIT
   systemctl --user daemon-reload
   systemctl --user enable "$svc" --quiet 2>/dev/null || true
   systemctl --user enable --now hive-doctor.timer --quiet 2>/dev/null || true
+  systemctl --user enable hive-doctor-boot.service --quiet 2>/dev/null || true
+  write_wsl_logon_task
+}
+
+# write_wsl_logon_task
+#   WSL2 only: a Windows logon task that starts this distro, so the user units (and the boot pass) run after a reboot
+#   without anyone opening a terminal. Idempotent (/F replaces); a no-op anywhere else, or without schtasks.exe.
+#   The distro and user names go into a command line, so anything but a plain name is refused rather than quoted.
+write_wsl_logon_task() {
+  grep -qi microsoft "${HIVE_PROC_VERSION:-/proc/version}" 2>/dev/null || return 0
+  command -v schtasks.exe >/dev/null 2>&1 || return 0
+  local distro="${WSL_DISTRO_NAME:-}" user
+  user="$(id -un)"
+  case "$distro$user" in *[!A-Za-z0-9._-]*|"") return 0 ;; esac
+  [ -n "$distro" ] && [ -n "$user" ] || return 0
+  schtasks.exe /Create /F /SC ONLOGON /RL LIMITED /TN "HiveMind-WSL-$distro" \
+    /TR "wsl.exe -d $distro -u $user --exec /usr/bin/sleep infinity" >/dev/null 2>&1 || true
 }

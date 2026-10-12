@@ -21,7 +21,14 @@ def doctor_cmd(args):
     if action == "merkle":
         merkle_cmd(args)
         return
-    checks = _doctor_status()
+    boot = getattr(args, "boot", False)
+    boot_waited = None
+    if boot:
+        # The boot pass is `--fix` plus a bounded wait for the sync daemon, the platform checks and one report.
+        os.environ["HIVE_DOCTOR_MODE"] = "boot"          # the module doctor slot reads it
+        args.fix = True
+        boot_waited = _boot_wait_sync(getattr(args, "dry_run", False))
+    checks = _doctor_status() + (_boot_platform_checks() if boot else [])
     fails = [c for c in checks if c["status"] == "fail"]
     warns = [c for c in checks if c["status"] == "warn"]
 
@@ -226,7 +233,171 @@ def doctor_cmd(args):
                 fails = [c for c in fails if c["name"] != "forget-authz"]
                 print(f"\n  forget-authz now: {now['detail'] if now else 'nothing to check'}")
 
+    if boot:
+        _boot_report(checks, boot_waited, getattr(args, "dry_run", False))
     sys.exit(1 if fails else 0)
+
+
+BOOT_SYNC_WAIT = 90                  # seconds doctor --boot waits for the sync daemon to answer (HIVE_BOOT_SYNC_WAIT)
+_BOOT_MARK = ".boot-reported"        # the boot id last reported: a node reports once per boot
+_BOOT_RUNTIMES = ("claude", "grok")
+
+
+def _sync_answers():
+    """Whether the local sync daemon answers on its loopback port (the probe `sync-daemon` makes, without `requests`)."""
+    try:
+        import sync_common
+        port = sync_common.load_peers().get("port", 9876)
+    except Exception:
+        port = 9876
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{int(port)}/sync/merkle-root", timeout=2) as r:
+            return r.status == 200
+    except Exception:
+        return False
+
+
+def _boot_wait_sync(dry):
+    """Wait, within a bound, for the sync daemon before anything checks the modules that depend on it. If it has not
+    answered after half the bound, restart the managed unit once (never on --dry-run) and wait out the rest.
+    Returns the seconds waited, or None when it never answered."""
+    try:
+        bound = max(0, min(int(os.environ.get("HIVE_BOOT_SYNC_WAIT", BOOT_SYNC_WAIT)), 600))
+    except ValueError:
+        bound = BOOT_SYNC_WAIT
+    start, restarted = time.monotonic(), False
+    while True:
+        if _sync_answers():
+            return int(time.monotonic() - start)
+        waited = time.monotonic() - start
+        if waited >= bound:
+            return None
+        if not restarted and not dry and waited >= bound / 2:
+            restarted = True
+            msg = _restart_managed_daemon()
+            print(f"\n--boot: sync daemon silent for {int(waited)}s; {msg or 'no managed hive-sync service found to restart'}")
+        time.sleep(min(2, max(0.0, bound - waited)))
+
+
+def _boot_platform_checks():
+    """Item 1: the platform brings the units up at all. Verify only: the installer and `hive-mind update` write the
+    linger setting and the Windows logon task, and an unattended pass writes nothing outside the hive."""
+    out = []
+    if sys.platform == "darwin":
+        ok = _launchd_hive_sync()[0]
+        out.append({"name": "boot-platform", "status": "ok" if ok else "warn",
+                    "detail": "launchd hive-sync agent present" if ok else
+                              "no launchd hive-sync agent: `hive-mind update` installs it"})
+        return out
+    if os.name == "nt" or os.environ.get("TERMUX_VERSION") or os.path.isdir("/data/data/com.termux"):
+        return out
+    if shutil.which("loginctl"):
+        try:
+            user = _pwd_name()
+            r = subprocess.run(["loginctl", "show-user", user, "--property=Linger"], capture_output=True, text=True,
+                               timeout=10)
+            on = r.returncode == 0 and r.stdout.strip() == "Linger=yes"
+            out.append({"name": "boot-linger", "status": "ok" if on else "warn",
+                        "detail": "user units start at boot (linger on)" if on else
+                                  f"linger is off, so user units wait for a login: `loginctl enable-linger {user}`"})
+        except Exception as e:
+            out.append({"name": "boot-linger", "status": "warn", "detail": f"cannot read linger: {e}"})
+    try:
+        wsl = "microsoft" in Path("/proc/version").read_text().lower()
+    except OSError:
+        wsl = False
+    if wsl and shutil.which("schtasks.exe"):
+        distro = os.environ.get("WSL_DISTRO_NAME", "")
+        task = f"HiveMind-WSL-{distro}"
+        try:
+            ok = bool(re.fullmatch(r"[A-Za-z0-9._-]+", distro)) and subprocess.run(
+                ["schtasks.exe", "/Query", "/TN", task], capture_output=True, timeout=20).returncode == 0
+        except Exception:
+            ok = False
+        out.append({"name": "boot-logon-task", "status": "ok" if ok else "warn",
+                    "detail": f"Windows logon task {task} starts this distro" if ok else
+                              "no Windows logon task starts this distro, so nothing runs after a reboot until a "
+                              "terminal opens: `hive-mind update` installs it"})
+    return out
+
+
+def _pwd_name():
+    import pwd
+    return pwd.getpwuid(os.getuid()).pw_name
+
+
+def _boot_id():
+    try:
+        return Path("/proc/sys/kernel/random/boot_id").read_text().strip() or None
+    except OSError:
+        return None
+
+
+def _boot_time_iso():
+    try:
+        up = float(Path("/proc/uptime").read_text().split()[0])
+        return datetime.fromtimestamp(time.time() - up, timezone.utc).strftime("%Y-%m-%dT%H:%MZ")
+    except (OSError, ValueError, IndexError):
+        return "?"
+
+
+def _runtime_notes():
+    notes = []
+    for name in _BOOT_RUNTIMES:
+        path = shutil.which(name)
+        if not path:
+            notes.append(f"{name} absent")
+            continue
+        try:
+            r = subprocess.run([path, "--version"], capture_output=True, text=True, timeout=10)
+            ver = (r.stdout.strip().splitlines() or ["?"])[0][:40]
+        except Exception:
+            ver = "version unknown"
+        notes.append(f"{name} {ver}")
+    return ", ".join(notes)
+
+
+def _boot_line(before, after, waited):
+    """Pure: the one-line boot report. A check that was not ok before and is ok after was fixed; one that is not ok
+    after needs the operator (peers are reported, never a fault: a phone may simply be off)."""
+    was = {c["name"]: c for c in before}
+    fixed = [n for n, c in was.items() if c["status"] != "ok" and any(a["name"] == n and a["status"] == "ok" for a in after)]
+    needs = [f"{c['name']} ({str(c['detail'])[:80]})" for c in after
+             if c["status"] != "ok" and c["name"] != "peers"]
+    peers = next((c["detail"] for c in after if c["name"] == "peers"), "none checked")
+    mods = [c for c in after if c["name"].startswith("modules:")]
+    bad = [c["name"][8:] for c in mods if c["status"] != "ok"]
+    sync = next((c for c in after if c["name"] == "sync-daemon"), None)
+    sync_s = (f"sync ok (answered after {waited}s)" if waited is not None and sync and sync["status"] == "ok"
+              else "sync DOWN")
+    mod_s = "none installed" if not mods else ("ok" if not bad else "not ok: " + ", ".join(bad))
+    line = (f"node {NODE_ID} booted {_boot_time_iso()}; {sync_s}; peers: {str(peers)[:80]}; modules {mod_s}; "
+            f"runtimes: {_runtime_notes()}; fixed: {', '.join(fixed) or 'none'}; needs operator: {'; '.join(needs) or 'none'}")
+    return line[:900]
+
+
+def _boot_report(before, waited, dry):
+    """Recheck after the fix, then record one `boot`-tagged fact for this node, once per boot."""
+    after = _doctor_status() + _boot_platform_checks()
+    line = _boot_line(before, after, waited)
+    print(f"\n--boot: {line}")
+    if dry:
+        print("  (--dry-run: not recorded)")
+        return
+    bid, mark = _boot_id(), HIVE_HOME / _BOOT_MARK
+    try:
+        if bid and mark.read_text().strip() == bid:
+            print("  (already reported for this boot)")
+            return
+    except OSError:
+        pass
+    import types
+    remember(types.SimpleNamespace(content=line, tags="boot", importance=0.5, source="doctor"))
+    if bid:
+        try:
+            mark.write_text(bid + "\n")
+        except OSError:
+            pass
 
 
 def _heal_genesis_pin(entries, dry):
