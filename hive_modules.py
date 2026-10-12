@@ -1856,6 +1856,8 @@ def cmd_update(lib, args):
         if manifest["name"] != args.name:
             raise ModuleError(f"the repository holds module {manifest['name']!r}, not {args.name!r}")
         _confirm_publisher(manifest, args.publisher, pinned=rec["publisher"])
+        if reads_summary(manifest):                   # the pinned key needs no prompt, but the new read access is shown
+            print(f"module {args.name} {manifest['version']} declares: {reads_summary(manifest)}")
         try:
             before = installed_manifest(lib, args.name).get("config_schema") or {}
             have = _read_config(modules_dir() / args.name / "config")

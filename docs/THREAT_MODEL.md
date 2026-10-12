@@ -469,8 +469,8 @@ at once). Concretely:
   admitted publisher key signs a manifest, so a gap that needs one is an admitted-device residual (accepted for 3.x).
 - **Read routes (3.1) hand an admitted module the hive's view of itself.** `GET /v1/overview`, `tags`, `related`,
   `audit`, `peers`, `verify` and `node` are served only to a module whose signed manifest names the route in `reads`,
-  which the install summary lists; they take no owner-key material, no capsule body and no governance state the feed
-  does not already carry, and `related` and `audit` leave owner-forgotten facts out. Three carry node-local data
+  which the install summary (`module add` and `module update`) lists; they take no owner-key material, no capsule body and no governance state the feed
+  does not already carry, and `related` and `audit` leave owner-forgotten facts out (`tags` and the `overview` counts do not: a module that declares them, which only an admitted device with a publisher-signed manifest can, sees the names and counts of forgotten facts too, an accepted residual). Three carry node-local data
   the feed does not: `overview` (this node's address and role), `peers` (a live probe of each peer, with tailnet
   addresses and join-request labels) and `verify` (the local integrity verdict). `peers` and `node` therefore give a
   declaring module the tailnet map. That is an admitted-device residual, accepted for 3.x: only a device the owner
