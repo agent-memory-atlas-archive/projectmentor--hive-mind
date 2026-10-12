@@ -2587,7 +2587,6 @@ def build_parser():
     i.add_argument("--publisher", help="the publisher key you checked (base64); pins it without a prompt")
     i.add_argument("--principal", help="the operator's principal for the module's device (default: this device's)")
     i.add_argument("--json", action="store_true", help="print one JSON object; never prompts")
-    i.add_argument("--require-healthy", action="store_true", help="exit 4 when the module's doctor row is `fail`")
     _install_flags(i)
     sub.add_parser("list", help="installed modules: version, publisher, signature, service, device, quota use")
     sub.add_parser("reapply", help=argparse.SUPPRESS)           # internal: `hive-mind update` re-renders the units
