@@ -58,7 +58,11 @@ def test_a_failed_update_of_a_compatible_module_warns_and_keeps_it_running(hive,
     assert "was NOT updated" in r.stderr and "pinned" in r.stderr and _state(hive)["demo"]["version"] == "1.0.0"
     _publish(tmp_path / "repo", version="0.9.0")                             # and an older signed version is never installed
     r = refresh(hive)
-    assert "never goes back" in r.stderr and _state(hive)["demo"]["version"] == "1.0.0"
+    assert "only goes forward" in r.stderr and _state(hive)["demo"]["version"] == "1.0.0"
+    for odd in ("1.0.0-rc1", "1.0.0.1", "v2.0.0", "1.0", "0.9.0+9"):         # not orderable, or not newer: never installed
+        _publish(tmp_path / "repo", version=odd)
+        r = refresh(hive)
+        assert "only goes forward" in r.stderr and _state(hive)["demo"]["version"] == "1.0.0", odd
 
 
 @LINUX_ONLY

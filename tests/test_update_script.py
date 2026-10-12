@@ -580,7 +580,8 @@ def test_the_update_re_applies_module_units_and_a_broken_module_only_warns(sandb
     (sb.hive / ".modules.json").write_text(json.dumps({"ghost": {"version": "1", "publisher": "x"}}))
     r = sb.update(HIVE_MODULES_DIR=mods)
     assert r.returncode == 0, r.stdout + r.stderr
-    assert "ghost: units not re-applied" in r.stdout and "Update complete" in r.stdout
+    assert "module ghost is DISABLED" in r.stdout and "no source is recorded" in r.stdout    # named, and said
+    assert "Update complete" in r.stdout
 
 
 # --- the signed `sequence` (a monotonic counter inside verify.json): an old signed tree re-wrapped as a

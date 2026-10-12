@@ -298,8 +298,10 @@ line: the device id stays admitted until the owner runs it. `quota` stays owner-
 files are in place and the daemon is restarted:
 
 1. It clones the module's **recorded source**, runs the same tree check as `update` (signature, digests, `min_core`,
-   known `contract`) and requires the **pinned publisher**. A different signer is refused. A version below the installed
-   one is refused too: an automatic update never goes back. The newest version is the source's default-branch head.
+   known `contract`) and requires the **pinned publisher**. A different signer is refused. A version that is not strictly
+   newer than the installed one (compared as `major[.minor[.patch]]` integers) is refused too, and so is one the two
+   strings cannot be ordered by (a suffix, a leading `v`, a fourth component); the same version string republished is
+   kept. An automatic update only goes forward; `module update` by hand takes any tree the pinned publisher signed. The newest version is the source's default-branch head.
    A manifest without `contract` is compatible with every 3.x core.
 2. A newer compatible version replaces the module in one step, its files and its units together, so the new core's
    unit text never restarts a module that is still on old code (decision h:98d0d79694). Running seat sessions are not

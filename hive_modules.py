@@ -2211,9 +2211,25 @@ def _reapply_names(lib, names):
 # ── `hive-mind update` brings the installed modules along (3.1, #390) ───────────────────────────────
 
 def _version_key(v):
-    """The leading dotted integers of a version string as a tuple, or None when there are none."""
-    m = re.match(r"\d+(\.\d+)*", v if isinstance(v, str) else "")
-    return tuple(int(x) for x in m.group(0).split(".")) if m else None
+    """A version that is only one to three dotted integers (`1`, `1.2`, `1.2.3`), as a tuple; None for anything else
+    (a suffix, a leading non-digit, a fourth component), which cannot be ordered."""
+    if not (isinstance(v, str) and re.fullmatch(r"\d{1,9}(\.\d{1,9}){0,2}", v)):
+        return None
+    parts = tuple(int(x) for x in v.split("."))
+    return parts + (0,) * (3 - len(parts))
+
+
+def _refuse_unless_newer(have, new):
+    """An automatic update installs a strictly newer version, or a republish of the same version string. Anything the
+    two strings cannot be ordered by is refused, so a signed older tree cannot pass as an update."""
+    if have == new:
+        return
+    hk, nk = _version_key(have), _version_key(new)
+    if hk and nk and nk > hk:
+        return
+    why = "older than" if hk and nk and nk < hk else "not provably newer than"
+    raise ModuleError(f"the source offers {new}, {why} the installed {have}: an automatic update only goes forward "
+                      "(`hive-mind module update` takes any tree the pinned publisher signed)")
 
 
 def _installed_compat(lib, name):
@@ -2245,14 +2261,13 @@ def _refresh_one(lib, name, state, check):
     off = is_disabled(rec)
     reason, manifest = None, None
     try:
+        if not isinstance(rec.get("source"), str) or not rec["source"]:
+            raise ModuleError("no source is recorded for it")
         with tempfile.TemporaryDirectory(prefix="hive-module-") as tmp:
             src = Path(tmp) / "src"
             tracked, head = _fetch(rec["source"], src)
             manifest = _candidate(lib, name, rec, src, tracked)
-            have, new = _version_key(rec.get("version")), _version_key(manifest["version"])
-            if have and new and new < have:
-                raise ModuleError(f"the source offers {manifest['version']}, older than the installed {rec['version']}: "
-                                  "an automatic update never goes back")
+            _refuse_unless_newer(rec.get("version"), manifest["version"])
             if not off and head == rec.get("commit") and _installed_signature(lib, name) == "valid":
                 print(f"module {name} {rec['version']} is current")
                 return "current"
