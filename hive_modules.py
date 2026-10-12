@@ -1673,29 +1673,27 @@ def _config_set_verb(lib, args, name, schema, node, path):
     if spec and spec.get("scope", "node") != layer:
         raise ModuleError(f"{key} has scope {spec.get('scope', 'node')}: set it with {SCOPE_FLAG[spec.get('scope', 'node')]}")
     value = _config_value_arg(args, key, spec)
-    secret_key = (bool(spec.get("secret")) if spec else _is_secret_key(key)) or bool(args.stdin or args.file)   # a value given out of band is never echoed
     if spec:
         problem = config_value_problem(spec, value)
         if problem:
             raise ModuleError(f"{key}: {problem}")
     elif len(value) > vocabulary.MODULE_VALUE_MAX:
         raise ModuleError(f"config value is longer than {vocabulary.MODULE_VALUE_MAX} characters")
-    shown = MASK if secret_key else value
     if layer == "node":
         if schema is not None and {r["key"]: r["value"] for r in merged_config(schema, node, {}, {})}.get(key) == value:
-            print(f"{name}: {key} is already {shown}: nothing changed")
+            print(f"{name}: {key} is already set: nothing changed")
             return
         have = dict(node)
         have[key] = value
         _save_config(path, have)
-        print(f"{name}: set {key}={shown}")
+        print(f"{name}: set {key}")
         return
     tag = _device_tag(args.fleet_node) if layer == "fleet-node" else None
     _require_owner(lib)
     if store_fleet(lib, name, key, value, spec, tag):
-        print(f"{name}: set {key}={shown} ({layer})")
+        print(f"{name}: set {key} ({layer})")
     else:
-        print(f"{name}: {key} is already {shown} ({layer}): nothing signed")
+        print(f"{name}: {key} is already set ({layer}): nothing signed")
 
 
 def _config_validate(schema, node, fleet, mine, as_json):

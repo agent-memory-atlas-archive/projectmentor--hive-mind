@@ -685,7 +685,7 @@ def cmd_unlock(lib, argv, out=print):
             print(f"hive-mind: {m!r} is not a valid module name", file=sys.stderr)
             return 2
     if os.environ.get(lib._KEY_PASSPHRASE_ENV) is not None:
-        print(f"hive-mind: ${lib._KEY_PASSPHRASE_ENV} is ignored by `owner unlock` (the environment is readable by "
+        print("hive-mind: $HIVE_OWNER_KEY_PASSPHRASE is ignored by `owner unlock` (the environment is readable by "
               "other processes); type the passphrase at the prompt.", file=sys.stderr)
     path = socket_path(lib.HIVE_HOME)
     check_dir(os.path.dirname(path), create=True)
