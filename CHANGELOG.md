@@ -10,7 +10,7 @@ Git tags are `vMAJOR.MINOR.PATCH`. `vX.Y.0` marks the commit on `main` that comp
 without changing the contract are tagged `vX.Y.1`, `vX.Y.2`, … Dates are when each version was
 introduced (a contract) or tagged (a patch).
 
-## 3.1.0 — unreleased · `v3.1.0`
+## 3.1.0 — 2026-10-13 · `v3.1.0`
 
 - `CONTRACT_VERSION` moves from the body of `hv` into its header, and a permanent test checks that `_update.sh` still reads the contract major from `hv`'s text (3.1 split, PR 0b; no behaviour change).
 - `hv` gains a part loader and its first part, `hivemind/parts/01_identity.py` (key directories, device and node ids, owner seal and unseal): the same code, run into `hv`'s one namespace from the list `PARTS`. The static guards that scan `hv` now read `hv` and its parts (3.1 split, PR 1; no behaviour change).
