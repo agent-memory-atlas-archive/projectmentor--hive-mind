@@ -106,7 +106,7 @@ It runs in `hv doctor` (its results join the `modules:<name>` line; a `fail` mak
 `fail` set exit 1), and from the 15-minute `hive-doctor` timer with `HIVE_DOCTOR_MODE=timer`. It runs only for a module
 whose manifest verifies and is signed by the pinned publisher. The latest results are cached in
 `$HIVE_HOME/.module-doctor/<name>.json` (0600, local, never journaled) with the time they were taken, so a dashboard
-shows them and their age without starting module code. `hv doctor --fix` never runs module code and never treats a
+shows them and their age without starting module code. The fix step of `hv doctor --fix` never runs module code (its check pass does run the doctor, which is how the timer gets `timer` mode) and never treats a
 module's output as an action; `fix_hint` is text. A runtime the manifest declares that is not on the module's PATH is
 a core **warn** (`hive-mind module runtime <name> <program> <dir>`).
 

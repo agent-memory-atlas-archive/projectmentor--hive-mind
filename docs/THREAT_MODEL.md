@@ -264,12 +264,12 @@ at once). Concretely:
   by the publisher key pinned at install, so an unadmitted or unauthenticated party cannot make the core run code that
   the pinned publisher did not sign. Its answer is data: capped, control and bidi characters removed, shown as text,
   cached in `$HIVE_HOME/.module-doctor/<name>.json` (0600, a 0700 directory of the operator's, never through a link or a
-  shared directory), and read back through the same cleaning. `hv doctor --fix` never runs module code and never reads
+  shared directory), and read back through the same cleaning. The fix step of `hv doctor --fix` never runs module code (its check pass does run the doctor, which is how the timer gets `timer` mode) and never reads
   the answer as an action. Accepted residual (admitted device or the operator's own account): module code already runs
   as the operator through its unit and `module run`, so the doctor adds no privilege; a process of the same user can read
   the owner agent socket or the key files whether or not the environment is scrubbed. The operator rule is the existing
   one: pin only publishers you trust, and treat a module's `doctor` as that module's code. A hung doctor delays
-  `hv doctor` by up to 20 s per module, one module after another.
+  `hv doctor` by up to 20 s per module, one module after another (a wall-clock deadline on the read; a child that holds the pipe open or leaves the process group cannot extend it, though one that left the group may outlive the kill).
 - **The owner-unlock agent (3.1, #295).** `hive-mind owner unlock [--for D] [--module m]...` asks for the passphrase once and
   hands the unsealed owner seed to a per-user agent process, which signs only these governance acts: `admit` of a
   **module** device for a module named by `--module`, `revoke` of a module device that same agent session admitted, and

@@ -37,6 +37,7 @@ import json
 import os
 import re
 import shlex
+import select
 import shutil
 import signal
 import stat
@@ -2300,19 +2301,37 @@ def _run_json(argv, files, mod_dir, env):
                                 stderr=subprocess.DEVNULL, start_new_session=True)
     except OSError as e:
         return None, None, f"could not run: {e}"
-    timer = threading.Timer(CHECK_TIMEOUT, lambda: _kill_group(proc))
-    timer.start()
+    deadline, chunks, size, fd = time.monotonic() + CHECK_TIMEOUT, [], 0, proc.stdout.fileno()
+    timed_out = False
     try:
-        out = proc.stdout.read(CHECK_OUTPUT_CAP + 1)
-        if len(out) > CHECK_OUTPUT_CAP:
+        while True:                         # a wall-clock deadline on the read: a child that keeps the pipe open must not extend it
+            left = deadline - time.monotonic()
+            if left <= 0:
+                timed_out = True
+                break
+            if not select.select([fd], [], [], left)[0]:
+                continue
+            chunk = os.read(fd, 65536)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            size += len(chunk)
+            if size > CHECK_OUTPUT_CAP:
+                _kill_group(proc)
+                proc.wait()
+                return None, None, f"printed more than {CHECK_OUTPUT_CAP} bytes"
+        if not timed_out:
+            try:
+                proc.wait(timeout=max(deadline - time.monotonic(), 0.001))
+            except subprocess.TimeoutExpired:
+                timed_out = True
+        if timed_out:
             _kill_group(proc)
-            return None, None, f"printed more than {CHECK_OUTPUT_CAP} bytes"
-        proc.wait()
+            proc.wait()
+            return None, None, f"did not finish in {CHECK_TIMEOUT} seconds"
     finally:
-        timer.cancel()
         proc.stdout.close()
-    if proc.returncode in (-signal.SIGKILL, -signal.SIGTERM):
-        return None, None, f"did not finish in {CHECK_TIMEOUT} seconds"
+    out = b"".join(chunks)
     try:
         return proc.returncode, json.loads(out), None
     except ValueError:
@@ -2320,11 +2339,12 @@ def _run_json(argv, files, mod_dir, env):
 
 
 def _kill_group(proc):
-    if proc.poll() is None:                 # never signal a group whose leader is reaped: the id may be someone else's
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except OSError:
-            pass
+    """Signal the group while its leader is still unreaped (an exited, unreaped leader keeps the group id from being
+    reused). Callers `wait()` only after this."""
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except OSError:
+        pass
 
 
 def check_module(root, core_version, run=False, deny=()):

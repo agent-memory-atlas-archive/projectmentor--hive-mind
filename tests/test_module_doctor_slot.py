@@ -5,8 +5,10 @@ environment holds no owner or identity variable; and `--fix` never runs module c
 
 import json
 import os
+import shutil
 import stat
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -17,7 +19,7 @@ import _planes  # noqa: E402
 import hive_module_doctor  # noqa: E402
 import hive_modules  # noqa: E402
 from test_module_doctor import _doctor, _mod, listener  # noqa: E402,F401
-from test_module_lifecycle import LINUX_ONLY, _add, _publish, hive, units  # noqa: E402,F401
+from test_module_lifecycle import LINUX_ONLY, OTHER_SEED, _add, _publish, hive, units  # noqa: E402,F401
 from test_module_runtimes_launcher import V31, bindir  # noqa: E402,F401
 from test_succession import _run  # noqa: E402
 
@@ -153,6 +155,36 @@ def test_a_manifest_that_does_not_verify_never_runs_module_code(hive, tmp_path, 
     (tmp_path / "modules" / "demo" / "doctor.sh").write_text(f"#!/bin/sh\ntouch '{tmp_path}/ran'\n")
     r, c = _mod(hive)
     assert c["status"] == "fail" and not ran.exists() and not cache(hive).exists()
+
+
+@LINUX_ONLY
+def test_a_tree_validly_signed_by_another_key_never_runs_its_doctor(hive, tmp_path, bindir, listener):
+    script = doctor_script([], extra=f"touch '{tmp_path}/ran'")
+    _add(hive, tmp_path / "repo", publish(tmp_path, script))
+    (tmp_path / "ran").unlink(missing_ok=True)
+    cache(hive).unlink(missing_ok=True)
+    other = publish(tmp_path / "other", script, seed=OTHER_SEED)         # same files, a valid manifest under a key that is not the pin
+    for f in ("module.json", "module.json.sig"):
+        shutil.copy(tmp_path / "other" / "repo" / f, tmp_path / "modules" / "demo" / f)
+    r, c = _mod(hive)
+    assert c["status"] == "fail" and "pinned" in c["detail"] and not (tmp_path / "ran").exists() and not cache(hive).exists()
+
+
+@pytest.mark.parametrize("script", [
+    "sleep 60 &\necho '{\"schema\":1,\"results\":[]}'\n",                          # a background child keeps the pipe open
+    "setsid sleep 60 &\necho '{\"schema\":1,\"results\":[]}'\nsleep 60\n",           # a child that left the process group
+    "setsid sleep 60 &\nsleep 60\n",
+])
+def test_a_child_holding_the_pipe_does_not_extend_the_timeout(tmp_path, monkeypatch, script):
+    mod = tmp_path / "mod"
+    mod.mkdir()
+    (mod / "doc.sh").write_text("#!/bin/sh\n" + script)
+    (mod / "doc.sh").chmod(0o755)
+    monkeypatch.setattr(hive_modules, "CHECK_TIMEOUT", 2)
+    t0 = time.monotonic()
+    rc, obj, why = hive_modules._run_json(["doc.sh"], {"doc.sh": "x"}, mod, {"PATH": "/usr/bin:/bin"})
+    assert time.monotonic() - t0 < 10
+    assert why is None or "did not finish" in why
 
 
 @LINUX_ONLY
