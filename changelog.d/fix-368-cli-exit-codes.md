@@ -1,1 +1,0 @@
-- `hive-mind config set forget_writers legacy` now exits 1 when it refuses (it exited 0), and `hv entity add --attr k=v` (not JSON) is a usage error (exit 2) naming the JSON form instead of a traceback (#368).

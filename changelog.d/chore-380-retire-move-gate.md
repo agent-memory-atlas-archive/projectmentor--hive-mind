@@ -1,1 +1,0 @@
-- The `hv-move-gate` CI job and `scripts/common/hv_move_gate.py` are retired now the 3.1 split is done; docs and comments that cited `hv` line numbers or described `hv` as one file point at `hivemind/parts/` (#380).

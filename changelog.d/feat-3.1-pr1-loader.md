@@ -1,1 +1,0 @@
-- `hv` gains a part loader and its first part, `hivemind/parts/01_identity.py` (key directories, device and node ids, owner seal and unseal): the same code, run into `hv`'s one namespace from the list `PARTS`. The static guards that scan `hv` now read `hv` and its parts (3.1 split, PR 1; no behaviour change).
