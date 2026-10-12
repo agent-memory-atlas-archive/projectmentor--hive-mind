@@ -749,10 +749,22 @@ hive-mind owner pin [--set | --fingerprint FP] [--force]  # show, or pin, the ge
 hive-mind owner restore                              # recover the key from the hive's escrow
 hive-mind owner revoke <node_id:seq|all>             # tombstone an escrowed key so `restore` skips it
 hive-mind owner seal                                 # seal a plaintext owner key at rest under a passphrase
+hive-mind owner unlock [--for 15m] [--module m]...   # ask for the passphrase once; a per-user agent then signs a few module acts
+hive-mind owner lock                                 # end the agent now (it exits and clears its seed page)
+hive-mind owner status                               # whether the agent is unlocked, its expiry, the acts it signed or refused
 hive-mind owner standby <device_id> [--off]          # declare an advisory standby key holder
 hive-mind owner transfer <new_owner_pub>             # immediate handoff to a key the target already holds
 hive-mind owner unnominate <successor_pub>           # withdraw a pending nomination
 ```
+
+**Owner unlock (3.1).** `owner unlock` prompts on the terminal once (`--for` is the idle timeout, 1m to 8h, default 15m; a hard cap of
+12h) and starts an agent that holds the seed in memory only. While unlocked it signs `admit` of a module device for a module
+named with `--module`, `revoke` of a module device it admitted in that session, and `set-config` under `x-<module>:`; `module
+add|remove|quota` and `config set x-<module>:…` then run without a passphrase prompt. Every other owner act still prompts, so
+`transfer`, `rotate`, `group admit` of a voting device and owner-signed links are unchanged. A plain `owner unlock` (no `--module`)
+admits nothing, so `module add` then prompts once, up front. `HIVE_OWNER_KEY_PASSPHRASE` is ignored here. See THREAT_MODEL.md
+for what an unlocked agent exposes and the operator rule.
+
 
 You run `hive-mind owner init` once, on whichever machine you want to hold the owner key.
 It mints a **`hive_id`** (a public identifier that keeps your hive separate from

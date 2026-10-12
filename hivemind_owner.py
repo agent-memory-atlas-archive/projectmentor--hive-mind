@@ -175,10 +175,47 @@ def _stash_owner_key(seed):
         return ownerkey.stash_sealed(OWNER_SEALED_PATH, stash_dir)
     return ownerkey.stash(seed, stash_dir)
 
+def _agent_status():
+    """The unlock agent's `status` if one is running for this hive home AND holds the governance owner's key, else
+    None. A public-key check: it prompts for nothing. Never raises."""
+    try:
+        import owner_agent
+        st = owner_agent.Client(owner_agent.socket_path(HIVE_HOME)).status()
+        owner = _governance_state(merkle.read_all_entries(JOURNAL_DIR)).get("owner_pub")
+        return st if owner and st.get("public_key") == owner else None
+    except Exception:
+        return None
+
+
 def _owner_signer():
-    """The owner's signer if this device holds the owner key, else None. Unlocks like `_owner_seed` (which
-    it wraps); the seed goes no further than the signer, so a caller holds `sign(bytes)` and never the seed."""
+    """The owner's signer if this device holds the owner key, else None. With the seed already unlocked in this
+    process it signs with that. Otherwise, if the unlock agent (`hive-mind owner unlock`) holds the governance owner's
+    key, a `ChainSigner`: the agent first, and on a refusal or an unreachable agent one passphrase prompt and a
+    `FileSigner`, saying why. Else unlocks like `_owner_seed` (which it wraps); the seed goes no further than the
+    signer, so a caller holds `sign(bytes)` and never the seed."""
+    if _UNLOCKED_SEED is None and _owner_key_exists():
+        st = _agent_status()
+        if st is not None:
+            import owner_agent
+            return owner_agent.ChainSigner(owner_agent.Client(owner_agent.socket_path(HIVE_HOME)),
+                                           base64.b64decode(st["public_key"]),
+                                           lambda: _sigseam.from_seed(_owner_seed()))
     return _sigseam.from_seed(_owner_seed())
+
+
+def _owner_gate(acts=()):
+    """The gate of a command that makes only acts the agent can sign (`module add|remove|quota`). Passes WITHOUT a
+    prompt only when the agent is reachable, holds the governance owner's key, and would sign every act in `acts`
+    ((action, arg) pairs, see `owner_agent.gate_ok`) with margin; otherwise it is `_owner_seed()` exactly as before,
+    so the command is either covered by the agent for its whole run or unlocks up front, before it fetches or writes.
+    Returns whether the owner key is usable."""
+    if _UNLOCKED_SEED is None:
+        st = _agent_status()
+        if st is not None:
+            import owner_agent
+            if owner_agent.gate_ok(st, list(acts)):
+                return True
+    return _owner_seed() is not None
 
 
 def _sign_governance_payload(payload, owner_signer):
@@ -1181,6 +1218,9 @@ def _config_set(key, value):
     if vocabulary.split_module_name(key):      # 2.1 M3: a module's fleet-wide config, `x-<module>:<key>`, a string
         if not isinstance(value, str) or len(value) > vocabulary.MODULE_VALUE_MAX:
             print(f"bad value for {key}: a string of at most {vocabulary.MODULE_VALUE_MAX} characters")
+            return
+        if _governance_state(merkle.read_all_entries(JOURNAL_DIR)).get("module_config", {}).get(key) == value:
+            print(f"{key} is already {value!r}: nothing to sign")
             return
         if _append_governance({"action": "set-config", "key": key, "value": value}):
             print(f"set {key} = {value}")
