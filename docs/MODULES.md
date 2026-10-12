@@ -309,6 +309,15 @@ Install it the same way as any other module, with `hive-mind module add hwatch -
 Its fleet keys are `x-hwatch:…`, set by the owner. Its per-node keys are
 `hive-mind module config hwatch …`.
 
+## hdash
+
+**hdash** is the dashboard as a module ([`projectmentor/hive-mind-dash`](https://github.com/projectmentor/hive-mind-dash)),
+extracted unchanged from core in 3.1. It is a `service` module (a loopback listener, config key `port`, default 9896)
+with a `cli` (`hdash dash`), and `reads` `overview`, `tags`, `related`, `audit`, `peers` and `verify`. Its `/api/*`
+calls go to the core's signed `/v1` routes, or, for `status`, `telemetry`, `entities` and a peer's `?node=` view, to the
+sync daemon's loopback `/api/*`. `hv dash` forwards to it in 3.1 and is removed in 4.0; the sync daemon no longer
+serves the page. Install it with `hive-mind module install hdash --from https://github.com/projectmentor/hive-mind-dash`.
+
 ## Planned
 
 These are **not** in 2.3:

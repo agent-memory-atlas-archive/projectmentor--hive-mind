@@ -174,7 +174,7 @@ def build_parser(plane="data"):
     subparsers.add_parser("whoami", help="Show this device's identity + membership status (sterile/fertile/owner)")
     subparsers.add_parser("peers", help="List hive members by device + principal + address + reachability")
 
-    dash_parser = subparsers.add_parser("dash", help="Open the read-only web dashboard (served by the sync daemon)")
+    dash_parser = subparsers.add_parser("dash", help="Open the web dashboard (forwards to the hdash module; removed in 4.0)")
     dash_parser.add_argument("--print", dest="print_only", action="store_true",
                              help="Print the dashboard URL only; do not open a browser")
 

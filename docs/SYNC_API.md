@@ -5,7 +5,7 @@ three things from one port:
 
 - the **sync protocol** peers use to converge their journals (`/sync/*`);
 - **discovery**, so a new device can find and verify a hive before it is admitted (`/hive/info`);
-- the **dashboard** (`hv dash`) and the JSON data it reads (`/api/*`).
+- the JSON data the dashboard reads (`/api/*`). The page itself is the hdash module's since 3.1 (`hv dash` forwards).
 
 Sync wire-protocol version: **3** (the `protocol_version` field; 2 = understands signed read requests,
 3 = signs its `/sync/hello` and `/hive/info` answers, see *Responder signatures*).
@@ -71,7 +71,7 @@ This mode governs who may **read from** this node. What this node requires of a 
 to** it is a separate setting, `hv sync auth --outbound`; see *Responder signatures*.
 
 **What this means for the dashboard.** Open it on a device that runs a HiveMind node:
-`http://127.0.0.1:9876/` (or `hv dash`). That includes an Android phone running HiveMind in Termux.
+`hv dash` (the hdash module, `http://127.0.0.1:9896/`). That includes an Android phone running HiveMind in Termux.
 A browser on a device that is *not* running its own node, pointed at another node's tailnet address,
 is refused with 403. To look at another node, use the dashboard's node picker — your own daemon fetches
 that node's data with a signed request.

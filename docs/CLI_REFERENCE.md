@@ -16,7 +16,7 @@ memory.
 |---|---|
 | `hv audit` | Surface redundant, obsolete, stale or missing facts (used by agent hooks) |
 | `hv config` | Device identity (`identity`); governed parameters are set with `hive-mind config set` (owner) |
-| `hv dash` | Open the read-only web dashboard (served by the sync daemon) |
+| `hv dash` | Open the web dashboard (forwards to the hdash module; removed in 4.0) |
 | `hv decide` | Record a decision |
 | `hv discover` | Find hives on your tailnet |
 | `hv doctor` | Check that your device is healthy; `--fix` self-heals (orphan daemons + Claude Code hooks/skill); subcommands `merkle`, `rebuild`. *(3.1)* For a contract-1 module it also runs the module's own `doctor` (`HIVE_DOCTOR_MODE` in the environment names the caller: `manual` by default, `timer` from the 15-minute timer) |
@@ -1130,22 +1130,19 @@ they remain its internal keys and join columns; they just stop leaking out as na
 
 ### `hv dash` — Open the web dashboard
 
-A read-only dashboard for browsing your hive in a browser. Four tabs: **Overview**
-(counts, convergence, contested, the live audit summary), **Corpus** (facts and
-decisions — search, filter by tag, sort by confidence, importance, utility or recency,
-filter by status: contested, forgotten by the owner, or volatile; paginated), **Hive**
-(peers + health, with live sync status), and **Telemetry** (this node's sessions,
-tokens, and cost over time). It's served by the **sync daemon** itself (no extra
-process) at `http://127.0.0.1:9876/`, and it answers only on the device it runs on:
-open it on any device that runs HiveMind, including an Android phone running it in
-Termux. A browser on a device without its own node, pointed at another node's tailnet
-address, is refused (403) since the July 2026 read-auth fix (PR #42). To see another device's data, pick it
-in the dashboard: your own daemon fetches it with a signed request. Nothing is
-exposed to the public internet.
+*(3.1)* The dashboard is the **hdash module** now ([`projectmentor/hive-mind-dash`](https://github.com/projectmentor/hive-mind-dash)),
+and `hv dash` forwards to it (`hive-mind module run hdash -- dash`). The forwarder is removed in 4.0: use `hdash dash`.
+When hdash is not installed, `hv dash` prints the install line (`hive-mind module install hdash --from …`) and exits 1.
 
-`hv dash` prints the URL and tries to open your browser. On a headless box (or
-Android/Termux, or WSL) where it can't, the printed URL is the point — open it
-yourself.
+The page is the one that shipped in core, unchanged: **Overview** (counts, convergence, contested, the live audit
+summary), **Corpus** (facts and decisions: search, filter by tag, sort, filter by status; paginated), **Hive**
+(peers and health) and **Telemetry**. The module serves it on `http://127.0.0.1:9896/` (config key `port`) and answers
+only on the device it runs on. To see another device's data, pick it in the dashboard: your own daemon fetches it with a
+signed request. The sync daemon no longer serves the page, only the `/api/*` JSON the module reads. Nothing is exposed
+to the public internet.
+
+`hv dash` prints the URL and tries to open your browser. On a headless box (or Android/Termux, or WSL) where it can't,
+the printed URL is the point: open it yourself.
 
 ```
 hv dash [--print]
