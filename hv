@@ -8641,6 +8641,9 @@ _ENV_NAME_DENY = ("PATH", "HOME", "SHELL", "ENV", "BASH_*", "SHELLOPTS", "BASHOP
                   "*PROXY*", "HIVE_*", "PYTHON*", "NODE_OPTIONS", "GIT_*", "SSH_*")
 
 
+_ENV_ENTRY_MAX = 131072                # Linux MAX_ARG_STRLEN: one environment entry
+
+
 def _env_name_ok(name):
     """May `name` be a credential variable handed to a cell's shell? Upper-case identifier, and not one
     the shell, loader, proxy stack or hive itself reads."""
@@ -8661,6 +8664,9 @@ def _child_env(secrets):
     """Environment for a cell's shell: ours, minus the owner-key passphrase, plus the secrets."""
     env = dict(os.environ)
     env.pop("HIVE_OWNER_KEY_PASSPHRASE", None)
+    for k, v in secrets.items():       # reject what exec would refuse, the same way on every platform
+        if "\0" in k or "\0" in v or len(k) + len(v) + 1 > _ENV_ENTRY_MAX:
+            raise ValueError(f"credential {k!r} contains a NUL byte or is larger than {_ENV_ENTRY_MAX} bytes")
     env.update(secrets)
     return env
 
@@ -8742,9 +8748,9 @@ def _wire_tool(cell, env_file=None):
     if not steps:
         print(f"{name}: no steps for platform {plat!r} (and verify not yet passing).")
         return 1
-    env = _child_env({k: secrets[k] for k in requires})
     for step in steps:
         try:
+            env = _child_env({k: secrets[k] for k in requires})
             r = subprocess.run(["bash", "-lc", step], env=env, capture_output=True, text=True)
         except (ValueError, OSError) as e:
             print(f"{name}: step could not run ({plat}): {_redact(str(e), secrets)[:200]} "
@@ -9104,7 +9110,7 @@ def capsule_cmd(args):
                       "owner device, or `hive-mind config set capsule_putters fertile`."); return 1
             if putters == "fertile" and NODE_ID not in gov.get("admitted", set()):
                 print("Only admitted devices may store capsules on this hive."); return 1
-        bad = _env_name_problem([args.name] if getattr(args, "name", None) else [])
+        bad = _env_name_problem([args.name] if action == "put" and getattr(args, "name", None) else [])
         if bad:
             print(bad.replace("credential name(s)", "capsule name(s)")); return 1
         recips, missing, suspect = _recipient_pubkeys(entries, gov)
@@ -9119,7 +9125,7 @@ def capsule_cmd(args):
             print("No recipient device key available — run `hv config identity init` first."); return 1
 
         if action == "rotate":
-            names = [args.name] if getattr(args, "name", None) else [n for n in live if _env_name_ok(n)]
+            names = [args.name] if getattr(args, "name", None) else list(live)
             sc = _my_curve_scalar()
             for nm in names:
                 cur = live.get(nm)

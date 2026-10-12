@@ -49,23 +49,18 @@ def _envf(tmp_path, **kv):
     return str(f)
 
 
-LINUX_ONLY = pytest.mark.skipif(not sys.platform.startswith("linux"), reason="reads /proc and relies on Linux E2BIG limits")
-
-
-@LINUX_ONLY
 def test_secret_is_in_environ_not_in_the_command_line(tmp_path):
     home, out = tmp_path / "h", tmp_path / "out"
     out.mkdir()
     secret = "s3cr3t-value-ABC"
-    r = _cell(tmp_path, "t1", ["MYTOK"],
-              [f"cat /proc/self/environ | tr '\\0' '\\n' > {out}/environ"],
-              {"cmd": f"cat /proc/$$/cmdline | tr '\\0' ' ' > {out}/cmdline; test -f {out}/environ && echo OK # \"{{MYTOK}}\"",
+    r = _cell(tmp_path, "t1", ["MYTOK"], [f"env > {out}/environ"],
+              {"cmd": f"ps -o args= -p $$ > {out}/cmdline; test -s {out}/environ && echo OK # \"{{MYTOK}}\"",
                "expect": "OK"}, home)
     assert r.returncode == 0, r.stderr
     run(home, "wire", "t1", "--env-file", _envf(tmp_path, MYTOK=secret))
-    assert f"MYTOK={secret}" in (out / "environ").read_text()
+    assert f"MYTOK={secret}" in (out / "environ").read_text().splitlines()
     cmdline = (out / "cmdline").read_text()
-    assert secret not in cmdline and "${MYTOK}" in cmdline
+    assert "MYTOK" in cmdline and secret not in cmdline
 
 
 def test_secret_with_shell_syntax_is_inert(tmp_path):
@@ -117,7 +112,6 @@ def test_failing_step_output_is_redacted_and_odd_values_do_not_crash(tmp_path):
     assert "step failed" in r.stdout and "topsecretvalue" not in r.stdout + r.stderr and "***" in r.stdout
 
 
-@LINUX_ONLY
 def test_oversize_credential_is_reported_not_a_traceback(tmp_path):
     home = tmp_path / "h"
     _cell(tmp_path, "t7", ["MYTOK"], ["true"], {"cmd": "false"}, home)
@@ -127,9 +121,11 @@ def test_oversize_credential_is_reported_not_a_traceback(tmp_path):
 
 def test_nul_in_a_credential_is_reported_not_a_traceback(tmp_path, monkeypatch):
     hv = _loadhv(tmp_path / "h", monkeypatch)
-    cell = {"name": "n", "kind": "tool", "requires": ["MYTOK"], "verify": {},
+    cell = {"name": "n", "kind": "tool", "requires": ["MYTOK"], "verify": {"cmd": "true"},
             "spec": {"platforms": {p: {"steps": ["true"]} for p in ("linux", "wsl", "darwin")}}}
-    assert hv._wire_tool(cell, _envf(tmp_path, MYTOK="a\0b")) in (0, 1)
+    assert hv._wire_tool(cell, _envf(tmp_path, MYTOK="a\0b")) == 1       # refused by us, on every platform
+    with pytest.raises(ValueError):
+        hv._child_env({"MYTOK": "a\0b"})
     assert hv._run_verify({"verify": {"cmd": "true"}}, {"MYTOK": "a\0b"}) is False
 
 
