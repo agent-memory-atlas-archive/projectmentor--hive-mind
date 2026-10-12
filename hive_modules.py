@@ -31,6 +31,7 @@ stopped and removed on `remove`. Hooks (M4, PR 8) and the doctor checks (M7, PR 
 
 import argparse
 import base64
+import getpass
 import hashlib
 import json
 import os
@@ -648,6 +649,7 @@ def _stage_for_owner(lib, args, name, root):
         if manifest["name"] != name:
             raise ModuleError(f"the repository holds module {manifest['name']!r}, not {name!r}")
         _confirm_publisher(manifest, args.publisher)
+        install_config(lib, args, manifest, owner=False, enforce=False)     # values are asked for at the install run
         root.mkdir(parents=True, exist_ok=True)
         os.chmod(root, 0o700)
         staging = root / f".{name}.staging"
@@ -703,10 +705,11 @@ def _complete_add(lib, args, name, root, rec):
                           f"`hive-mind module add --abort {name}` and start again")
     if (root / name).exists():
         raise ModuleError(f"module {name!r} is already installed: use `hive-mind module update {name}`")
+    node_vals, _fleet = install_config(lib, args, manifest, owner=False)
     state = load_state(lib)
     renamed = False
     try:
-        _write_config(staging, manifest.get("config", {}))
+        _write_config(staging, {**manifest.get("config", {}), **node_vals})
         os.rename(staging, root / name)
         renamed = True
         note = install_units(lib, name, manifest)
@@ -945,9 +948,7 @@ def _write_config(dest_dir, defaults):
     except (OSError, ValueError):
         pass
     have = have if isinstance(have, dict) else {}
-    merged = {**defaults, **have}
-    path.write_text(json.dumps(merged, indent=1, sort_keys=True) + "\n")
-    os.chmod(path, 0o600)
+    _save_config(path, {**defaults, **have})                 # a 0600 temp file renamed in: never readable by others
 
 
 def _config_path(lib, name):
@@ -979,31 +980,379 @@ def _save_config(path, have):
         raise
 
 
+# ── per-module configuration (3.1, #294 PR 2) ───────────────────────────────────────────────────────
+# A module with a `config_schema` has typed, scoped keys. Values live in three layers: this node's own file
+# (`node`: local, 0600, never journaled, no owner key), the owner-signed `x-<module>:<key>` (`fleet`) and the same
+# under `x-<module>:node.<16hex>.<key>` (`fleet-node`, one device). A key is read from the one layer its scope names,
+# else its schema default. A module without a schema keeps the 2.1/3.0 behaviour: free-form keys in the node file.
+
+MASK = "********"
+_DEVICE_TAG = re.compile(r"(?:k1:)?([0-9a-f]{16})\Z")
+_SEGMENT = re.compile(r"[a-z0-9_-]+\Z")
+_NODE_KEY = re.compile(r"node\.([0-9a-f]{16})\.(.+)\Z")
+SCOPE_FLAG = {"node": "(no flag)", "fleet": "--fleet", "fleet-node": "--fleet-node <device>"}
+PROMPT_TRIES = 3
+
+
+def installed_manifest(lib, name):
+    try:
+        return validate_manifest((modules_dir() / name / MANIFEST).read_bytes(), lib.CONTRACT_VERSION)
+    except (OSError, ModuleError) as e:
+        raise ModuleError(f"{name}'s installed manifest is not usable ({e}): `hive-mind module update {name}`")
+
+
+def schema_entry(schema, key):
+    """(schema key, entry) for a concrete config key, or None: an exact name first, then a `{word}` template whose
+    segments each match one `[a-z0-9_-]+` segment."""
+    if key in schema:
+        return key, schema[key]
+    parts = key.split(".")
+    for pattern in sorted(schema):
+        want = pattern.split(".")
+        if len(want) == len(parts) and all(a == b or (_SEGMENT_WORD.match(a) and _SEGMENT.match(b))
+                                           for a, b in zip(want, parts)):
+            return pattern, schema[pattern]
+    return None
+
+
+def _node_tag(device_id):
+    m = _DEVICE_TAG.match(device_id or "")
+    return m.group(1) if m else None
+
+
+def _device_tag(text):
+    tag = _node_tag(text)
+    if tag is None:
+        raise ModuleError(f"{text!r} is not a device id (k1:<16 hex>, or the 16 hex digits)")
+    return tag
+
+
+def fleet_layers(gov, name, node_id):
+    """(fleet, fleet-node) values for this node: the module's journaled `x-<name>:` keys, split by the
+    `node.<16hex>.` convention (a naming convention over `set-config`; nothing in the journal differs)."""
+    prefix, tag = f"x-{name}:", _node_tag(node_id)
+    fleet, mine = {}, {}
+    for full, value in sorted((gov.get("module_config") or {}).items()):
+        if not full.startswith(prefix):
+            continue
+        local = full[len(prefix):]
+        m = _NODE_KEY.match(local)
+        if m:
+            if m.group(1) == tag:
+                mine[m.group(2)] = value
+        else:
+            fleet[local] = value
+    return fleet, mine
+
+
+def merged_config(schema, node, fleet, mine):
+    """One row per key: {key, value, source, secret, unknown}. A key with a schema entry is read only from the layer
+    its scope names, then its default; with no schema (a 2.1 module) every layer counts, node first."""
+    layers = {"node": node, "fleet-node": mine, "fleet": fleet}
+    keys = {k for k in schema or () if "{" not in k} | set(node) | set(fleet) | set(mine)
+    rows = []
+    for key in sorted(keys):
+        ent = schema_entry(schema, key) if schema is not None else None
+        spec = ent[1] if ent else None
+        allowed = (spec.get("scope", "node"),) if spec else tuple(layers)
+        value = source = None
+        for layer in layers:
+            if layer in allowed and key in layers[layer]:
+                value, source = layers[layer][key], layer
+                break
+        else:
+            if spec and "default" in spec:
+                value, source = spec["default"], "default"
+        rows.append({"key": key, "value": value, "source": source, "secret": bool(spec and spec.get("secret")),
+                     "unknown": schema is not None and spec is None})
+    return rows
+
+
+def config_problems(schema, node, fleet, mine):
+    """(errors, warnings) for the values a module holds against its schema. A message names a key and a rule, never a
+    value, so a secret cannot leak through it."""
+    errors, warnings = [], []
+    for layer, label, values in (("node", "node config", node), ("fleet-node", "fleet-node config", mine),
+                                 ("fleet", "fleet config", fleet)):
+        for key in sorted(values):
+            ent = schema_entry(schema, key)
+            if ent is None:
+                warnings.append(f"{label} {key}: not in the schema (kept, unused)")
+                continue
+            scope = ent[1].get("scope", "node")
+            problem = config_value_problem(ent[1], values[key])
+            if scope != layer:
+                warnings.append(f"{label} {key}: ignored, its scope is {scope}")
+            elif problem:
+                errors.append(f"{label} {key}: {problem}")
+    value = {r["key"]: r["value"] for r in merged_config(schema, node, fleet, mine)}
+    for key, spec in sorted(schema.items()):
+        if spec.get("required_at_install") and "{" not in key and spec.get("scope", "node") != "fleet-node" \
+                and value.get(key) is None:
+            errors.append(f"{key}: required and has no value (scope {spec.get('scope', 'node')})")
+    return errors, warnings
+
+
+def _shown(row):
+    if row["value"] is None:
+        return None
+    return MASK if row["secret"] or row["unknown"] else row["value"]       # a key the schema dropped may have been a secret
+
+
+def _print_rows(rows, as_json):
+    if as_json:
+        print(json.dumps([{"key": r["key"], "value": _shown(r), "source": r["source"], "secret": r["secret"],
+                           "set": r["value"] is not None, **({"unknown": True} if r["unknown"] else {})}
+                          for r in rows], indent=1))
+        return
+    for r in rows:
+        note = ", ".join(x for x in (r["source"] or "unset", "secret" if r["secret"] else "",
+                                     "not in schema" if r["unknown"] else "") if x)
+        print(f"{r['key']}={_shown(r)}  ({note})" if r["value"] is not None else f"{r['key']}  ({note})")
+
+
+def _read_secret_line():
+    line = sys.stdin.readline(vocabulary.MODULE_VALUE_MAX + 2)
+    if len(line.rstrip("\n")) > vocabulary.MODULE_VALUE_MAX:
+        raise ModuleError(f"the value is longer than {vocabulary.MODULE_VALUE_MAX} characters")
+    return line.rstrip("\n")
+
+
+def _prompt(key, spec):
+    label = f"{key}: {spec['description']}"
+    if spec["type"] == "enum":
+        label += f" [{'/'.join(spec['values'])}]"
+    for _ in range(PROMPT_TRIES):
+        raw = getpass.getpass(f"{label} (hidden): ") if spec.get("secret") else input(f"{label}: ")
+        problem = "a value is required" if raw == "" else config_value_problem(spec, raw)
+        if problem is None:
+            return raw
+        print(f"hive-mind module: {key}: {problem}", file=sys.stderr)
+    raise ModuleError(f"no valid value for {key}")
+
+
+def _pairs(args, field):
+    out = {}
+    for item in getattr(args, field, None) or []:
+        key, eq, value = item.partition("=")
+        if not eq or not key:
+            raise ModuleError(f"--{field.replace('_', '-')} wants key=value, not {item!r}")
+        if key in out:
+            raise ModuleError(f"--{field.replace('_', '-')} names {key} twice")
+        out[key] = value
+    return out
+
+
+def install_config(lib, args, manifest, owner, enforce=True, asked=None, have=None):
+    """Settle a module's install-time values from `--set`, `--set-fleet`, `--set-env` and, on a terminal, prompts, before
+    anything is staged, minted or signed. Returns (node values, fleet values). `enforce=False` only checks what was
+    given (the first, staging run on a device without the owner key); `asked` limits the required keys to ask about
+    (an update asks only for keys the new schema added); `have` is this node's current file."""
+    schema = manifest.get("config_schema")
+    sets, fleet_sets, env_sets = _pairs(args, "set"), _pairs(args, "set_fleet"), _pairs(args, "set_env")
+    if schema is None:
+        if sets or fleet_sets or env_sets:
+            raise ModuleError("this module declares no config_schema: --set, --set-fleet and --set-env do not apply "
+                              "(use `hive-mind module config` after the install)")
+        return {}, {}
+    if set(sets) & set(env_sets):
+        raise ModuleError("a key is named by both --set and --set-env")
+    for key, var in env_sets.items():
+        if var not in os.environ:
+            raise ModuleError(f"--set-env {key}={var}: {var} is not set in the environment")
+        sets[key] = os.environ[var]
+    node_vals, fleet_vals = {}, {}
+    for given, want, flag, into in ((sets, "node", "--set", node_vals), (fleet_sets, "fleet", "--set-fleet", fleet_vals)):
+        for key, value in given.items():
+            ent = schema_entry(schema, key) if vocabulary.split_module_name(f"x-{manifest['name']}:{key}") else None
+            if ent is None:
+                raise ModuleError(f"{flag} {key}: not a key in this module's config_schema")
+            spec = ent[1]
+            if spec.get("scope", "node") != want:
+                raise ModuleError(f"{key} has scope {spec.get('scope', 'node')}: install sets it with "
+                                  + {"node": "--set", "fleet": "--set-fleet",
+                                     "fleet-node": "`hive-mind module config --fleet-node` after the install"}[spec.get("scope", "node")])
+            if spec.get("secret") and key not in env_sets:
+                raise ModuleError(f"{key} is a secret: pass it with --set-env {key}=<VARIABLE>, or leave it out to be "
+                                  "asked (a secret on the command line sits in shell history and `ps`)")
+            problem = config_value_problem(spec, value)
+            if problem:
+                raise ModuleError(f"{flag} {key}: {problem}")
+            into[key] = value
+    if fleet_vals and not owner:
+        raise ModuleError("--set-fleet needs the owner key: set fleet values on the owner machine")
+    if enforce:
+        fleet_have = None
+        interactive = sys.stdin is not None and sys.stdin.isatty() and not getattr(args, "non_interactive", False)
+        missing = []
+        for key, spec in sorted(schema.items()):
+            scope = spec.get("scope", "node")
+            if (not spec.get("required_at_install") or (asked is not None and key not in asked) or "default" in spec
+                    or "{" in key or scope == "fleet-node"):
+                continue                  # install asks for one concrete node or fleet value; a template or a device value is set later
+            if scope == "node" and (key in node_vals or key in (have or {})):
+                continue
+            if scope == "fleet":
+                if key in fleet_vals:
+                    continue
+                if fleet_have is None:
+                    fleet_have = fleet_layers(_gov(lib), manifest["name"], lib.NODE_ID)[0]
+                if key in fleet_have or not owner:
+                    continue                  # set already, or only the owner can set it: `config validate` reports it
+            if interactive:
+                (fleet_vals if scope == "fleet" else node_vals)[key] = _prompt(key, spec)
+            else:
+                missing.append(f"{key} ({spec['description']})" + (" [secret: --set-env]" if spec.get("secret") else ""))
+        if missing:
+            raise ModuleError("this module needs these settings before it installs, and no terminal is available to ask: "
+                              + "; ".join(missing) + ". Pass --set key=value (--set-fleet for a fleet key)")
+    if fleet_vals:
+        _require_owner(lib)
+    return node_vals, fleet_vals
+
+
+def store_fleet(lib, name, key, value, spec, tag=None):
+    """Sign one `x-<name>:` value as the owner; `tag` makes it a `fleet-node` key for that device. Nothing is signed
+    when the journal already holds this value."""
+    full = f"x-{name}:" + (f"node.{tag}.{key}" if tag else key)
+    if _gov(lib)["module_config"].get(full) == value:
+        return False
+    if spec and spec.get("identifying"):
+        print(f"note: {key} is marked identifying; a fleet value is journaled and visible to every admitted device "
+              "for good", file=sys.stderr)
+    try:
+        lib._config_set(full, value)
+    except SystemExit:
+        pass
+    if _gov(lib)["module_config"].get(full) != value:
+        raise ModuleError(f"{full} was not stored (the owner key is locked or the entry was refused)")
+    return True
+
+
+def store_fleet_values(lib, name, schema, fleet_vals):
+    try:
+        for key, value in fleet_vals.items():
+            store_fleet(lib, name, key, value, schema_entry(schema, key)[1])
+    except ModuleError as e:
+        raise ModuleError(f"module {name} is installed, but a fleet setting was not stored: {e}. "
+                          f"Set it with `hive-mind module config {name} set <key> <value> --fleet`")
+
+
+def _config_value_arg(args, key, spec):
+    secret = bool(spec and spec.get("secret"))
+    if getattr(args, "stdin", False):
+        if args.value is not None:
+            raise ModuleError("--stdin takes the value from standard input: do not also give it as an argument")
+        return _read_secret_line()
+    if secret:
+        if args.value is not None:
+            raise ModuleError(f"{key} is a secret: it is never taken from the command line (shell history, `ps`). "
+                              "Omit the value to be asked, or pass --stdin")
+        if sys.stdin is None or not sys.stdin.isatty():
+            raise ModuleError(f"{key} is a secret: no terminal to ask on, so pass --stdin")
+        return getpass.getpass(f"{key} (hidden): ")
+    if args.value is None:
+        raise ModuleError("config set needs a value")
+    return args.value
+
+
+def _config_set_verb(lib, args, name, schema, node, path):
+    key = args.key
+    ent = schema_entry(schema, key) if schema is not None else None
+    if schema is not None and ent is None:
+        raise ModuleError(f"{name} has no config key {key!r} in its schema (`hive-mind module config {name} list`)")
+    spec = ent[1] if ent else None
+    if args.fleet and args.fleet_node:
+        raise ModuleError("--fleet and --fleet-node are two layers: give one")
+    layer = "fleet" if args.fleet else "fleet-node" if args.fleet_node else "node"
+    if spec and spec.get("scope", "node") != layer:
+        raise ModuleError(f"{key} has scope {spec.get('scope', 'node')}: set it with {SCOPE_FLAG[spec.get('scope', 'node')]}")
+    value = _config_value_arg(args, key, spec)
+    if spec:
+        problem = config_value_problem(spec, value)
+        if problem:
+            raise ModuleError(f"{key}: {problem}")
+    elif len(value) > vocabulary.MODULE_VALUE_MAX:
+        raise ModuleError(f"config value is longer than {vocabulary.MODULE_VALUE_MAX} characters")
+    shown = MASK if spec and spec.get("secret") else value
+    if layer == "node":
+        if schema is not None and {r["key"]: r["value"] for r in merged_config(schema, node, {}, {})}.get(key) == value:
+            print(f"{name}: {key} is already {shown}: nothing changed")
+            return
+        have = dict(node)
+        have[key] = value
+        _save_config(path, have)
+        print(f"{name}: set {key}={shown}")
+        return
+    tag = _device_tag(args.fleet_node) if layer == "fleet-node" else None
+    _require_owner(lib)
+    if store_fleet(lib, name, key, value, spec, tag):
+        print(f"{name}: set {key}={shown} ({layer})")
+    else:
+        print(f"{name}: {key} is already {shown} ({layer}): nothing signed")
+
+
+def _config_validate(schema, node, fleet, mine, as_json):
+    if schema is None:
+        errors, warnings = [], ["this module declares no config_schema: nothing to validate"]
+    else:
+        errors, warnings = config_problems(schema, node, fleet, mine)
+    if as_json:
+        print(json.dumps({"ok": not errors, "errors": errors, "warnings": warnings}, indent=1))
+    else:
+        for e in errors:
+            print(f"error: {e}")
+        for w in warnings:
+            print(f"warning: {w}")
+        if not errors:
+            print("config ok")
+    return 1 if errors else 0
+
+
 def cmd_config(lib, args):
-    """`module config <name> set|unset|list`: edit the per-node config file (local, never journaled, kept by update).
-    No owner key is needed: it is this node's own file."""
+    """`module config <name> list|get|set|unset|validate`. Node values are this node's own file (local, never
+    journaled, kept by update, no owner key); `--fleet` and `--fleet-node <device>` are owner-signed. With a
+    `config_schema` the key, type, enum, bounds and scope are checked and `list`/`get` show the merged value and its
+    source; secrets are masked everywhere and are never taken from the command line."""
     path = _config_path(lib, args.name)
-    have = _read_config(path)
-    if args.action == "list":
-        for k in sorted(have):
-            print(f"{k}={have[k]}")
+    schema = installed_manifest(lib, args.name).get("config_schema")
+    node = _read_config(path)
+    action = args.action
+    merged = schema is not None or args.merged
+    fleet, mine = fleet_layers(_gov(lib), args.name, lib.NODE_ID) if merged or action == "validate" else ({}, {})
+    if action == "validate":
+        return _config_validate(schema, node, fleet, mine, args.json)
+    if action == "list":
+        if not merged and not args.json:
+            for k in sorted(node):
+                print(f"{k}={node[k]}")
+            return
+        _print_rows(merged_config(schema, node, fleet, mine), args.json)
         return
     if not vocabulary.split_module_name(f"x-{args.name}:{args.key}"):
         raise ModuleError(f"bad config key {args.key!r}: 1 to {vocabulary.MODULE_KEY_MAX} letters, digits, . _ - "
                           "starting with a letter or digit")
-    if args.action == "set":
-        if args.value is None:
-            raise ModuleError("config set needs a value")
-        if len(args.value) > vocabulary.MODULE_VALUE_MAX:
-            raise ModuleError(f"config value is longer than {vocabulary.MODULE_VALUE_MAX} characters")
-        have[args.key] = args.value
-        print(f"{args.name}: set {args.key}={args.value}")
-    else:
-        if args.key not in have:
-            raise ModuleError(f"{args.name} has no config key {args.key!r}")
-        del have[args.key]
-        print(f"{args.name}: unset {args.key}")
+    if action == "get":
+        if schema is not None and schema_entry(schema, args.key) is None:
+            raise ModuleError(f"{args.name} has no config key {args.key!r} in its schema")
+        row = next((r for r in merged_config(schema, node, fleet, mine) if r["key"] == args.key), None)
+        if row is None or row["value"] is None:
+            raise ModuleError(f"{args.name}: {args.key} has no value")
+        if args.json:
+            _print_rows([row], True)
+        else:
+            print(_shown(row))
+        return
+    if action == "set":
+        return _config_set_verb(lib, args, args.name, schema, node, path)
+    if args.fleet or args.fleet_node:
+        raise ModuleError("a fleet value is journaled and cannot be removed; set it to a new value instead")
+    if args.key not in node:
+        raise ModuleError(f"{args.name} has no config key {args.key!r}")
+    have = dict(node)
+    del have[args.key]
     _save_config(path, have)
+    print(f"{args.name}: unset {args.key}")
 
 
 def cmd_add(lib, args):
@@ -1038,6 +1387,7 @@ def cmd_add(lib, args):
         if manifest["name"] != name:
             raise ModuleError(f"the repository holds module {manifest['name']!r}, not {name!r}")
         _confirm_publisher(manifest, args.publisher)
+        node_vals, fleet_vals = install_config(lib, args, manifest, owner=True)
         root.mkdir(parents=True, exist_ok=True)
         os.chmod(root, 0o700)
         staging = root / f".{name}.staging"
@@ -1055,7 +1405,7 @@ def cmd_add(lib, args):
             gov = _gov(lib)
             if gov["modules"].get(device_id) != name or device_id not in gov["admitted"]:
                 raise ModuleError("the owner could not admit the module's device: nothing installed")
-            _write_config(staging, manifest.get("config", {}))
+            _write_config(staging, {**manifest.get("config", {}), **node_vals})
             os.rename(staging, root / name)
             note = install_units(lib, name, manifest)
             state[name] = {"version": manifest["version"], "publisher": manifest["publisher"], "device_id": device_id,
@@ -1066,6 +1416,8 @@ def cmd_add(lib, args):
             shutil.rmtree(staging, ignore_errors=True)
             _undo_add(lib, name, device_id)
             raise
+        if fleet_vals:
+            store_fleet_values(lib, name, manifest["config_schema"], fleet_vals)
     print(f"installed module {name} {manifest['version']} (device {device_id}, principal {principal}); "
           + (f"service {unit_names(name)[0]}" + (" with a timer" if manifest["service"].get("interval") else "")
              if manifest.get("service") else "no service")
@@ -1148,6 +1500,13 @@ def cmd_update(lib, args):
         if manifest["name"] != args.name:
             raise ModuleError(f"the repository holds module {manifest['name']!r}, not {args.name!r}")
         _confirm_publisher(manifest, args.publisher, pinned=rec["publisher"])
+        try:
+            before = installed_manifest(lib, args.name).get("config_schema") or {}
+            have = _read_config(modules_dir() / args.name / "config")
+        except ModuleError:                       # update is the remedy for a broken install: ask for every required key
+            before, have = {}, {}
+        node_vals, fleet_vals = install_config(lib, args, manifest, owner=lib._owner_key_exists(),
+                                               asked=set(manifest.get("config_schema") or {}) - set(before), have=have)
         staging, old = root / f".{args.name}.staging", root / f".{args.name}.old"
         try:
             _stage(src, manifest, staging)
@@ -1157,7 +1516,7 @@ def cmd_update(lib, args):
         live = root / args.name
         swapped = False
         try:
-            _write_config(staging, {**manifest.get("config", {}),
+            _write_config(staging, {**manifest.get("config", {}), **node_vals,
                                     **(json.loads((live / "config").read_text()) if (live / "config").exists() else {})})
             shutil.rmtree(old, ignore_errors=True)
             os.rename(live, old)                  # two renames: a crash between them leaves the old copy at `.old`
@@ -1178,6 +1537,8 @@ def cmd_update(lib, args):
         rec.update(version=manifest["version"], source=source, commit=head,
                    quota=dict(manifest.get("quota") or {}))     # the owner's own limits (owner_quota) are kept
         save_state(lib, state)
+        if fleet_vals:
+            store_fleet_values(lib, args.name, manifest["config_schema"], fleet_vals)
     print(f"updated module {args.name} to {manifest['version']}; its key, device and pinned publisher are unchanged"
           + (f" ({note})" if note else ""))
 
@@ -1474,6 +1835,16 @@ def cmd_check(lib, args):
     return 1 if errors else 0
 
 
+CONFIG_ACTIONS = ("list", "get", "set", "unset", "validate")
+
+
+def _install_flags(p):
+    p.add_argument("--set", action="append", default=[], metavar="KEY=VALUE", help="a node config value of the module's config_schema (repeatable)")
+    p.add_argument("--set-fleet", action="append", default=[], metavar="KEY=VALUE", help="a fleet config value, owner-signed after the install (repeatable)")
+    p.add_argument("--set-env", action="append", default=[], metavar="KEY=VARIABLE", help="a node config value read from an environment variable (for a secret)")
+    p.add_argument("--non-interactive", action="store_true", help="never prompt: a required setting that is not given refuses before anything is installed")
+
+
 def build_parser():
     p = argparse.ArgumentParser(prog="hive-mind module", description="Install and manage modules (Linux, 2.1).")
     sub = p.add_subparsers(dest="verb", required=True)
@@ -1483,23 +1854,31 @@ def build_parser():
     a.add_argument("--abort", action="store_true", help="drop a staged add that is waiting for the owner's admit")
     a.add_argument("--publisher", help="the publisher key you checked (base64); pins it without a prompt")
     a.add_argument("--principal", help="the operator's principal for the module's device (default: this device's)")
+    _install_flags(a)
     r = sub.add_parser("remove", help="revoke the module's device and delete it (its entries stay in the journal)")
     r.add_argument("name")
     u = sub.add_parser("update", help="re-verify and swap atomically; the publisher key must match the pin")
     u.add_argument("name")
     u.add_argument("--from", dest="source", help="a different repository (default: where it came from)")
     u.add_argument("--publisher", help="ignored unless it equals the pinned key")
+    _install_flags(u)
     sub.add_parser("list", help="installed modules: version, publisher, signature, service, device, quota use")
     sub.add_parser("reapply", help=argparse.SUPPRESS)           # internal: `hive-mind update` re-renders the units
     q = sub.add_parser("quota", help="the owner raises or lowers a module's limits")
     q.add_argument("name")
     for k in QUOTA_KEYS:
         q.add_argument(f"--{k.replace('_', '-')}", dest=k, type=int)
-    c = sub.add_parser("config", help="set, unset or list a module's per-node config (local, kept by update)")
+    c = sub.add_parser("config", help="list, get, set, unset or validate a module's config (node values are local and kept "
+                                      "by update; --fleet and --fleet-node are owner-signed)")
     c.add_argument("name")
-    c.add_argument("action", choices=("set", "unset", "list"))
+    c.add_argument("action", choices=CONFIG_ACTIONS)
     c.add_argument("key", nargs="?")
     c.add_argument("value", nargs="?")
+    c.add_argument("--fleet", action="store_true", help="the fleet value: owner-signed, journaled, seen by every admitted device")
+    c.add_argument("--fleet-node", metavar="DEVICE", help="the value for one device (k1:<16 hex>): owner-signed, journaled")
+    c.add_argument("--merged", action="store_true", help="a module without a config_schema: list/get across the layers too")
+    c.add_argument("--json", action="store_true", help="list, get and validate print JSON (a secret is masked)")
+    c.add_argument("--stdin", action="store_true", help="set: read the value from standard input (the way to give a secret in a script)")
     k = sub.add_parser("check", help="check a module directory against the module contract (what `add` would refuse; for publishers and CI)")
     k.add_argument("dir")
     k.add_argument("--run", action="store_true", help="also run its `status` and `doctor` commands in a throwaway directory and check what they print")
@@ -1516,13 +1895,14 @@ def main(lib, argv):
     """Run `hive-mind module <argv>` against the control-plane library `lib`. Returns an exit status."""
     args = build_parser().parse_args(argv)
     if args.verb == "config":
-        extra = args.key if args.action == "list" else args.value if args.action == "unset" else None
-        if extra is not None or (args.action != "list" and args.key is None):
+        takes_key = args.action in ("get", "set", "unset")
+        extra = (args.key if not takes_key else args.value if args.action != "set" else None)
+        if extra is not None or (takes_key and args.key is None):
             print(f"hive-mind module: config {args.action} takes the wrong arguments", file=sys.stderr)
             return 2
     try:
         rc = VERBS[args.verb](lib, args)
-        return rc if args.verb == "check" else 0
+        return (rc or 0) if args.verb in ("check", "config") else 0
     except ModuleError as e:
         print(f"hive-mind module: {e}", file=sys.stderr)
         return 1

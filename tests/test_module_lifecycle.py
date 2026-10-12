@@ -44,7 +44,7 @@ def _publish(repo, name="demo", version="1.0.0", seed=SEED, extra=None, files=No
     m = {"name": name, "version": version, "min_core": "2.0", "publisher": _b64(ed25519.pub_from_seed(seed)),
          "files": {rel: hashlib.sha256(text.encode()).hexdigest() for rel, text in body.items()},
          "hooks": ["stop"], "config": {"poll": "30"}, **manifest_extra}
-    raw = json.dumps(m, indent=1).encode()
+    raw = json.dumps({k: v for k, v in m.items() if v is not None}, indent=1).encode()     # None drops a field
     (repo / "module.json").write_bytes(raw)
     (repo / "module.json.sig").write_text(_b64(ed25519.sign(raw, sign_with or seed)))
     if tamper:
