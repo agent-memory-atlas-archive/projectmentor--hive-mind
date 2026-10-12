@@ -151,10 +151,11 @@ def test_a_module_that_needs_a_newer_core_is_refused(hive, tmp_path):
 
 
 @LINUX_ONLY
-def test_a_2_x_manifest_installs_on_a_3_0_core(hive, tmp_path):
-    """3.0 (plan 5.2): `min_core` is a `>=` compare, so a manifest written for 2.1 still installs on the 3.0 core."""
-    assert "3.0" in _run(hive, "version").stdout
-    pub = _publish(tmp_path / "repo", min_core="2.1")
+@pytest.mark.parametrize("min_core", ["2.1", "3.0"])
+def test_a_2_x_or_3_0_manifest_installs_on_a_3_1_core(hive, tmp_path, min_core):
+    """3.0 (plan 5.2), 3.1: `min_core` is a `>=` compare, so a manifest written for 2.1 or 3.0 still installs on the 3.1 core."""
+    assert "3.1" in _run(hive, "version").stdout
+    pub = _publish(tmp_path / "repo", min_core=min_core)
     r = _add(hive, tmp_path / "repo", pub, check=False)
     assert r.returncode == 0, r.stderr
     assert (tmp_path / "modules" / "demo").exists()

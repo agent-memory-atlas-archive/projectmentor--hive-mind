@@ -164,6 +164,8 @@ NOT_JOURNAL = {
     "type": {
         ("hv", "_agent_hook_reconcile"): "Claude Code hook specs, `{\"type\": \"command\"}`",
         ("hv", "_wire_agent"): "Claude Code hook specs, `{\"type\": \"command\"}`",
+        ("hive_modules.py", "config_value_problem"): "a manifest `config_schema` entry's value type (`string`, `int`, `bool`, `enum`)",
+        ("hive_modules.py", "_check_config_entry"): "a manifest `config_schema` entry's value type (`string`, `int`, `bool`, `enum`)",
     },
     "kind": {
         ("hv", "_wire_one"): "a cell's kind (`agent` or `tool`), which `hv wire` dispatches on",

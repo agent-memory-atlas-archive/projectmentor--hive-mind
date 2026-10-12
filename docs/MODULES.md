@@ -57,6 +57,49 @@ ignored.
 | `quota` | Optional `{per_hour, per_day, entry_bytes, lifetime}`. A manifest may ask for less than the defaults (60 / 500 / 16384 / 50000), never more. Only the owner raises a limit. |
 | `config` | Optional `{key: default string}`, per-node defaults. Keys follow the `x-<name>:<key>` rule; values are at most 4096 characters. |
 
+### Manifest contract 1 *(3.1)*
+
+A manifest that declares `"contract": 1` may use the fields below. A manifest **without** `contract` is a 2.1/3.0
+manifest: it installs exactly as before, and naming any of these fields without `contract` is refused. A node on 3.0 or
+earlier refuses a contract-1 manifest (it names fields that node does not know), so a module that must stay installable
+there keeps a separate tag. The core knows contract `1` and refuses any other value.
+
+| Field | |
+|---|---|
+| `contract` | `1`. Requires `min_core` of `3.1` or newer, and replaces `config` (a manifest with both is refused). |
+| `cli` | `{"name": "<cli>", "command": [argv…]}`. The name is 2 to 32 characters of `a-z`, `0-9`, `-`, starting with a letter, and is not one the core uses (`hv`, `hive-mind`, anything starting `hive-`). The command has `service.command`'s rules. |
+| `runtimes` | Up to 16 distinct program **names** (`claude`, `grok`), never paths: no slash. |
+| `config_schema` | `{key: entry}`, up to 128 keys. A key is a config key name where a whole dot-segment `{word}` stands for any one segment (`seat.{role}.runtime`). An entry has `type` (`string`, `int`, `bool`, `enum`), `description` (required), `scope` (`node` (default), `fleet`, `fleet-node`), and optionally `default` (a string that fits the type), `max` (string length, or int bound), `min` (int), `values` (enum), `required_at_install`, `secret`, `identifying`. A `secret` key is node-scoped. An `identifying` or `secret` key may not ship a `default`: a signed manifest carries no one's user, host, account or repository name. |
+| `status` | argv that prints the status envelope (below) as one JSON object. |
+| `doctor` | argv that prints the module's own doctor answer (below). |
+| `reads` | Distinct names from `overview`, `tags`, `related`, `audit`, `peers`, `verify`, `node`: the read routes the module declares it will use. |
+| `ui` | The module's page for the dashboard: an object of at most 64 KiB, defined by [`ui_block.schema.json`](ui_block.schema.json). Unknown top-level keys are refused; unknown widgets, slots and extra fields inside an item are ignored by the dashboard. |
+
+`status`, `doctor` and `cli.command` are argv lists run without a shell, with `service.command`'s rules: strings, no
+control characters, and a relative first word may not leave the module's directory.
+
+**The status envelope** is `{"schema": 1, "state": "ok"|"degraded"|"down"|"unknown", "version": string,
+"problems": [string], "units": [{"name", "state"}] (optional), "detail": {…} (optional, the module's own)}`, exit 0.
+
+**The doctor answer** is `{"schema": 1, "results": [{"level": "ok"|"warn"|"fail", "check", "message",
+"fix_hint"?}]}` with at most 100 results and 400 characters a string, exit 0 unless a result is `fail`.
+
+*In 3.1 the core validates and signs for all of these fields; the behaviour that acts on each lands one slot at a time
+(config schema, runtimes and the CLI launcher, the doctor runner, the read routes), each documented here when it does.*
+
+#### `hive-mind module check <dir> [--run] [--deny TERM] [--json]`
+
+For publishers and CI. It validates the directory's `module.json` with the code `module add` uses, verifies the
+signature when there is one, checks the file set and digests (the git-tracked files, in a checkout), and lints the
+manifest and shipped files for text that looks like a person, host, account or repository (an email address, a
+`/home/<user>`, an `@handle` outside code files, a `github.com/<org>/<repo>`; `--deny` adds terms). Lint results are
+**warnings**: a publisher aid, not a gate and not a claim that nothing identifying is shipped. With `--run` it also
+runs the module's `status` and `doctor` in a throwaway directory, with a scrubbed environment (`PATH`, a temporary
+`HOME`, `HIVE_MODULE_NAME/DIR/KEY_DIR` and `HIVE_DOCTOR_MODE=manual`; no owner or identity variable), a 20-second
+limit and a 64 KiB output cap, and checks the shapes above. `--run` runs the module's own code as you, which is why it
+is a flag. Exit 0 when there is no error, 1 otherwise. `module add` does not require `check` to have been run: it
+re-validates everything itself.
+
 `module.json.sig` is Ed25519 over the exact bytes of `module.json`, verified under `publisher`.
 `hive-mind module add` copies the listed files into a staging directory and hashes them again
 there: what is installed is what was hashed.
@@ -130,6 +173,7 @@ hive-mind module add --abort <name>
 hive-mind module update <name> [--from <repo>]
 hive-mind module remove <name>
 hive-mind module list
+hive-mind module check <dir> [--run] [--deny TERM] [--json]       # (3.1)
 hive-mind module config <name> set <key> <value> | unset <key> | list
 hive-mind module quota <name> [--per-hour N] [--per-day N] [--entry-bytes N] [--lifetime N]
 ```

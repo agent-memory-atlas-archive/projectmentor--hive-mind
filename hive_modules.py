@@ -36,9 +36,11 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -49,7 +51,12 @@ MANIFEST, SIGNATURE = "module.json", "module.json.sig"
 STATE_FILE = ".modules.json"
 NOT_SUPPORTED = "module management is not supported on this platform yet (2.1 ships on Linux only)"
 HOOK_EVENTS = ("session-start", "user-prompt", "precompact", "sessionend", "notification", "stop")
-MANIFEST_KEYS = {"name", "version", "min_core", "publisher", "files", "service", "hooks", "config", "quota"}
+BASE_KEYS = {"name", "version", "min_core", "publisher", "files", "service", "hooks", "config", "quota"}
+# Manifest contract 1 (3.1): optional, and only under `contract`. A manifest without `contract` is a 2.1/3.0 manifest.
+CONTRACT_KEYS = ("cli", "runtimes", "config_schema", "status", "doctor", "reads", "ui")
+MANIFEST_KEYS = BASE_KEYS | {"contract", *CONTRACT_KEYS}
+CONTRACTS = (1,)                                    # the manifest contracts this core knows
+CONTRACT_MIN_CORE = {1: (3, 1)}                     # the oldest core a manifest of that contract may name in `min_core`
 QUOTA_KEYS = ("per_hour", "per_day", "entry_bytes", "lifetime")
 QUOTA_DEFAULTS = {"per_hour": 60, "per_day": 500, "entry_bytes": 16 * 1024, "lifetime": 50000}
 MAX_FILES, MAX_FILE_BYTES, MAX_MANIFEST_BYTES = 500, 8 * 1024 * 1024, 256 * 1024
@@ -135,7 +142,7 @@ def validate_manifest(raw, core_version):
         raise ModuleError("manifest is too large")
     try:
         m = json.loads(raw)
-    except ValueError as e:
+    except (ValueError, RecursionError) as e:
         raise ModuleError(f"manifest is not JSON: {e}")
     if not isinstance(m, dict):
         raise ModuleError("manifest is not an object")
@@ -196,7 +203,265 @@ def validate_manifest(raw, core_version):
         if not isinstance(v, int) or isinstance(v, bool) or v < 0 or v > QUOTA_DEFAULTS[k]:
             raise ModuleError(f"manifest quota {k}={v!r}: a manifest may ask for less than the default "
                               f"({QUOTA_DEFAULTS[k]}), never more; only the owner raises a limit")
+    _validate_contract(m)
     return m
+
+
+# ── manifest contract 1 (3.1) ───────────────────────────────────────────────────────────────────────
+
+MAX_ARGV, MAX_ARG = 64, 1024
+CLI_NAME = re.compile(r"[a-z][a-z0-9-]{1,31}\Z")
+CLI_RESERVED = frozenset({"hv", "hive-mind", "hive-dispatch", "hive-sync", "hive-doctor", "hive-module", "hive-installer",
+                          "hivemind", "module", "modules"})
+RUNTIME_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
+MAX_RUNTIMES = 16
+READ_ROUTES = ("overview", "tags", "related", "audit", "peers", "verify", "node")
+CONFIG_TYPES, CONFIG_SCOPES = ("string", "int", "bool", "enum"), ("node", "fleet", "fleet-node")
+CONFIG_SPEC_KEYS = {"type", "default", "scope", "description", "max", "min", "values", "required_at_install",
+                    "secret", "identifying"}
+MAX_SCHEMA_KEYS, MAX_DESCRIPTION, MAX_ENUM_VALUES, MAX_ENUM_VALUE = 128, 400, 64, 80
+_SEGMENT_WORD = re.compile(r"\{[a-z][a-z0-9_]{0,31}\}\Z")
+_INT_TEXT = re.compile(r"-?[0-9]{1,18}\Z")
+UI_SCHEMA_FILE = "ui_block.schema.json"
+UI_SCHEMAS = (1,)                                   # the `ui.schema` versions this core knows
+MAX_UI_BYTES = 64 * 1024
+_PLACEHOLDER = re.compile(r"\{([a-z][a-z0-9_]*)\}")
+
+
+def _is_int(v):
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
+def _has_control(text):
+    return any(ord(c) < 0x20 or ord(c) == 0x7f for c in text)
+
+
+def _check_argv(label, cmd):
+    """An argv list with `service.command`'s rules: strings, no control characters, and a relative first word may not
+    leave the module's directory. It is run without a shell."""
+    if (not isinstance(cmd, list) or not cmd or len(cmd) > MAX_ARGV
+            or not all(isinstance(a, str) and a and len(a) <= MAX_ARG for a in cmd)):
+        raise ModuleError(f"manifest {label} needs a list of 1 to {MAX_ARGV} non-empty strings of at most {MAX_ARG} characters")
+    if not cmd[0].startswith("/") and ".." in Path(cmd[0]).parts:
+        raise ModuleError(f"manifest {label} may not leave the module's directory")
+    if any(_has_control(a) for a in cmd):
+        raise ModuleError(f"manifest {label} arguments may not hold control characters")
+
+
+def _config_key_ok(module, key):
+    """A `config_schema` key: a `x-<module>:` local name, where a whole dot-segment `{word}` stands for any one
+    segment (`seat.{role}.runtime`)."""
+    if not isinstance(key, str):
+        return False
+    probe = ".".join("w" if _SEGMENT_WORD.match(seg) else seg for seg in key.split("."))
+    return vocabulary.split_module_name(f"x-{module}:{probe}") is not None
+
+
+def config_value_problem(spec, value):
+    """None when `value` (a string, as the journal and the node file hold it) fits the schema entry `spec`, else why."""
+    if not isinstance(value, str) or len(value) > vocabulary.MODULE_VALUE_MAX or _has_control(value):
+        return "not a string of printable characters within the value limit"
+    kind = spec["type"]
+    if kind == "string":
+        return None if len(value) <= spec.get("max", vocabulary.MODULE_VALUE_MAX) else f"longer than {spec['max']}"
+    if kind == "bool":
+        return None if value in ("true", "false") else "not true or false"
+    if kind == "enum":
+        return None if value in spec["values"] else f"not one of {', '.join(spec['values'])}"
+    if not _INT_TEXT.match(value):
+        return "not an integer"
+    n = int(value)
+    if "min" in spec and n < spec["min"] or "max" in spec and n > spec["max"]:
+        return f"outside {spec.get('min', '-inf')}..{spec.get('max', 'inf')}"
+    return None
+
+
+def _check_config_entry(module, key, spec):
+    where = f"manifest config_schema {key!r}"
+    if not _config_key_ok(module, key):
+        raise ModuleError(f"{where}: not a valid config key name")
+    if not isinstance(spec, dict) or set(spec) - CONFIG_SPEC_KEYS:
+        raise ModuleError(f"{where} is an object that may only name: {', '.join(sorted(CONFIG_SPEC_KEYS))}")
+    kind = spec.get("type")
+    if kind not in CONFIG_TYPES:
+        raise ModuleError(f"{where}: type must be one of {', '.join(CONFIG_TYPES)}")
+    scope = spec.get("scope", "node")
+    if scope not in CONFIG_SCOPES:
+        raise ModuleError(f"{where}: scope must be one of {', '.join(CONFIG_SCOPES)}")
+    desc = spec.get("description")
+    if not isinstance(desc, str) or not desc.strip() or len(desc) > MAX_DESCRIPTION or _has_control(desc):
+        raise ModuleError(f"{where}: description is required (a string of at most {MAX_DESCRIPTION} characters)")
+    for flag in ("required_at_install", "secret", "identifying"):
+        if flag in spec and not isinstance(spec[flag], bool):
+            raise ModuleError(f"{where}: {flag} must be true or false")
+    allowed = {"string": {"max"}, "int": {"min", "max"}, "bool": set(), "enum": {"values"}}[kind]
+    for bound in ("min", "max", "values"):
+        if bound in spec and bound not in allowed:
+            raise ModuleError(f"{where}: {bound} does not apply to type {kind}")
+    if kind == "string" and "max" in spec and not (_is_int(spec["max"]) and 1 <= spec["max"] <= vocabulary.MODULE_VALUE_MAX):
+        raise ModuleError(f"{where}: max must be 1 to {vocabulary.MODULE_VALUE_MAX}")
+    if kind == "int":
+        for bound in ("min", "max"):
+            if bound in spec and not (_is_int(spec[bound]) and abs(spec[bound]) < 10 ** 18):
+                raise ModuleError(f"{where}: {bound} must be an integer")
+        if "min" in spec and "max" in spec and spec["min"] > spec["max"]:
+            raise ModuleError(f"{where}: min is above max")
+    if kind == "enum":
+        vals = spec.get("values")
+        if (not isinstance(vals, list) or not 1 <= len(vals) <= MAX_ENUM_VALUES or len(set(map(str, vals))) != len(vals)
+                or not all(isinstance(v, str) and v and len(v) <= MAX_ENUM_VALUE and not _has_control(v) for v in vals)):
+            raise ModuleError(f"{where}: an enum needs 1 to {MAX_ENUM_VALUES} distinct strings in `values`")
+    if spec.get("secret") and scope != "node":
+        raise ModuleError(f"{where}: a secret key is node-scoped (a fleet value is journaled for every device)")
+    if "default" in spec:
+        if spec.get("identifying") or spec.get("secret"):
+            raise ModuleError(f"{where}: a key marked identifying or secret may not ship a default")
+        problem = config_value_problem(spec, spec["default"])
+        if problem:
+            raise ModuleError(f"{where}: default is {problem}")
+
+
+def _check_ui(m):
+    ui = m["ui"]
+    if not isinstance(ui, dict) or len(json.dumps(ui, ensure_ascii=False).encode()) > MAX_UI_BYTES:
+        raise ModuleError(f"manifest ui must be an object of at most {MAX_UI_BYTES // 1024} KiB")
+    if ui.get("schema") not in UI_SCHEMAS or not _is_int(ui.get("schema")):
+        raise ModuleError(f"manifest ui schema must be one this node knows ({', '.join(map(str, UI_SCHEMAS))})")
+    todo = [ui]
+    while todo:                                             # text is shown as text, but never carries control characters
+        node = todo.pop()
+        for k, v in (node.items() if isinstance(node, dict) else enumerate(node)):
+            if isinstance(k, str) and _has_control(k) or isinstance(v, str) and _has_control(v):
+                raise ModuleError("manifest ui holds a string with control characters")
+            if isinstance(v, (dict, list)):
+                todo.append(v)
+    _schema_check(ui, load_ui_schema(), "manifest ui")
+    for group in ("metrics", "panels", "actions"):
+        ids = [x["id"] for x in ui.get(group, [])]
+        if len(set(ids)) != len(ids):
+            raise ModuleError(f"manifest ui {group} repeat an id")
+    own = f"x-{m['name']}:"
+    for item in (*ui.get("metrics", []), *ui.get("panels", [])):
+        if item.get("from") == "entities" and not str(item.get("prefix", "")).startswith(own):
+            raise ModuleError(f"manifest ui {item['id']!r} reads entities, so it needs a `prefix` starting {own!r}: "
+                              "a module's page shows its own entities")
+    for act in ui.get("actions", []):
+        _check_argv(f"ui action {act['id']!r} command", act["command"])
+        used = {n for a in act["command"] for n in _PLACEHOLDER.findall(a)}
+        params = set(act.get("params", {}))
+        if _PLACEHOLDER.search(act["command"][0]):
+            raise ModuleError(f"manifest ui action {act['id']!r}: the command itself may not be a parameter")
+        if used != params:
+            raise ModuleError(f"manifest ui action {act['id']!r}: the parameters {sorted(params)} and the placeholders "
+                              f"{sorted(used)} in its command must match")
+
+
+def _validate_contract(m):
+    """The contract-1 fields (3.1). A manifest without `contract` is a 2.1/3.0 manifest and may name none of them."""
+    new = [k for k in CONTRACT_KEYS if k in m]
+    if "contract" not in m:
+        if new:
+            raise ModuleError(f"manifest names {', '.join(new)} without `contract`: declare `\"contract\": 1`")
+        return
+    contract = m["contract"]
+    if not _is_int(contract) or contract not in CONTRACTS:
+        raise ModuleError(f"manifest contract {contract!r} is not one this node knows (it knows: {', '.join(map(str, CONTRACTS))})")
+    if "config" in m:
+        raise ModuleError("manifest names both `contract` and `config`: under a contract, `config_schema` replaces `config`")
+    if "min_core" not in m or _core_tuple(m["min_core"]) < CONTRACT_MIN_CORE[contract]:
+        need = ".".join(map(str, CONTRACT_MIN_CORE[contract]))
+        raise ModuleError(f"a contract {contract} manifest needs min_core {need} or newer")
+    cli = m.get("cli")
+    if "cli" in m:
+        if (not isinstance(cli, dict) or set(cli) != {"name", "command"} or not isinstance(cli["name"], str)
+                or not CLI_NAME.match(cli["name"])):
+            raise ModuleError("manifest cli needs exactly a name (a-z, 0-9, -; 2 to 32 characters, starting with a letter) and a command")
+        if cli["name"] in CLI_RESERVED or cli["name"].startswith("hive-"):
+            raise ModuleError(f"manifest cli name {cli['name']!r} is a name the core uses")
+        _check_argv("cli command", cli["command"])
+    for field in ("status", "doctor"):
+        if field in m:
+            _check_argv(field, m[field])
+    if "runtimes" in m:
+        rt = m["runtimes"]
+        if (not isinstance(rt, list) or len(rt) > MAX_RUNTIMES or len(set(map(str, rt))) != len(rt)
+                or not all(isinstance(r, str) and RUNTIME_NAME.match(r) and r not in (".", "..") for r in rt)):
+            raise ModuleError(f"manifest runtimes must be at most {MAX_RUNTIMES} distinct program names (letters, digits, . _ -; "
+                              "no slash: a module names programs, never directories)")
+    if "reads" in m:
+        rd = m["reads"]
+        if not isinstance(rd, list) or len(set(map(str, rd))) != len(rd) or not all(r in READ_ROUTES for r in rd):
+            raise ModuleError(f"manifest reads must be distinct names from: {', '.join(READ_ROUTES)}")
+    if "config_schema" in m:
+        cs = m["config_schema"]
+        if not isinstance(cs, dict) or len(cs) > MAX_SCHEMA_KEYS:
+            raise ModuleError(f"manifest config_schema must be an object of at most {MAX_SCHEMA_KEYS} keys")
+        for key, spec in cs.items():
+            _check_config_entry(m["name"], key, spec)
+    if "ui" in m:
+        _check_ui(m)
+
+
+# A deliberately small JSON Schema subset, enough for docs/ui_block.schema.json (the one definition of the `ui` block)
+# without a dependency. `tests/test_manifest_contract.py` fails if that file uses a keyword this does not implement.
+SCHEMA_KEYWORDS = frozenset({"$schema", "$id", "title", "description", "type", "const", "enum", "properties", "required",
+                             "additionalProperties", "items", "minItems", "maxItems", "minLength", "maxLength", "pattern",
+                             "minimum", "maximum", "minProperties", "maxProperties"})
+_SCHEMA_TYPES = {"object": lambda v: isinstance(v, dict), "array": lambda v: isinstance(v, list),
+                 "string": lambda v: isinstance(v, str), "integer": _is_int, "boolean": lambda v: isinstance(v, bool)}
+_ui_schema_cache = []
+
+
+def ui_schema_path():
+    return Path(__file__).resolve().parent / "docs" / UI_SCHEMA_FILE
+
+
+def load_ui_schema():
+    """The `ui` block's JSON Schema, shipped in the core's own tree. Fails closed if it is not there."""
+    if not _ui_schema_cache:
+        try:
+            _ui_schema_cache.append(json.loads(ui_schema_path().read_text()))
+        except (OSError, ValueError):
+            raise ModuleError(f"this core is missing docs/{UI_SCHEMA_FILE}: cannot check a manifest's ui block")
+    return _ui_schema_cache[0]
+
+
+
+def _schema_check(value, schema, path):
+    t = schema.get("type")
+    if t is not None and not _SCHEMA_TYPES[t](value):
+        raise ModuleError(f"{path} must be of type {t}")
+    if "const" in schema and (value != schema["const"] or type(value) is not type(schema["const"])):
+        raise ModuleError(f"{path} must be {schema['const']!r}")
+    if "enum" in schema and value not in schema["enum"]:
+        raise ModuleError(f"{path} must be one of {', '.join(map(str, schema['enum']))}")
+    if isinstance(value, str):
+        if len(value) < schema.get("minLength", 0) or len(value) > schema.get("maxLength", len(value)):
+            raise ModuleError(f"{path} must be {schema.get('minLength', 0)} to {schema.get('maxLength', 'any')} characters")
+        if "pattern" in schema and not re.fullmatch(schema["pattern"], value):
+            raise ModuleError(f"{path} is not in the form {schema['pattern']}")
+    if _is_int(value) and ("minimum" in schema and value < schema["minimum"] or "maximum" in schema and value > schema["maximum"]):
+        raise ModuleError(f"{path} is out of range")
+    if isinstance(value, list):
+        if len(value) < schema.get("minItems", 0) or len(value) > schema.get("maxItems", len(value)):
+            raise ModuleError(f"{path} must hold {schema.get('minItems', 0)} to {schema.get('maxItems', 'any number of')} items")
+        for i, item in enumerate(value):
+            if "items" in schema:
+                _schema_check(item, schema["items"], f"{path}[{i}]")
+    if isinstance(value, dict):
+        if len(value) < schema.get("minProperties", 0) or len(value) > schema.get("maxProperties", len(value)):
+            raise ModuleError(f"{path} must hold {schema.get('minProperties', 0)} to {schema.get('maxProperties', 'any number of')} fields")
+        for req in schema.get("required", ()):
+            if req not in value:
+                raise ModuleError(f"{path} needs {req!r}")
+        props, extra = schema.get("properties", {}), schema.get("additionalProperties", True)
+        for k, v in value.items():
+            if k in props:
+                _schema_check(v, props[k], f"{path}.{k}")
+            elif extra is False:
+                raise ModuleError(f"{path} names {k!r}, which this node does not know")
+            elif isinstance(extra, dict):
+                _schema_check(v, extra, f"{path}.{k}")
 
 
 def _sha256_file(path):
@@ -224,6 +489,13 @@ def check_tree(root, core_version, tracked=None, ignore=()):
     m = validate_manifest(raw, core_version)
     if not ed25519.verify(raw, sig, base64.b64decode(m["publisher"])):
         raise ModuleError("the manifest signature is not valid under its publisher key: refusing")
+    _verify_files(root, m, tracked, ignore)
+    return m
+
+
+def _verify_files(root, m, tracked=None, ignore=()):
+    """The tree at `root` holds exactly the manifest's files (plus the manifest, its signature and `ignore`), each a
+    regular file under the size cap with the listed digest. Raises ModuleError."""
     present = set(tracked) if tracked is not None else {
         str(p.relative_to(root)) for p in root.rglob("*") if p.is_file() or p.is_symlink()}
     extra = {p for p in present if p not in m["files"] and p not in (MANIFEST, SIGNATURE, *ignore)}
@@ -240,7 +512,6 @@ def check_tree(root, core_version, tracked=None, ignore=()):
             raise ModuleError(f"{rel!r} is over {MAX_FILE_BYTES} bytes")
         if _sha256_file(p) != digest:
             raise ModuleError(f"{rel!r} does not match its manifest digest: refusing")
-    return m
 
 
 def _fetch(repo, dest):
@@ -252,7 +523,7 @@ def _fetch(repo, dest):
     try:
         subprocess.run(["git", "clone", "--quiet", "--depth", "1", "--", repo, str(dest)], env=env,
                        check=True, capture_output=True, text=True, timeout=300)
-        ls = subprocess.run(["git", "-C", str(dest), "ls-files", "-z"], check=True, capture_output=True, timeout=30)
+        ls = subprocess.run(["git", "-c", "core.fsmonitor=false", "-C", str(dest), "ls-files", "-z"], check=True, capture_output=True, timeout=30)
         head = subprocess.run(["git", "-C", str(dest), "rev-parse", "HEAD"], check=True, capture_output=True,
                               text=True, timeout=30).stdout.strip()
     except subprocess.CalledProcessError as e:
@@ -987,6 +1258,214 @@ def cmd_reapply(lib, args):
             print(f"hive-mind module: warning: {name}: {note}", file=sys.stderr)
 
 
+# ── `module check`: the publisher's conformance run ─────────────────────────────────────────────────
+
+CHECK_TIMEOUT, CHECK_OUTPUT_CAP = 20, 64 * 1024
+STATUS_STATES = ("ok", "degraded", "down", "unknown")
+DOCTOR_LEVELS = ("ok", "warn", "fail")
+_TEXT_LIMIT = 1024 * 1024
+_CODE_SUFFIXES = {".py", ".sh", ".js", ".ts", ".rb", ".pl", ".rs", ".go", ".c", ".h", ".java"}
+_LINTS = (
+    ("an email address", re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+\.[A-Za-z0-9.-]+[A-Za-z]"), False),
+    ("a home directory", re.compile(r"/(?:home|Users)/(?![<{$%]|user\b|you\b|name\b|username\b)[A-Za-z0-9._-]+"), False),
+    ("an @-handle", re.compile(r"(?<![\w@.])@[A-Za-z0-9][A-Za-z0-9-]{1,38}\b(?!\.[a-z])"), True),
+    ("a repository", re.compile(r"github\.com[/:](?![<{$%])[A-Za-z0-9._-]+/[A-Za-z0-9._-]+"), False),
+)
+
+
+def status_problems(obj):
+    """Why `obj` is not the fixed `status` envelope, as a list of lines (empty when it is)."""
+    if not isinstance(obj, dict):
+        return ["status did not print a JSON object"]
+    out = []
+    if obj.get("schema") != 1 or not _is_int(obj.get("schema")):
+        out.append("status `schema` must be 1")
+    if obj.get("state") not in STATUS_STATES:
+        out.append(f"status `state` must be one of {', '.join(STATUS_STATES)}")
+    if not isinstance(obj.get("version"), str):
+        out.append("status `version` must be a string")
+    if not isinstance(obj.get("problems"), list) or not all(isinstance(p, str) for p in obj["problems"]):
+        out.append("status `problems` must be a list of strings")
+    units = obj.get("units", [])
+    if not isinstance(units, list) or not all(isinstance(u, dict) and isinstance(u.get("name"), str)
+                                              and isinstance(u.get("state"), str) for u in units):
+        out.append("status `units` must be a list of {name, state}")
+    if not isinstance(obj.get("detail", {}), dict):
+        out.append("status `detail` must be an object")
+    return out
+
+
+def doctor_problems(obj, returncode):
+    """Why `obj` and the exit code are not a conforming `doctor` answer (empty when they are)."""
+    if not isinstance(obj, dict):
+        return ["doctor did not print a JSON object"]
+    out = []
+    if obj.get("schema") != 1 or not _is_int(obj.get("schema")):
+        out.append("doctor `schema` must be 1")
+    results = obj.get("results")
+    if not isinstance(results, list) or len(results) > 100:
+        return out + ["doctor `results` must be a list of at most 100 results"]
+    failed = False
+    for i, r in enumerate(results):
+        if not (isinstance(r, dict) and r.get("level") in DOCTOR_LEVELS and isinstance(r.get("check"), str)
+                and isinstance(r.get("message"), str) and isinstance(r.get("fix_hint", ""), str)
+                and set(r) <= {"level", "check", "message", "fix_hint"}
+                and all(len(v) <= 400 for v in r.values())):
+            out.append(f"doctor result {i} must be {{level: ok|warn|fail, check, message, fix_hint?}} with strings of at most 400 characters")
+        else:
+            failed = failed or r["level"] == "fail"
+    if (returncode != 0) != failed:
+        out.append("doctor must exit 0 unless a result is `fail`" if returncode else "doctor reported a `fail` but exited 0")
+    return out
+
+
+def lint_identifying(root, manifest, deny=()):
+    """Warnings (not a gate, not a claim): text in the manifest or a shipped file that looks like it names a person,
+    host, account or repository. A placeholder (`<user>`, `{org}`, `$HOME`) is not flagged."""
+    found = []
+    deny = [d.lower() for d in deny if d]
+    for rel in [MANIFEST, *sorted(manifest["files"])]:
+        path = root / rel
+        try:
+            if path.stat().st_size > _TEXT_LIMIT:
+                continue
+            text = path.read_bytes().decode("utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for what, rx, skip_code in _LINTS:
+            if skip_code and path.suffix in _CODE_SUFFIXES:
+                continue
+            for hit in sorted({m.group(0) for m in rx.finditer(text)})[:3]:
+                found.append(f"{rel}: looks like {what}: {hit}")
+        low = text.lower()
+        found += [f"{rel}: holds the denied term {d!r}" for d in deny if d in low]
+    return found[:50]
+
+
+def _run_json(argv, files, mod_dir, env):
+    """Run one manifest argv in the throwaway module dir; (returncode, parsed JSON or None, problem or None)."""
+    first = argv[0]
+    if first.startswith("/"):
+        cmd = list(argv)
+    elif "/" in first or first in files:
+        cmd = [str(mod_dir / first), *argv[1:]]
+    else:
+        found = shutil.which(first, path=env["PATH"])
+        if not found:
+            return None, None, f"{first!r} is not on PATH"
+        cmd = [found, *argv[1:]]
+    try:
+        proc = subprocess.Popen(cmd, cwd=str(mod_dir), env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                stderr=subprocess.DEVNULL, start_new_session=True)
+    except OSError as e:
+        return None, None, f"could not run: {e}"
+    timer = threading.Timer(CHECK_TIMEOUT, lambda: _kill_group(proc))
+    timer.start()
+    try:
+        out = proc.stdout.read(CHECK_OUTPUT_CAP + 1)
+        if len(out) > CHECK_OUTPUT_CAP:
+            _kill_group(proc)
+            return None, None, f"printed more than {CHECK_OUTPUT_CAP} bytes"
+        proc.wait()
+    finally:
+        timer.cancel()
+        proc.stdout.close()
+    if proc.returncode in (-signal.SIGKILL, -signal.SIGTERM):
+        return None, None, f"did not finish in {CHECK_TIMEOUT} seconds"
+    try:
+        return proc.returncode, json.loads(out), None
+    except ValueError:
+        return proc.returncode, None, "did not print JSON"
+
+
+def _kill_group(proc):
+    if proc.poll() is None:                 # never signal a group whose leader is reaped: the id may be someone else's
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except OSError:
+            pass
+
+
+def check_module(root, core_version, run=False, deny=()):
+    """Everything `module check` reports: (errors, warnings). Errors are what `install` would refuse or what a
+    contract-1 module must answer; warnings are the publisher's to read. Validates through `validate_manifest`, the
+    code `install` uses, and runs nothing unless `run`."""
+    root = Path(root)
+    errors, warnings = [], []
+    try:
+        raw = (root / MANIFEST).read_bytes()
+    except OSError:
+        return [f"no {MANIFEST} in {root}"], warnings
+    try:
+        m = validate_manifest(raw, core_version)
+    except ModuleError as e:
+        return [str(e)], warnings
+    if (root / SIGNATURE).exists():
+        try:
+            sig = base64.b64decode("".join((root / SIGNATURE).read_text().split()), validate=True)
+            if not ed25519.verify(raw, sig, base64.b64decode(m["publisher"])):
+                errors.append("the manifest signature is not valid under its publisher key")
+        except Exception:
+            errors.append(f"{SIGNATURE} is not a valid signature file")
+    else:
+        warnings.append(f"no {SIGNATURE}: unsigned, so `module add` would refuse it")
+    tracked = None
+    if (root / ".git").exists():
+        try:
+            ls = subprocess.run(["git", "-c", "core.fsmonitor=false", "-C", str(root), "ls-files", "-z"],
+                                check=True, capture_output=True, timeout=30)
+            tracked = [n.decode() for n in ls.stdout.split(b"\x00") if n]
+        except (OSError, subprocess.SubprocessError):
+            warnings.append("could not list the git-tracked files; checked every file on disk")
+    try:
+        _verify_files(root, m, tracked, ignore=("config",))
+    except ModuleError as e:
+        errors.append(str(e))
+    if "contract" not in m:
+        warnings.append("no `contract`: a 3.0-shaped manifest, which installs with none of the 3.1 slots")
+    else:
+        for field in ("status", "doctor"):
+            if run and field not in m:
+                warnings.append(f"no `{field}` command: nothing to run for it")
+        if "doctor" not in m:
+            warnings.append("no `doctor`: every contract-1 module should provide its own")
+    warnings += lint_identifying(root, m, deny)
+    if run and not errors and "contract" in m:
+        with tempfile.TemporaryDirectory(prefix="hive-module-check-") as tmp:
+            tmp = Path(tmp)
+            mod_dir, keys, home = tmp / "module", tmp / "keys", tmp / "home"
+            for d in (keys, home):
+                d.mkdir(mode=0o700)
+            for rel in [*m["files"], MANIFEST, SIGNATURE]:
+                if (root / rel).is_file():
+                    (mod_dir / rel).parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(root / rel, mod_dir / rel)
+                    os.chmod(mod_dir / rel, 0o755 if os.access(root / rel, os.X_OK) else 0o644)
+            env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(home), "LANG": "C.UTF-8",
+                   "HIVE_MODULE_NAME": m["name"], "HIVE_MODULE_DIR": str(mod_dir), "HIVE_MODULE_KEY_DIR": str(keys),
+                   "HIVE_DOCTOR_MODE": "manual"}
+            for field, judge in (("status", lambda rc, obj: ([] if rc == 0 else [f"status exited {rc}, not 0"]) + status_problems(obj)),
+                                 ("doctor", lambda rc, obj: doctor_problems(obj, rc))):
+                if field not in m:
+                    continue
+                rc, obj, why = _run_json(m[field], m["files"], mod_dir, env)
+                errors += [f"{field} {why}"] if why else [f"{p}" for p in judge(rc, obj)]
+    return errors, warnings
+
+
+def cmd_check(lib, args):
+    errors, warnings = check_module(args.dir, lib.CONTRACT_VERSION, run=args.run, deny=args.deny or ())
+    if args.json:
+        print(json.dumps({"ok": not errors, "errors": errors, "warnings": warnings}, indent=1))
+    else:
+        for w in warnings:
+            print(f"warning: {w}")
+        for e in errors:
+            print(f"error: {e}")
+        print(f"{args.dir}: {'FAILED' if errors else 'ok'} ({len(errors)} error(s), {len(warnings)} warning(s))")
+    return 1 if errors else 0
+
+
 def build_parser():
     p = argparse.ArgumentParser(prog="hive-mind module", description="Install and manage modules (Linux, 2.1).")
     sub = p.add_subparsers(dest="verb", required=True)
@@ -1013,11 +1492,16 @@ def build_parser():
     c.add_argument("action", choices=("set", "unset", "list"))
     c.add_argument("key", nargs="?")
     c.add_argument("value", nargs="?")
+    k = sub.add_parser("check", help="check a module directory against the module contract (what `add` would refuse; for publishers and CI)")
+    k.add_argument("dir")
+    k.add_argument("--run", action="store_true", help="also run its `status` and `doctor` commands in a throwaway directory and check what they print")
+    k.add_argument("--deny", action="append", metavar="TERM", help="warn on a file that holds TERM (a host, user or organisation name); repeatable")
+    k.add_argument("--json", action="store_true", help="print {ok, errors, warnings} as JSON")
     return p
 
 
 VERBS = {"add": cmd_add, "remove": cmd_remove, "update": cmd_update, "list": cmd_list, "quota": cmd_quota,
-         "reapply": cmd_reapply, "config": cmd_config}
+         "reapply": cmd_reapply, "config": cmd_config, "check": cmd_check}
 
 
 def main(lib, argv):
@@ -1029,8 +1513,8 @@ def main(lib, argv):
             print(f"hive-mind module: config {args.action} takes the wrong arguments", file=sys.stderr)
             return 2
     try:
-        VERBS[args.verb](lib, args)
+        rc = VERBS[args.verb](lib, args)
+        return rc if args.verb == "check" else 0
     except ModuleError as e:
         print(f"hive-mind module: {e}", file=sys.stderr)
         return 1
-    return 0

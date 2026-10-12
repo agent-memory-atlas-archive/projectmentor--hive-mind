@@ -406,6 +406,20 @@ at once). Concretely:
   An unrecognised source class weighs 1.0, like an absent one: a class can only claim a discount,
   so there is nothing to fail open into.
 
+- **Manifest contract 1 widens what a signed manifest can say (3.1).** The new fields (`cli`, `runtimes`, `status`,
+  `doctor`, `reads`, `config_schema`, `ui`) sit inside the signed `module.json`, so the publisher key and the file
+  digests cover them and `validate_manifest` refuses a field it does not know, a malformed one, or a contract-1 field
+  on a manifest without `contract`. They are declarations the operator reads, not a sandbox: a module is unconfined as
+  the operator (B9), so `reads` limits `/v1` and nothing else (any local process can GET the loopback `/api/*` routes),
+  `runtimes` names programs and never directories, and `status`/`doctor`/`cli.command` run as the operator like
+  `service.command`. The validator refuses what would put a person's data or a shell in the signed text: a default on
+  an `identifying` or `secret` key, a secret outside node scope, a `ui` action whose parameters are not drawn from an
+  enum or a data-source path, and a `ui` entity panel that names another module's prefix. `module check` lints shipped
+  files for identifying text and warns; it cannot prove absence, so a publisher still reads the diff. `module check
+  --run` runs the module's own `status` and `doctor` as the user who typed it, in a scrubbed environment and a
+  temporary directory, with a time and size limit; a module that spawns a detached child can outlive it. Operator rule:
+  run `--run` only on a module you would install. Only an admitted publisher key signs a manifest, so a remaining gap
+  that needs one is an admitted-device residual (accepted for 3.x).
 - **`hv doctor` `owner-copies` is a name-only check.** It looks one level deep in four directories
   (`$HIVE_HOME`, the current directory, the home directory, the identity stash) for `hive-owner-*.key` and
   the stash's `.owner-key`, and never opens a file. The default export and `--plaintext` share a basename,
