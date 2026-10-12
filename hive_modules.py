@@ -1579,7 +1579,7 @@ def install_config(lib, args, manifest, owner, enforce=True, asked=None, have=No
             raise ModuleError("this module needs these settings before it installs, and no terminal is available to ask: "
                               + "; ".join(missing) + ". Pass --set key=value (--set-fleet for a fleet key)")
     if fleet_vals:
-        _require_owner(lib, prompt=_may_prompt(args))
+        _require_owner(lib, [("set-config", manifest["name"])], prompt=_may_prompt(args))
     return node_vals, fleet_vals
 
 

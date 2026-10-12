@@ -597,7 +597,7 @@ class ChainSigner(_sigseam.Signer):
 
 def gate_ok(status, acts):
     """Whether the agent would sign every act in `acts` for a whole command, with margin (design §3 Gates).
-    `acts` is a list of (action, arg): ("admit", module), ("revoke", device_id or None for the device the same run
+    `acts` is a list of (action, arg): ("admit", module), ("set-config", module), ("revoke", device_id or None for the device the same run
     just admitted). An empty list is the public-key check alone."""
     if status.get("idle_left", 0) < GATE_MIN_IDLE or status.get("hard_left", 0) < GATE_MIN_IDLE:
         return False
@@ -609,6 +609,9 @@ def gate_ok(status, acts):
                 return False
         elif action == "revoke":
             if arg is not None and arg not in status.get("admitted", ()):
+                return False
+        elif action == "set-config":
+            if status.get("modules") and arg not in status["modules"]:     # no --module: the policy checks "installed"
                 return False
         else:
             return False
