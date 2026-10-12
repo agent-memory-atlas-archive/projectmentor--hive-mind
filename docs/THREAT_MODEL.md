@@ -494,6 +494,13 @@ at once). Concretely:
   device, in memory) bounds how much work a module can ask of the node (`overview` and `audit` read the whole
   journal); it resets when the daemon restarts, and it is not a defence against the operator's own processes.
   Operator rule: install a module that declares `peers` or `node` only if you would give it the tailnet addresses.
+- **`module install` never prompts for the owner key under `--non-interactive` or `--json` (3.1).** It opens the key only when
+  it is already open, unsealed, its passphrase is in `HIVE_OWNER_KEY_PASSPHRASE`, or the unlock agent covers the acts it will
+  sign; otherwise it exits 5 before it fetches or writes anything. It adds no signing path: the acts are `module add`'s
+  (`admit`, `revoke` on a failed add, `set-config` for `--set-fleet`), made through the same gate, and a re-run of an installed
+  module signs a fleet value only if the journal does not already hold it. `--json` prints the messages the steps printed;
+  those name keys and never values, and a secret is never echoed. Anything that runs as the operator can set the passphrase
+  variable or reach the agent, as before: an admitted-device residual (accepted for 3.x).
 - **`hv doctor` `owner-copies` is a name-only check.** It looks one level deep in four directories
   (`$HIVE_HOME`, the current directory, the home directory, the identity stash) for `hive-owner-*.key` and
   the stash's `.owner-key`, and never opens a file. The default export and `--plaintext` share a basename,
