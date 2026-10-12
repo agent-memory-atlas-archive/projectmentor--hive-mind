@@ -72,7 +72,7 @@ there keeps a separate tag. The core knows contract `1` and refuses any other va
 | `config_schema` | `{key: entry}`, up to 128 keys. A key is a config key name where a whole dot-segment `{word}` stands for any one segment (`seat.{role}.runtime`). An entry has `type` (`string`, `int`, `bool`, `enum`), `description` (required), `scope` (`node` (default), `fleet`, `fleet-node`), and optionally `default` (a string that fits the type), `max` (string length, or int bound), `min` (int), `values` (enum), `required_at_install`, `secret`, `identifying`. A `secret` key is node-scoped. An `identifying` or `secret` key may not ship a `default`: a signed manifest carries no one's user, host, account or repository name. |
 | `status` | argv that prints the status envelope (below) as one JSON object. |
 | `doctor` | argv that prints the module's own doctor answer (below). |
-| `reads` | Distinct names from `overview`, `tags`, `related`, `audit`, `peers`, `verify`, `node`: the read routes the module declares it will use. |
+| `reads` | Distinct names from `overview`, `tags`, `related`, `audit`, `peers`, `verify`, `node`: the read routes the module declares it will use. `module add` and `update` list them (marking `peers`/`node`, which carry tailnet addresses, and `overview`/`peers`/`verify`, which are node-local) and record them in `.modules.json`; the module API serves `/v1/<name>` only for a recorded name and answers `403` otherwise. A manifest without `reads` is served none. |
 | `ui` | The module's page for the dashboard: an object of at most 64 KiB, defined by [`ui_block.schema.json`](ui_block.schema.json). Unknown top-level keys are refused; unknown widgets, slots and extra fields inside an item are ignored by the dashboard. |
 
 `status`, `doctor` and `cli.command` are argv lists run without a shell, with `service.command`'s rules: strings, no
@@ -214,6 +214,7 @@ device. Unsigned requests are never served.
 | `/v1/tip` | GET | The caller's own chain tip |
 | `/v1/entries` | POST | Append one entry the module signed |
 | `/v1/entity` | GET | An entity and the module entities a core `same-as` joins to it |
+| `/v1/overview`, `tags`, `related`, `audit`, `peers`, `verify`, `node` | GET | *(3.1)* The dashboard's reads; served only to a module whose manifest names the route in `reads` (below) |
 
 HiveMind ships a reference signer and client, [`hive_module_client.py`](../hive_module_client.py),
 readable top to bottom and importing nothing from `hv`. A module in another language reimplements

@@ -51,6 +51,13 @@ owner, escrow, capsule, cell or comb state.
 | `/v1/entity` | GET | An entity, its facts and the module entities a core `same-as` joins to it |
 | `/v1/tip` | GET | The caller's own chain tip, to build the next entry |
 | `/v1/entries` | POST | Append one entry the module signed |
+| `/v1/overview` | GET | *(3.1, `reads`)* The dashboard header: counts, role, address, merkle root |
+| `/v1/tags` | GET | *(3.1, `reads`)* Every distinct tag |
+| `/v1/related` | GET | *(3.1, `reads`)* Facts that share tags with one fact or decision |
+| `/v1/audit` | GET | *(3.1, `reads`)* The audit counts and a small sample per bucket |
+| `/v1/peers` | GET | *(3.1, `reads`)* The admitted devices, with a live probe of each |
+| `/v1/verify` | GET | *(3.1, `reads`)* This node's integrity verdict |
+| `/v1/node` | GET | *(3.1, `reads`)* The address of one admitted, reachable peer |
 
 A signed `GET` on a `POST` route, or the reverse, is `405` with `Allow`. An unknown path is `404 {"error": "not found"}`.
 A path under a version this node does not serve (`/v2/…`) is `404` naming the versions it does:
@@ -73,7 +80,8 @@ string and an integer; the route carries no device list, no address and no princ
 either field, so a module treats an absent `node_devices` as unknown. `config` is the caller's own
 `x-<module>:` fleet config, the keys the owner set with a signed `set-config`, as strings. It is a convenience, not
 a confidentiality boundary: the journal is shared by design and `/v1/feed` carries all of it. `quota` is the same
-object [Quotas](#quotas-and-rate-limits) describes.
+object [Quotas](#quotas-and-rate-limits) describes. *Since 3.1:* `reads` lists the read routes the module's manifest
+declares (below); the key is absent for a module that declares none.
 
 ### `GET /v1/feed?after=<node_id:seq,…>&limit=<n>`
 
@@ -128,6 +136,41 @@ they change on every rebuild. `404` when there is no such entity, `400` without 
 `{"node_id": "k1:…", "seq": 12, "hash": "sha256:…"}`: the caller's own tip, from the journal. Before the module's
 first write it is `seq` 0 and `"sha256:genesis"`. The next entry is `seq + 1` with `prev_hash` set to `hash`. The
 read holds no lock.
+
+### The read routes (3.1, `provisional`)
+
+`overview`, `tags`, `related`, `audit`, `peers`, `verify` and `node` are for a module that shows the hive, such as the
+dashboard. All are `GET`, read-only, loopback and signed like every other route, and each returns what the matching
+`/api/*` route of the dashboard returns, except where noted.
+
+- **A module is served a route only if its signed manifest names it in `reads`** (`"reads": ["overview", "tags"]`;
+  `GET /v1/` lists what the caller may read). Any other read route is `403 {"error": "forbidden", "detail":
+  "read-not-declared", "route": "<name>"}`, and the node logs it once per module and route. The install summary lists
+  the declared routes, marking `peers` and `node` (they carry tailnet addresses) and `overview`, `peers` and `verify`
+  (node-local state). An `update` that drops a route takes effect on the next request.
+- **A separate budget.** Each device has a read bucket of its own (a burst of 60, refilled 5 a second); past it a read
+  is `429` with `Retry-After`. Reads never count toward the entry quota, and the other routes (`feed`, `search`,
+  `item`, `entity`, `tip`, `root`) do not spend from this bucket.
+- **Forgotten facts stay out.** `related` leaves owner-forgotten facts out of its answer, and answers empty for a
+  forgotten source; `audit` leaves them out of every count and sample. No read route returns owner-key material,
+  governance state the feed does not already carry, or a capsule body.
+- **Where a route differs from its `/api/*` twin.** `overview` carries `address` and `role` from this node's key
+  custody; `peers` is a live probe of each peer (`?probe=0` skips it and uses the last probe); `verify` is this node's
+  local integrity verdict, served to an admitted module only (the dashboard's `/api/verify` is open discovery).
+
+| Route | Query | Answer |
+|---|---|---|
+| `/v1/overview` | | `api_overview`: node, hive, owner, role, contract, counts, address, merkle root |
+| `/v1/tags` | | `{"tags": [...]}` |
+| `/v1/related` | `id` (a local row id, required), `kind` (`fact` or `decision`, default `fact`) | `{"related": [...], "tags": [...]}`; `400` for a missing or malformed `id` or a bad `kind` |
+| `/v1/audit` | | counts (`recheck`, `stale`, `duplicate`, `contravened`) and `samples` |
+| `/v1/peers` | `probe` (`0` to skip the live probe) | `{"peers": [{name, device, principal, addr, seen, status, self}]}` |
+| `/v1/verify` | | `{ok, version, level, lines, official_source, site}` |
+| `/v1/node` | `node` (an admitted peer's device id, required) | `{"node": "k1:…", "addr": "host:port"}`; `404` if it is not an admitted, reachable peer |
+
+`/v1/search` still hides forgotten facts (the dashboard's own search does not). `reads` gates `/v1` only: any local
+process can still `GET` the loopback `/api/*` routes, so it is a declaration the operator sees, not a sandbox (see
+the threat model).
 
 ### `POST /v1/entries`
 

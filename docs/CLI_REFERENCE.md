@@ -1403,6 +1403,7 @@ checkout. `remove` revokes the device and keeps the module's journal entries. `u
 atomically, and refuses a different publisher key. `quota` is the only way a limit goes above the default. Where the
 platform has no module backend, `add` says so and exits non-zero before it touches anything. The manifest, the unit and
 the limits are in [`MODULE_API.md`](MODULE_API.md). `hive-mind update` re-renders every module's unit afterwards.
+*(3.1)* When the manifest declares `reads`, `add` and `update` print them with the publisher key, before you confirm, marking the routes that carry tailnet addresses (`peers`, `node`) or node-local state (`overview`, `peers`, `verify`).
 
 **On a device without the owner key** *(2.3)* (the owner key lives on another machine). `add` fetches, verifies, stages and mints
 the module's key, then prints the owner's line, `hive-mind group admit <device> --module <name> --principal <p>`, with

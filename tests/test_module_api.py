@@ -91,7 +91,8 @@ def hive(tmp_path, monkeypatch):
 
 
 def test_route_table_is_exactly_the_documented_set():
-    assert sorted(api.ROUTES) == ["/v1/", "/v1/entity", "/v1/entries", "/v1/feed", "/v1/item", "/v1/search", "/v1/tip"]
+    assert sorted(api.ROUTES) == ["/v1/", "/v1/audit", "/v1/entity", "/v1/entries", "/v1/feed", "/v1/item", "/v1/node", "/v1/overview",
+                                 "/v1/peers", "/v1/related", "/v1/search", "/v1/tags", "/v1/tip", "/v1/verify"]
     assert api.WRITE_ROUTES == ("/v1/entries",)
     assert api.API_VERSIONS == ["v1"]
 

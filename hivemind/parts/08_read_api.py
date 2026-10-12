@@ -244,15 +244,19 @@ def api_item(sid):
         conn.close()
 
 
-def api_related(kind, item_id, limit=25):
+def api_related(kind, item_id, limit=25, include_forgotten=True):
     """Facts related to a fact/decision by SHARED TAGS (the simple, robust signal) — powers the
     'Related facts' table in a detail view. Excludes the item itself; ranked by number of shared tags,
-    then effective confidence. Empty when the source has no tags."""
+    then effective confidence. Empty when the source has no tags. `include_forgotten=False` (the module API,
+    3.1) drops owner-forgotten facts from the result and answers empty for a forgotten source."""
     conn = get_conn()
     try:
         tbl = "decisions" if kind == "decision" else "facts"
-        row = conn.execute(f"SELECT tags FROM {tbl} WHERE id = ?", (item_id,)).fetchone()
+        row = conn.execute(f"SELECT tags{', confidence' if tbl == 'facts' else ''} FROM {tbl} WHERE id = ?",
+                           (item_id,)).fetchone()
         src = set()
+        if row and not include_forgotten and tbl == "facts" and row["confidence"] <= FORGET_FLOOR:
+            row = None
         if row and row["tags"]:
             try:
                 src = {str(t).strip() for t in json.loads(row["tags"]) if str(t).strip()}
@@ -264,6 +268,8 @@ def api_related(kind, item_id, limit=25):
         out = []
         for r in conn.execute(f"SELECT {_FACT_COLS} FROM facts").fetchall():
             if kind == "fact" and r["id"] == item_id:
+                continue
+            if not include_forgotten and r["confidence"] <= FORGET_FLOOR:
                 continue
             try:
                 ftags = [str(t).strip() for t in (json.loads(r["tags"]) if r["tags"] else [])]
@@ -283,11 +289,21 @@ def api_related(kind, item_id, limit=25):
         conn.close()
 
 
-def api_audit():
+def api_audit(include_forgotten=True):
     """The real `hv audit` signal as counts (+ a small sample per category) for the dashboard: re-check
     (volatile past freshness), stale (forgotten/contested/decayed), duplicate (same-source redundant +
-    paraphrase), contravened (un-reconciled corrections). Light depth — cheap enough for a card."""
+    paraphrase), contravened (un-reconciled corrections). Light depth — cheap enough for a card.
+    `include_forgotten=False` (the module API, 3.1) leaves owner-forgotten facts out of every count and sample:
+    the volatile branch of `_compute_audit` buckets a forgotten volatile fact before it checks the floor."""
     a = _compute_audit(depth="light")
+
+    def live(items):
+        if include_forgotten:
+            return items
+        return [it for it in items
+                if not (isinstance(it, tuple) and hasattr(it[0], "keys") and "confidence" in it[0].keys()
+                        and it[0]["confidence"] <= FORGET_FLOOR)]
+    a["recheck"], a["contravened"] = live(a["recheck"]), live(a["contravened"])
 
     def sample(items, n=8):
         out = []
