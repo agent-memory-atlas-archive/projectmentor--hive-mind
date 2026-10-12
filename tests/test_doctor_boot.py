@@ -143,3 +143,41 @@ def test_boot_unit_runs_the_doctor_after_sync_without_requiring_it(tmp_path):
     assert "ExecStart=/usr/bin/python3 " + str(hive) + "/hv doctor --boot" in text
     assert "After=network.target hive-sync.service" in text and "Wants=hive-sync.service" in text
     assert "Requires=" not in text and "WantedBy=default.target" in text
+
+
+def _uninstall(tmp_path, extra_env):
+    home = tmp_path / "home"
+    unit_dir = home / ".config/systemd/user"
+    unit_dir.mkdir(parents=True)
+    (unit_dir / "hive-doctor-boot.service").write_text("[Unit]\n")
+    shim = tmp_path / "shim"
+    shim.mkdir()
+    (shim / "systemctl").write_text(f'#!/bin/sh\necho "$*" >> "{tmp_path}/sysctl"\n')
+    (shim / "systemctl").chmod(0o755)
+    hive = tmp_path / "hivedir"
+    hive.mkdir()
+    env = dict(os.environ, HOME=str(home), HIVE_DIR=str(hive), BIN_DIR=str(tmp_path / "ubin"),
+               SETTINGS=str(tmp_path / "s.json"), HIVE_UNINSTALL_TEST="1", **extra_env)
+    env["PATH"] = f"{shim}:{extra_env.get('PATH', os.environ['PATH'])}"
+    r = subprocess.run(["bash", str(UNITS.parent.parent.parent / "installer/_uninstall.sh"), "--yes"], env=env,
+                       capture_output=True, text=True, input="")
+    assert r.returncode == 0, r.stderr
+    return unit_dir
+
+
+def test_uninstall_removes_the_boot_unit(tmp_path):
+    unit_dir = _uninstall(tmp_path, {})
+    assert not (unit_dir / "hive-doctor-boot.service").exists()
+    assert "disable --now hive-doctor-boot.service" in (tmp_path / "sysctl").read_text()
+
+
+def test_uninstall_deletes_the_wsl_logon_task(tmp_path):
+    env = _fake_schtasks(tmp_path) | {"WSL_DISTRO_NAME": "Ubuntu-24.04"}
+    _uninstall(tmp_path, env)
+    assert "/Delete /F /TN HiveMind-WSL-Ubuntu-24.04" in (tmp_path / "calls").read_text()
+
+
+@pytest.mark.parametrize("distro", ['U" & calc & "', "a b", ""])
+def test_uninstall_leaves_the_logon_task_alone_for_an_odd_name(tmp_path, distro):
+    _uninstall(tmp_path, _fake_schtasks(tmp_path) | {"WSL_DISTRO_NAME": distro})
+    assert not (tmp_path / "calls").exists()

@@ -1496,6 +1496,8 @@ hive-mind uninstall [--keep-hive] [--keep-identity] [--yes]
 | `-y`, `--yes` | Skip the `Continue? [y/N]` confirmation prompt and proceed — for unattended or scripted removal. |
 | `-h`, `--help` | Print usage and exit. |
 
+Uninstall also removes the boot-pass unit (`hive-doctor-boot.service`) and, on WSL2, the Windows logon task `HiveMind-WSL-<distro>`.
+
 On the next `hive-mind install`, if a preserved identity is found it offers to **resume** it (so a sterile/fertile device keeps its standing); decline to mint a fresh one. A plain `uninstall` (no flag) is a clean slate — identity is gone and a reinstall mints a new `device_id`.
 
 ---

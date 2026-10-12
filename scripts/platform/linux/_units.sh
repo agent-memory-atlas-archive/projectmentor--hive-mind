@@ -91,7 +91,7 @@ After=network.target hive-sync.service
 Wants=hive-sync.service
 
 [Service]
-Type=oneshot
+Type=exec
 WorkingDirectory=$hive_dir
 ExecStart=/usr/bin/python3 $hive_dir/hv doctor --boot
 Environment=HIVE_HOME=$hive_dir
