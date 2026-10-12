@@ -85,8 +85,38 @@ control characters, and a relative first word may not leave the module's directo
 "fix_hint"?}]}` with at most 100 results and 400 characters a string, exit 0 unless a result is `fail`.
 
 *In 3.1 the core validates and signs for all of these fields; the behaviour that acts on each lands one slot at a time
-(runtimes and the CLI launcher, the doctor runner, the read routes), each documented here when it does. The config
-schema acts now, below.*
+(the doctor runner and the read routes still to come), each documented here when it does. The config schema, the
+runtimes and the CLI launcher act now, below.*
+
+#### Runtimes, the unit PATH and the CLI launcher
+
+`runtimes` names programs; the core finds them, and the module never names a directory. At `add`, `update`,
+`reapply` (which `hive-mind update` runs) and `module runtime`, each program is looked for in the invoking `PATH`, then
+`~/.local/bin`, `~/.npm-global/bin`, `~/.cargo/bin`, `~/.bun/bin`, `/opt/homebrew/bin` and `/usr/local/bin`, then in the
+directory the operator gave with `hive-mind module runtime <name> <program> <dir>` (`--unset` forgets it; use it when the
+install ran under a narrower PATH than your login shell, as a dashboard-started one does). A directory counts only if it
+is absolute, exists, is owned by you or root, and is writable by neither group nor world; anything else is skipped. The
+resolved directories are recorded in `.modules.json` (`runtime_dirs`) and the unit's `PATH` becomes
+`<runtime dirs>:<bin dir>:/usr/local/bin:/usr/bin:/bin`, where the bin dir is the one that holds `hive-mind`
+(`$HIVE_BIN_DIR` overrides it). A program that is not found is a warning at install (the install completes) with the fix
+named: `claude not found; install it or run hive-mind module runtime hwatch claude <dir>`. A manifest without `contract`
+gets no `PATH` line in its unit, as before.
+
+`cli` gives the module a command on your PATH. `add` and `update` write one small `sh` file named `cli.name` into the
+bin dir, rendered by the core: it unsets the owner's secrets (`HIVE_OWNER_PASSPHRASE`, `HIVE_OWNER_KEY_PASSPHRASE`,
+`HIVE_OWNER_SEED`, `HIVE_KEY_DIR`), exports `HIVE_MODULE_NAME`, `HIVE_MODULE_DIR`, `HIVE_MODULE_KEY_DIR` and the same `PATH`
+as the unit, and `exec`s the module's `cli.command` with `"$@"`. The module supplies only a name and an argv; every word is
+single-quoted, so no module text is ever shell. The file's second line is a marker with the module name and a digest of
+the rest, which is how the core knows a file is its own. An install is refused, before anything is written, when the name
+is one the core uses, another module's, an existing file that is not this module's unedited launcher, or when the bin dir
+is writable by group or world. `remove` deletes the launcher (only if it is still the module's own and unedited); `update`
+renames or drops it with the manifest, and a failed update puts the old one back.
+
+`hive-mind module run <name> [--] <args…>` does the same without the launcher (flags after the name go to the module's
+command), and returns the command's exit status. `hive-mind module status <name> [--json]` runs the manifest's `status`
+argv (no shell, in the module's directory, with `PATH`, `HOME`, `LANG` and the three `HIVE_MODULE_*` variables only; 20 s and
+64 KiB at most) and prints the envelope. A status that does not run, parse or fit the envelope is reported as `unknown`
+with the reason, never as a crash. Exit 0 when the state is `ok`, 1 otherwise.
 
 #### Configuration under `config_schema`
 

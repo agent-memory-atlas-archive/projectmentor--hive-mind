@@ -433,6 +433,20 @@ at once). Concretely:
   owner can set another device's key, and a module must treat the layers as the owner's word, never as input from the
   device itself. Only an admitted device or the operator can reach any of these, so a gap here is an admitted-device
   residual (accepted for 3.x).
+- **Runtimes, the unit PATH and the CLI launcher run as the operator (3.1).** A contract-1 module names programs
+  (`runtimes`), never directories; the core puts a directory on the unit's and the launcher's `PATH` only if it is
+  absolute, owned by the operator or root, and writable by neither group nor world, so another local user cannot plant a
+  program there and a module cannot add a directory of its own. The check is of the directory itself, not of its parents or
+  of the program, which the operator owns: a program that is a link into a directory someone else can write is the
+  operator's to avoid. The launcher is rendered by the core from the manifest's name and argv, every word single-quoted,
+  never from module text; it unsets the owner's passphrase, seed and key-directory variables before it runs the module.
+  Those are the variables core reads, not a sandbox: the module runs as the operator and can read anything the operator
+  can (B9). A launcher is written only into a bin directory only the operator (or root) can write, never over a file that
+  is not the module's own unedited launcher, and a `module run` or launcher invocation inherits the rest of the caller's
+  environment. `module status` runs the module's own code as the operator with a narrow environment, 20 seconds and 64 KiB,
+  and a module that spawns a detached child can outlive it. A module's `cli.name` is a command on the operator's PATH for
+  as long as it is installed, so the operator is trusting that name to the publisher: read it at install. Only an
+  admitted publisher key signs a manifest, so a gap that needs one is an admitted-device residual (accepted for 3.x).
 - **`hv doctor` `owner-copies` is a name-only check.** It looks one level deep in four directories
   (`$HIVE_HOME`, the current directory, the home directory, the identity stash) for `hive-owner-*.key` and
   the stash's `.owner-key`, and never opens a file. The default export and `--plaintext` share a basename,

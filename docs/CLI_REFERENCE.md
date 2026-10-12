@@ -1358,7 +1358,7 @@ hive-mind <subcommand> [options]
 | `reset` | Recover a **wedged** install in one command: force-align the code to `origin` (even after a rewrite, even with local edits), rebuild the DB from the journal, refresh the supervisor units + Claude Code hooks, restart the daemon, and verify authenticity. **Your Hive (journal, keys, device identity) is preserved** — this is not `uninstall`. Use it when `hv doctor`/`hv verify` is unhappy after a breaking change. `-y` skips the prompt. |
 | `status` | Show device health and peer sync state. |
 | `invite` | Print the one-line address to paste on a new device so it can join this hive. |
-| `module` | *(2.1, Linux)* Install and manage modules: `add <name> --from <repo>`, `remove`, `update`, `list`, `config` *(2.3)*, `check` *(3.1)*, `quota` (see below). |
+| `module` | *(2.1, Linux)* Install and manage modules: `add <name> --from <repo>`, `remove`, `update`, `list`, `config` *(2.3)*, `check` *(3.1)*, `run`, `status`, `runtime` *(3.1)*, `quota` (see below). |
 | `uninstall` | Remove HiveMind from this device (see flags below). |
 
 ### `hive-mind module` — Install and manage modules *(2.1, Linux only)*
@@ -1374,7 +1374,15 @@ hive-mind module check <dir> [--run] [--deny TERM] [--json]       # (3.1)
 hive-mind module config <name> set <key> [<value>] [--fleet | --fleet-node DEVICE] [--stdin] | unset <key> | list [--merged] | get <key> | validate   # get, validate, --fleet*, --stdin: (3.1)
                           # list, get, validate take --json
 hive-mind module quota <name> [--per-hour N] [--per-day N] [--entry-bytes N] [--lifetime N]
+hive-mind module run <name> [--] <args>...             # (3.1) the module's cli command, without its launcher
+hive-mind module status <name> [--json]                # (3.1) the module's status envelope; exit 0 when `ok`
+hive-mind module runtime <name> <program> <dir> | --unset   # (3.1) where one of the module's runtimes lives
 ```
+
+`run` passes everything after the name to the module's `cli.command` and returns its exit status; `status` exits 0 when
+the module says `ok` and 1 for any other state, including `unknown` (it did not run or answer in the envelope shape);
+`runtime` records a directory (absolute, yours or root's, not group- or world-writable) and re-renders the unit's `PATH`.
+A contract-1 module with a `cli` also gets a command of that name next to `hive-mind` (see `docs/MODULES.md`).
 
 Owner and operator; there is no `hv module`. `quota` needs the owner key; the other verbs also run on a device without it (below) *(2.3)*. A module is a git repository whose `module.json` is signed by its
 publisher key. `add` shows the key and pins it once you confirm (or pass `--publisher` to pin it without a prompt), mints the module's
