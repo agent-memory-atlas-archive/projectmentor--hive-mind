@@ -141,6 +141,9 @@ if not hooks:
 json.dump(d, open(path, "w"), indent=2)
 PY
 fi
+# auto-mode operator profile: remove only our marked lines (user autoMode entries stay)
+[ -f "$HIVE_DIR/integrations/claude-code/automode.py" ] && \
+  python3 "$HIVE_DIR/integrations/claude-code/automode.py" uninstall --claude-dir "$(dirname "$SETTINGS")" >/dev/null 2>&1 || true
 rm -rf "$HOME/.claude/skills/hive-memory" 2>/dev/null || true
 rm -f /tmp/hive-sync.log 2>/dev/null || true
 rm -rf "$HOME/.hive-mind/logs" 2>/dev/null || true   # Android/Termux daemon logs
