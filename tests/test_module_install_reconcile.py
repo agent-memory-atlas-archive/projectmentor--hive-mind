@@ -111,6 +111,18 @@ def test_a_sealed_owner_key_that_would_prompt_exits_5_and_writes_nothing(hive, t
 
 
 @LINUX_ONLY
+def test_a_trust_raise_on_the_update_path_never_prompts_under_json(hive, tmp_path, units, monkeypatch):
+    pub = _publish(tmp_path / "repo", trust="confined", **V31)
+    install(hive, tmp_path / "repo", pub)
+    _publish(tmp_path / "repo", version="1.1.0", **V31)                    # no `trust`: the raise confined -> trusted
+    monkeypatch.delenv("HIVE_OWNER_KEY_PASSPHRASE")
+    before = _state(hive)
+    o = json.loads(install(hive, tmp_path / "repo", pub, "--json", check=False).stdout)
+    assert o["exit"] == 5 and o["result"] == "locked" and not o["ok"] and "owner unlock" in o["error"]
+    assert _state(hive) == before and before["demo"]["version"] == "1.0.0" and before["demo"]["trust"] == "confined"
+
+
+@LINUX_ONLY
 def test_require_healthy_exits_4_only_when_asked(hive, tmp_path, units):
     pub = _publish(tmp_path / "repo")
     install(hive, tmp_path / "repo", pub)
