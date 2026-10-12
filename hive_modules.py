@@ -575,12 +575,13 @@ def _gov(lib):
     return lib._governance_state(merkle.read_all_entries(lib.JOURNAL_DIR))
 
 
-def _require_owner(lib):
+def _require_owner(lib, acts=()):
     """Unlock the owner key before anything is fetched into place, so a locked key or a non-owner device
-    refuses with nothing written."""
+    refuses with nothing written. `acts` are the acts the command will make: with the unlock agent covering all of
+    them (`owner_agent.gate_ok`) the gate passes without a prompt (#295); otherwise it unlocks, as ever."""
     if not lib._owner_key_exists():
         raise ModuleError("this device does not hold the owner key: run module commands on the owner machine")
-    if lib._owner_seed() is None:
+    if not lib._owner_gate(acts):
         raise ModuleError("the owner key could not be unlocked")
 
 
@@ -1028,7 +1029,7 @@ def cmd_add(lib, args):
     if pending is not None:
         raise ModuleError(f"module {name!r} has a pending add from a device without the owner key: "
                           f"`hive-mind module add --abort {name}` first")
-    _require_owner(lib)
+    _require_owner(lib, [("admit", name), ("revoke", None)])
     principal = _operator_principal(lib, args.principal)
     with tempfile.TemporaryDirectory(prefix="hive-module-") as tmp:
         src = Path(tmp) / "src"
@@ -1078,6 +1079,13 @@ def _undo_add(lib, name, device_id):
             lib._group_change("revoke", device_id)
     except Exception:
         pass
+    try:
+        still = _device_state(lib, device_id) == "admitted"
+    except Exception:
+        still = False
+    if still:        # the revoke could not be signed (cancelled prompt, agent gone): never silent
+        print(f"device {device_id} is still admitted as a module device: run `hive-mind group revoke {device_id}`",
+              file=sys.stderr)
     shutil.rmtree(Path(lib._ensure_key_dir()) / "modules" / name, ignore_errors=True)
     shutil.rmtree(modules_dir() / name, ignore_errors=True)
     try:
@@ -1094,7 +1102,7 @@ def cmd_remove(lib, args):
     device_id = rec["device_id"]
     if not lib._owner_key_exists():
         return _remove_without_owner(lib, args.name, device_id, state)
-    _require_owner(lib)
+    _require_owner(lib, [("revoke", device_id)] if _device_state(lib, device_id) == "admitted" else [])
     if _device_state(lib, device_id) == "admitted":
         lib._group_change("revoke", device_id)
     if _device_state(lib, device_id) == "admitted":
@@ -1215,7 +1223,7 @@ def cmd_quota(lib, args):
     rec = state.get(args.name)
     if rec is None:
         raise ModuleError(f"module {args.name!r} is not installed")
-    _require_owner(lib)
+    _require_owner(lib)                           # nothing is signed: the agent's public-key check is enough
     mine = dict(rec.get("owner_quota") or {})
     for k in QUOTA_KEYS:
         v = getattr(args, k)

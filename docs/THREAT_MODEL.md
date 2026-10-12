@@ -256,6 +256,26 @@ at once). Concretely:
 
 ## Known limitations (in scope to document, NOT yet closed)
 
+- **The owner-unlock agent (3.1, #295).** `hive-mind owner unlock [--for D] [--module m]...` asks for the passphrase once and
+  hands the unsealed owner seed to a per-user agent process, which signs only these governance acts: `admit` of a
+  **module** device for a module named by `--module`, `revoke` of a module device that same agent session admitted, and
+  `set-config` under `x-<module>:`. Everything else (`transfer`, `rotate`, a voting device, forgets, owner-signed links,
+  an unknown action) is refused and the command falls back to its own passphrase prompt. The agent signs only bytes that
+  re-canonicalise to themselves and name its own key; it has no op that unlocks, returns the seed, or signs arbitrary
+  bytes. The socket is mode 0600 in a 0700 directory owned by the user, and a connection from any other uid is closed
+  unread. The seed lives only in the agent's memory (never a file, argv, env or log); `--for` is an idle timeout (1m
+  to 8h), 12h is a hard cap, and expiry, `owner lock`, a suspend/resume jump or a vanished socket end the process.
+  Residuals, none changing a journal, signature or sync byte: (1) *admitted-device class (accepted for 3.x):* while it
+  is unlocked, any process running as the operator can obtain signatures for the acts above, so it can set config under
+  an installed module's prefix or admit a module device for a module named at unlock; it can never get the seed or a
+  voting device. (2) *Swap and hibernation:* the agent is `PR_SET_DUMPABLE=0`, has no core dump and `mlock`s the seed
+  page, but the pure-Python signer builds big integers on the ordinary heap and keeps an immutable copy of the seed, which
+  CPython can neither zero nor lock; process exit clears them, swap or a hibernation image may not. (3) Root and a kernel
+  bug can read the agent. **Operator rule:** lock when you leave a machine you share with untrusted local code; use the
+  shortest `--for` that fits; unlock with `--module <name>` for an install; keep swap encrypted; lock before
+  hibernating; do not unlock on a machine that runs code you do not trust. `HIVE_OWNER_KEY_PASSPHRASE` is ignored by
+  `owner unlock`. Windows has no agent yet.
+
 - **`hv`'s code is in several files (3.1).** The body of `hv` runs from `hivemind/parts/*.py`, chosen by one list,
   `PARTS`, in `hv` itself (no glob, no config, nothing under `HIVE_HOME`), read as bytes and run into `hv`'s own
   namespace. A part has exactly the authority `hv` has, no more. Parts are tracked `.py` files, so the signed source
