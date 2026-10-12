@@ -136,3 +136,16 @@ def test_api_telemetry_with_no_store_is_empty_and_creates_nothing(tmp_path):
     t = _api(home)
     assert t["available"] and t["totals"].get("sessions", 0) == 0 and t["recent"] == []
     assert not (home / ".telemetry").exists()
+
+
+def test_api_telemetry_reads_a_store_under_a_home_with_uri_special_characters(tmp_path):
+    home = tmp_path / "a#b?c%20d"
+    db = _store(home)
+    conn = sqlite3.connect(db)
+    conn.execute("INSERT INTO telemetry_sessions (node_id, session_id, agent, project, started_at, tokens_in) "
+                 "VALUES ('n','s2','claude-code','proj','2026-10-02T00:00:00.000+00:00',9)")
+    conn.commit()
+    conn.close()
+    t = _api(home)
+    assert t["available"] and t["totals"]["sessions"] == 2
+    assert [r["tokens_in"] for r in t["recent"]] == [9, 3]      # newest first

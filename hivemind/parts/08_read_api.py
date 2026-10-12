@@ -759,7 +759,7 @@ def _telemetry_rows(since=""):
     """Every session row, newest first, from the store hwatch writes; none if there is no store yet."""
     if not TELEMETRY_DB.is_file():
         return []
-    conn = sqlite3.connect(f"file:{TELEMETRY_DB}?mode=ro", uri=True)
+    conn = sqlite3.connect(TELEMETRY_DB.resolve().as_uri() + "?mode=ro", uri=True)   # as_uri() escapes # ? % in the path
     conn.row_factory = sqlite3.Row
     try:
         return conn.execute("SELECT * FROM telemetry_sessions ORDER BY COALESCE(started_at, updated_at) DESC").fetchall()
