@@ -140,7 +140,7 @@ def read_frame(conn, deadline):
 
 
 def write_frame(conn, obj):
-    data = json.dumps(obj, sort_keys=True, separators=(",", ":")).encode()
+    data = json.dumps(obj).encode()          # a frame, not a signed body: the signed bytes are `merkle._canonical`'s
     conn.sendall(struct.pack(">I", len(data)) + data)
 
 
@@ -531,7 +531,10 @@ class Client:
         s.settimeout(timeout)
         try:
             s.connect(self.path)
-            write_frame(s, obj)
+            try:
+                write_frame(s, obj)
+            except OSError:         # the agent answered "busy" and closed before we finished writing: read that answer
+                pass
             return read_frame(s, time.monotonic() + timeout)
         except (OSError, ValueError, TimeoutError, ConnectionError) as e:
             raise AgentError(f"agent unreachable ({e.__class__.__name__})")
