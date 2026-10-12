@@ -85,7 +85,59 @@ control characters, and a relative first word may not leave the module's directo
 "fix_hint"?}]}` with at most 100 results and 400 characters a string, exit 0 unless a result is `fail`.
 
 *In 3.1 the core validates and signs for all of these fields; the behaviour that acts on each lands one slot at a time
-(config schema, runtimes and the CLI launcher, the doctor runner, the read routes), each documented here when it does.*
+(runtimes and the CLI launcher, the doctor runner, the read routes), each documented here when it does. The config
+schema acts now, below.*
+
+#### Configuration under `config_schema`
+
+A module with a `config_schema` has typed, scoped keys. A value lives in one of three layers, and a key is read only
+from the layer its `scope` names, then its schema `default`:
+
+| Scope | Where it lives | Set by |
+|---|---|---|
+| `node` (default) | `<module dir>/config` on this node: 0600, never journaled | the node's operator, no owner key |
+| `fleet` | `x-<module>:<key>`: an owner-signed `set-config`, on every node | the owner, `--fleet` |
+| `fleet-node` | `x-<module>:node.<16 hex of the device>.<key>`: the same entry, keyed by device | the owner, `--fleet-node <device>` |
+
+`fleet-node` is a naming convention over the existing `set-config`: nothing in the journal, the entry or the
+projection differs. A template key (`seat.{role}.enabled`) matches any one segment; an exact name wins over a template.
+Defaults are not copied into the node file, so a changed default reaches every node that did not set the key. A
+module reads its own explicit values from the node file and the rest through `GET /v1/` (fleet) and its own shipped
+defaults; `config get` and `config list` show the merged answer and where each value came from (`node`, `fleet-node`,
+`fleet`, `default`).
+
+```
+hive-mind module config <name> list [--json] [--merged]
+hive-mind module config <name> get <key> [--json]
+hive-mind module config <name> set <key> [<value>] [--fleet | --fleet-node <device>] [--stdin]
+hive-mind module config <name> unset <key>
+hive-mind module config <name> validate [--json]
+```
+
+- `set` checks the key (an unknown key is refused when there is a schema), the type, the bounds and the enum, and that
+  the layer is the key's scope. `set` to the value the key already has changes and signs nothing, so a re-run prompts
+  for no passphrase. `unset` removes a node value; a fleet value cannot be removed, only set again.
+- `validate` checks the node file and the fleet values against the schema and reports a bad value, a missing
+  `required_at_install` key (an error, exit 1), and a key the schema does not know or whose scope says the layer is
+  ignored (a warning). `hv doctor` shows the same findings as warnings under `modules:<name>`. They name a key and a
+  rule, never a value.
+- A **`secret`** key is node-scoped, is shown as `********` in `list`, `get`, `--json`, `validate` and the doctor, and is
+  never accepted on a command line (shell history, `ps`): `set` asks on a terminal, reads one line with `--stdin`, and
+  install takes it with `--set-env key=VARIABLE`. A key the schema no longer names is masked too (it may have been a secret). It is written to the 0600 node file only. The node file is plaintext
+  at rest; anyone who is the operator can read it (B9).
+- An **`identifying`** fleet value is journaled and visible to every admitted device for good; the CLI says so when
+  it is set.
+- A module without `contract` keeps the free-form `set`/`unset`/`list` of 2.3, unchanged; `get`, `validate` and
+  `list --merged` also work on it.
+
+**At install.** `module add <name> --from <repo>` (and `update`) takes `--set key=value` (node scope),
+`--set-fleet key=value` (fleet scope; owner key needed, signed after the module is installed), `--set-env
+key=VARIABLE` (node scope, for a secret) and `--non-interactive`. Every `required_at_install` key that has no value and
+no `default` must be given: on a terminal the command asks (hidden for a secret), otherwise it refuses, naming the
+keys, **before anything is fetched into place, minted or signed**. `required_at_install` is asked for concrete `node`
+and `fleet` keys; a template key or a `fleet-node` key is set after the install. A device without the owner key is not
+asked for a fleet key (the owner sets it; `config validate` reports it). `update` asks only for keys the new schema
+added. The install of a module that has no `config_schema` takes none of these flags.
 
 #### `hive-mind module check <dir> [--run] [--deny TERM] [--json]`
 

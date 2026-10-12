@@ -420,6 +420,19 @@ at once). Concretely:
   temporary directory, with a time and size limit; a module that spawns a detached child can outlive it. Operator rule:
   run `--run` only on a module you would install. Only an admitted publisher key signs a manifest, so a remaining gap
   that needs one is an admitted-device residual (accepted for 3.x).
+- **Module config secrets sit in a plaintext node file (3.1).** A `secret` key in a `config_schema` is node-scoped by
+  the validator, so it is never journaled or synced, and the CLI never takes it from the command line (shell history,
+  `ps`), masks it in `list`, `get`, `--json`, `validate` and the doctor, and refuses it from `--fleet`. It is stored in
+  `<module dir>/config` (0600, written through a 0600 temp file renamed in place), unencrypted: the operator, any
+  process running as the operator, and the module itself can read it, which is B9 (modules are unconfined as the
+  operator). `--set-env` and `--stdin` move a secret through the environment or a pipe, which other processes of the
+  same user can observe; the operator rule is to prefer the terminal prompt. An `identifying` fleet value is journaled
+  and visible to every admitted device for good, and the CLI says so when it is set; the validator refuses a shipped
+  default on such a key, but a publisher's *files* can still carry identifying text (`module check` only warns). A
+  `fleet` or `fleet-node` value is signed by the owner key; a `fleet-node` key names a device by a convention, so an
+  owner can set another device's key, and a module must treat the layers as the owner's word, never as input from the
+  device itself. Only an admitted device or the operator can reach any of these, so a gap here is an admitted-device
+  residual (accepted for 3.x).
 - **`hv doctor` `owner-copies` is a name-only check.** It looks one level deep in four directories
   (`$HIVE_HOME`, the current directory, the home directory, the identity stash) for `hive-owner-*.key` and
   the stash's `.owner-key`, and never opens a file. The default export and `--plaintext` share a basename,

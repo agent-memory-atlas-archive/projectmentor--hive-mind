@@ -298,7 +298,7 @@ A module is a git repository with a signed manifest. `hive-mind module add` chec
 | `files` | `{relative path: sha256 hex}` for every file, 1 to 500 of them. The fetched tree must hold exactly these files and no others. Required. |
 | `service` | Optional. `{"command": [argv…], "restart": "no" \| "on-failure" \| "always", "interval": seconds ≥ 60, "stop_grace": seconds 1–3600}`. `interval` makes it a timer. `stop_grace` *(2.3)* renders `TimeoutStopSec` and `KillMode=mixed`: on stop only the main process gets SIGTERM and may drain a long one-shot for that many seconds; systemd then SIGKILLs the whole group. Without it systemd's default stop timeout applies. |
 | `hooks` | Optional list of events the module hooks; each needs a `hooks/<event>` file in the manifest. See *Hooks and events*. |
-| `config` | Optional `{key: default string}`, per-node defaults under the module's own prefix. |
+| `config` | Optional `{key: default string}`, per-node defaults under the module's own prefix. Replaced by `config_schema` under `contract` *(3.1)*: see [`MODULES.md`](MODULES.md). |
 | `quota` | Optional `{per_hour, per_day, entry_bytes, lifetime}`: at most the defaults. |
 
 A field this node does not know is refused, not ignored.
@@ -317,6 +317,7 @@ below describe the owner path.
 | `update <name> [--from <repo>]` | Re-verify and swap atomically. A different publisher key than the pin is refused. The device, key, pin and per-node config survive. |
 | `list` | Name, version, publisher fingerprint, signature state, service state, device state, quota use. |
 | `config <name> set <key> <value> \| unset <key> \| list` | *(2.3)* Edit the module's per-node config file. Local to this node, never journaled, no owner key needed; keys follow the manifest's rule, values are strings of at most 4096 characters (a value starting with `-` needs `--` first), written atomically with mode 0600. `list` prints `key=value`, sorted. An `update` keeps what you set. |
+| `config <name> list \| get <key> \| validate [--json]`, `set <key> [<value>] [--fleet \| --fleet-node DEVICE] [--stdin]` | *(3.1)* With a `config_schema` (contract 1): typed, scoped, `secret` and `identifying` keys, a merged view with each value's source, `validate`, and owner-signed `--fleet` and `--fleet-node` layers (`x-<module>:<key>`, `x-<module>:node.<16 hex>.<key>`). A secret is masked in every output and never taken from argv. `add` and `update` take `--set`, `--set-fleet`, `--set-env` and `--non-interactive`, and refuse a missing required key before staging. Full rules in [`MODULES.md`](MODULES.md). |
 | `quota <name> [--per-hour N] [--per-day N] [--entry-bytes N] [--lifetime N]` | The owner's limits for one module. |
 
 A module is installed under `$HIVE_MODULES_DIR` (default `~/.hive/modules/<name>/`), **outside the checkout**, so
@@ -404,4 +405,6 @@ lists the events the module hooks, and each `hooks/<event>` file is listed in th
 The owner sets `x-<module>:<key>` as a string with a signed `set-config`; every node projects it, a node that does
 not know the key ignores it, and core never interprets the value. A module reads it through `GET /v1/`, and cannot
 write governed config. A bare key core does not know is still refused, and a key set by anyone but the owner does
-not project.
+not project. Under a `config_schema` *(3.1)* the same entry carries a `fleet` key as `x-<module>:<key>` and a
+`fleet-node` key as `x-<module>:node.<16 hex>.<key>` (a naming convention: the entry, projection and sync are
+unchanged). `GET /v1/` returns both forms in `config`; a `secret` key is never fleet-scoped, so no secret appears there.

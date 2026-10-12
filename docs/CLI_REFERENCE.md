@@ -1365,12 +1365,14 @@ hive-mind <subcommand> [options]
 
 ```
 hive-mind module add <name> --from <repo> [--publisher KEY] [--principal P]
+                     [--set KEY=VALUE]... [--set-fleet KEY=VALUE]... [--set-env KEY=VARIABLE]... [--non-interactive]   # (3.1)
 hive-mind module add --abort <name>          # (2.3)
 hive-mind module remove <name>
-hive-mind module update <name> [--from <repo>] [--publisher KEY]
+hive-mind module update <name> [--from <repo>] [--publisher KEY] [--set ...] [--set-fleet ...] [--set-env ...] [--non-interactive]
 hive-mind module list
 hive-mind module check <dir> [--run] [--deny TERM] [--json]       # (3.1)
-hive-mind module config <name> set <key> <value> | unset <key> | list
+hive-mind module config <name> set <key> [<value>] [--fleet | --fleet-node DEVICE] [--stdin] | unset <key> | list [--merged] | get <key> | validate   # get, validate, --fleet*, --stdin: (3.1)
+                          # list, get, validate take --json
 hive-mind module quota <name> [--per-hour N] [--per-day N] [--entry-bytes N] [--lifetime N]
 ```
 
@@ -1395,6 +1397,14 @@ admitted until the owner runs it.** `quota` stays owner-only.
 `config` *(2.3)* edits the module's per-node config file: `set` and `unset` change one key, `list` prints `key=value`, sorted. It is local to this
 node and never journaled, and needs no owner key. An `update` keeps what you set. A manifest's `service.stop_grace` *(2.3)* gives a long
 one-shot that many seconds to drain on stop; a stop, disable or restart waits for it, and `remove` deletes nothing while the unit is still draining.
+
+*(3.1)* A module whose manifest has a `config_schema` (contract 1) gets typed, scoped config. `config get` and `list` print the
+merged value and its source (`node`, `fleet-node`, `fleet`, `default`); `set` checks the key, type, bounds and enum and that the
+flag matches the key's scope (none for `node`, `--fleet`, `--fleet-node <device>`), and the two fleet layers are owner-signed
+(`x-<module>:<key>` and `x-<module>:node.<16 hex>.<key>`). `set` to the current value signs nothing. `validate` exits 1 on a bad value or a
+missing required key. A `secret` key is masked everywhere and never read from the command line: `set` asks on a terminal or reads
+`--stdin`, and `add` takes `--set-env KEY=VARIABLE`. `add` and `update` refuse a missing `required_at_install` key (asking on a terminal unless
+`--non-interactive`) before anything is fetched into place, minted or signed. Rules and layers: [`MODULES.md`](MODULES.md).
 
 `hv doctor` reports each installed module as `modules:<name>` (a missing, tampered or wrongly signed manifest **fails**;
 an absent or stopped unit, a revoked device, missing config, a down listener and quota past 80% **warn**) and

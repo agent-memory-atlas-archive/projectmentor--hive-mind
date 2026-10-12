@@ -164,7 +164,7 @@ def _hooks(moddir, manifest):
     return out
 
 
-def _config(moddir, manifest):
+def _config(moddir, manifest, gov=None, node_id=None):
     try:
         cfg = json.loads((moddir / "config").read_text())
     except (OSError, ValueError):
@@ -178,6 +178,11 @@ def _config(moddir, manifest):
     bad = sorted(k for k, v in cfg.items() if not isinstance(v, str) or len(v) > vocabulary.MODULE_VALUE_MAX)
     if bad:
         out.append(("warn", f"config values must be strings of at most {vocabulary.MODULE_VALUE_MAX}: {', '.join(bad)}"))
+    schema = manifest.get("config_schema")
+    if schema is not None and gov is not None:      # 3.1: values against the schema (key and rule only: never a value)
+        fleet, mine = hive_modules.fleet_layers(gov, manifest["name"], node_id)
+        errors, warnings = hive_modules.config_problems(schema, cfg, fleet, mine)
+        out += [("warn", f"config: {m}") for m in errors + warnings]
     return out
 
 
@@ -215,7 +220,7 @@ def _module(hv, gov, name, rec, entries, listener, now):
     if manifest is not None and manifest["name"] == name:
         problems += _units(name, manifest, key_dir)
         problems += _hooks(moddir, manifest)
-        problems += _config(moddir, manifest)
+        problems += _config(moddir, manifest, gov, hv.NODE_ID)
     if not listener[0]:
         problems.append(("warn", f"the module API is not listening on 127.0.0.1:{listener[1]} (the sync daemon serves it)"))
     used = None
