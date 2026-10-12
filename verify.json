@@ -1,5 +1,5 @@
 {
-  "digest": "a257e1d81f5596fc7cb35e11605993b1b175593c432b0db167b6ea7eb916929f",
+  "digest": "5c510247eaeb07f4137f568f579418f2b5b30489d2cece338735f1e134b6946d",
   "files": {
     ".github/FUNDING.yml": "ca6c63d7539bb7d2f809b5068781c78de97c028a44c5ae252b11bc1695caf85d",
     ".github/ISSUE_TEMPLATE/bug_report.yml": "22df51b1e51c25f50726392c79811116b88c40370843ff2d4a3e76b643f1cb68",
@@ -172,7 +172,7 @@
     "tests/test_module_api.py": "677a209fa24b7c9846154163e6f4b401e50cf70b38cc2e8129932bbc5fd956e0",
     "tests/test_module_doctor.py": "6bdb072ddead7af502cffd00f882dd940796bd9283108bb079098bbe54166603",
     "tests/test_module_identity.py": "c9401d312a7120367f0234d5732588d251e04b1678d1377cd3f09ad9a5a76052",
-    "tests/test_module_lifecycle.py": "7dbe0fc196325242cf6feeb594f0588bdebb1e4b03cc2bca3b48d63cdf60b524",
+    "tests/test_module_lifecycle.py": "4557264641963e9cfbd22648c870ef9c97f94c7a42ae1a48a1f11352b17073ca",
     "tests/test_module_names.py": "ec5b9e88701b5f5548cbc92d42b78340d9f10fc37777321f66004f9b4d140fe5",
     "tests/test_module_nonowner.py": "497752ba54c58da6c17bf27aa32f77aad09796a1c7b8c85bf49c76df2d500555",
     "tests/test_module_policy_projection.py": "197252c3763b4f8f80991dbf3e618751936a708566e23317351ada585cf5c93f",
@@ -227,12 +227,12 @@
     "tests/test_vocabulary.py": "6928a4b0024639eb88a03b76ec330cad97acc1dfde76bc79c962b0c8d89d8ee5",
     "tests/test_whoami.py": "5f709c47c4a6a2ec89e4c1975d60bac3390ad969fe08a98af9a9a961cdf60193",
     "tests/test_wire.py": "2667a1a021064521c249bb2753247dd74474622ebe290acc792256146fa9d31e",
-    "tests/test_wire_secrets.py": "16694044da235bb1a42414490f01353f09ede815965568a2777f291dd82d7a99",
+    "tests/test_wire_secrets.py": "7c966273bf573b5b1823101556bec738311a71bc9709b4052702a788b91432c2",
     "tests/test_workflow_secrets.py": "0a1b019e50146b801fda8478e02488ca812eb3e0cbb0d047506c1a1e346cd83e",
     "tests/test_x25519.py": "c63b644d960b1282eda8746cbd9ba53f8b2341e3308f72f12f894122ab391df5",
     "vocabulary.py": "3a6977fc89573561e6248748db90379acc810ff183556e220ce6bf1b2c0d0d3b",
     "x25519.py": "ec1967595a2306cde860afe4dffab40a3f833d089de6caf5c9c080df8fd45726"
   },
-  "sequence": 553,
+  "sequence": 555,
   "version": "3.0"
 }
