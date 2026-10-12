@@ -707,25 +707,62 @@ def _save_config(path, have):
         raise
 
 
+_SECRET_KEY_RE = re.compile(r"token|secret|passw|passphrase|credential|api[._-]?key|private|(^|[._-])key$", re.I)
+
+
+def _is_secret_key(key):
+    """A config key that holds a secret, by name: its value never travels on argv or into output."""
+    return bool(_SECRET_KEY_RE.search(key or ""))
+
+
+def _config_secret_value(args):
+    """The value for a secret key, read from --stdin, --file or a hidden prompt, never from argv."""
+    if getattr(args, "stdin", False):
+        data = sys.stdin.read()
+        return data.rstrip("\n") if data else None
+    if getattr(args, "file", None):
+        try:
+            return Path(args.file).expanduser().read_text().rstrip("\n")
+        except (OSError, ValueError) as e:
+            raise ModuleError(f"could not read {args.file}: {e}")
+    import getpass
+    try:
+        return getpass.getpass(f"Enter value for {args.key} (hidden): ") or None
+    except (EOFError, KeyboardInterrupt):
+        return None
+
+
 def cmd_config(lib, args):
     """`module config <name> set|unset|list`: edit the per-node config file (local, never journaled, kept by update).
-    No owner key is needed: it is this node's own file."""
+    No owner key is needed: it is this node's own file. A secret key (token, password, ...) is taken from
+    --stdin, --file or a prompt, never argv, and `list` masks it."""
     path = _config_path(lib, args.name)
     have = _read_config(path)
     if args.action == "list":
         for k in sorted(have):
-            print(f"{k}={have[k]}")
+            print(f"{k}={'********' if _is_secret_key(k) and have[k] else have[k]}")
         return
     if not vocabulary.split_module_name(f"x-{args.name}:{args.key}"):
         raise ModuleError(f"bad config key {args.key!r}: 1 to {vocabulary.MODULE_KEY_MAX} letters, digits, . _ - "
                           "starting with a letter or digit")
     if args.action == "set":
-        if args.value is None:
+        secret = _is_secret_key(args.key)
+        if secret:
+            if args.value is not None:
+                raise ModuleError(f"{args.key!r} holds a secret: do not put it on the command line (it would "
+                                  f"show in the process list and shell history). Use --stdin, --file PATH, "
+                                  f"or omit the value to be prompted")
+            value = _config_secret_value(args)
+        else:
+            value = args.value
+            if value is None and (getattr(args, "stdin", False) or getattr(args, "file", None)):
+                value = _config_secret_value(args)
+        if value is None:
             raise ModuleError("config set needs a value")
-        if len(args.value) > vocabulary.MODULE_VALUE_MAX:
+        if len(value) > vocabulary.MODULE_VALUE_MAX:
             raise ModuleError(f"config value is longer than {vocabulary.MODULE_VALUE_MAX} characters")
-        have[args.key] = args.value
-        print(f"{args.name}: set {args.key}={args.value}")
+        have[args.key] = value
+        print(f"{args.name}: set {args.key}")
     else:
         if args.key not in have:
             raise ModuleError(f"{args.name} has no config key {args.key!r}")
@@ -1013,6 +1050,8 @@ def build_parser():
     c.add_argument("action", choices=("set", "unset", "list"))
     c.add_argument("key", nargs="?")
     c.add_argument("value", nargs="?")
+    c.add_argument("--stdin", action="store_true", help="read the value from standard input")
+    c.add_argument("--file", metavar="PATH", help="read the value from a file")
     return p
 
 
@@ -1025,6 +1064,9 @@ def main(lib, argv):
     args = build_parser().parse_args(argv)
     if args.verb == "config":
         extra = args.key if args.action == "list" else args.value if args.action == "unset" else None
+        if args.action != "set" and (args.stdin or args.file):
+            print("hive-mind module: --stdin/--file only apply to config set", file=sys.stderr)
+            return 2
         if extra is not None or (args.action != "list" and args.key is None):
             print(f"hive-mind module: config {args.action} takes the wrong arguments", file=sys.stderr)
             return 2

@@ -19,6 +19,7 @@
   "verify": {
     "http": "https://api.example.com/v1/ping",
     "headers": {"Authorization": "Bearer {EXAMPLE_API_TOKEN}"},
-    "expect": "\"ok\":true"
+    "expect": "\"ok\":true",
+    "_cmd_example": "Instead of http, `\"cmd\": \"curl -fsS -H \\\"Authorization: Bearer {EXAMPLE_API_TOKEN}\\\" https://api.example.com/v1/ping\"` runs in bash. {NAME} becomes ${NAME} read from the environment, so always wrap it in double quotes, and never put $NAME on a tool's argv: use the tool's --config, an @file, stdin or netrc."
   }
 }
