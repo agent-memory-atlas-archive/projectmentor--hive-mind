@@ -405,6 +405,17 @@ here". **A unit that is enabled but `inactive` was stopped on purpose, and `--fi
 reports it, with the `systemctl --user start` line that resumes it, and the 15-minute timer never restarts it. `--fix`
 acts only on a module whose manifest verifies, never re-admits a revoked device and never touches governance.
 
+**The module's own doctor (3.1, contract 1).** If the manifest declares `doctor` (an argv), `hv doctor` runs it for a
+module whose manifest verifies under the pinned publisher and appends its results to the `modules:<name>` result;
+`module add` and `update` run it at the end and print it; the `hive-doctor` timer runs it with `HIVE_DOCTOR_MODE=timer`.
+It prints `{"schema": 1, "results": [{"level": "ok"|"warn"|"fail", "check": string, "message": string, "fix_hint"?: string}]}`
+and exits 0 unless a result is `fail`. Core caps: 20 s, 64 KiB, 100 results, 400 characters a string, control characters
+removed. A timeout, a crash, a missing command, a malformed answer or a non-zero exit with no `fail` is a `warn`, never
+a failure of the core's checks. Its environment is `PATH`, `HOME`, `LANG`, `HIVE_MODULE_NAME`, `HIVE_MODULE_DIR`,
+`HIVE_MODULE_KEY_DIR` and `HIVE_DOCTOR_MODE` (`manual|install|update|boot|timer`) and nothing else. Results are cached
+in `$HIVE_HOME/.module-doctor/<name>.json` (0600, local, not journaled): `{"schema": 1, "module", "version", "mode",
+"at", "worst", "results"}`. `--fix` never runs it.
+
 ### Hooks and events
 
 A module reacts to a Claude Code lifecycle event by shipping an executable file at `hooks/<event>` in its tree. The

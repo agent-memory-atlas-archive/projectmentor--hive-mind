@@ -76,6 +76,7 @@ Type=oneshot
 WorkingDirectory=$hive_dir
 ExecStart=/usr/bin/python3 $hive_dir/hv doctor --fix
 Environment=HIVE_HOME=$hive_dir
+Environment=HIVE_DOCTOR_MODE=timer
 StandardOutput=journal
 StandardError=journal
 UNIT

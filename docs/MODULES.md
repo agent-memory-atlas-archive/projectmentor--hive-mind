@@ -84,9 +84,31 @@ control characters, and a relative first word may not leave the module's directo
 **The doctor answer** is `{"schema": 1, "results": [{"level": "ok"|"warn"|"fail", "check", "message",
 "fix_hint"?}]}` with at most 100 results and 400 characters a string, exit 0 unless a result is `fail`.
 
-*In 3.1 the core validates and signs for all of these fields; the behaviour that acts on each lands one slot at a time
-(the doctor runner and the read routes still to come), each documented here when it does. The config schema, the
-runtimes and the CLI launcher act now, below.*
+*In 3.1 the core validates and signs for all of these fields; the behaviour that acts on each lands one slot at a time,
+each documented here when it does. The config schema, the runtimes, the CLI launcher, the doctor and the read routes
+act now, below.*
+
+#### The doctor slot
+
+A contract-1 module that declares `doctor` has the core run it. It is an argv with no shell, run in the module's
+directory with the module's PATH and an environment built from nothing: `HIVE_MODULE_NAME`, `HIVE_MODULE_DIR`,
+`HIVE_MODULE_KEY_DIR`, `HIVE_DOCTOR_MODE` (`manual`, `install`, `update`, `boot` or `timer`, so a module can do a deeper
+check at install and a cheap one on a timer), `PATH`, `HOME` and `LANG`. The owner key, its passphrase, the identity stash
+and every other `HIVE_*` variable are not passed. Do not write into `HIVE_MODULE_DIR`: a file the manifest does not list
+makes the tree fail its check.
+
+The core reads the answer as text and caps it: 20 seconds, 64 KiB, 100 results, 400 characters a string, control
+and bidi characters removed. A module that times out, crashes, prints something else or exits non-zero without a `fail`
+result gets one **warn** naming the problem; the core's own checks never wait on it. A `fail` it reports is a `fail`.
+
+It runs in `hv doctor` (its results join the `modules:<name>` line; a `fail` makes that line fail), at the end of
+`module add` and `module update` (printed; the install is never rolled back, and `--require-healthy` makes a reported
+`fail` set exit 1), and from the 15-minute `hive-doctor` timer with `HIVE_DOCTOR_MODE=timer`. It runs only for a module
+whose manifest verifies and is signed by the pinned publisher. The latest results are cached in
+`$HIVE_HOME/.module-doctor/<name>.json` (0600, local, never journaled) with the time they were taken, so a dashboard
+shows them and their age without starting module code. The fix step of `hv doctor --fix` never runs module code (its check pass does run the doctor, which is how the timer gets `timer` mode) and never treats a
+module's output as an action; `fix_hint` is text. A runtime the manifest declares that is not on the module's PATH is
+a core **warn** (`hive-mind module runtime <name> <program> <dir>`).
 
 #### Runtimes, the unit PATH and the CLI launcher
 

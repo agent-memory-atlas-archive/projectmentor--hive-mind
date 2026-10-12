@@ -19,7 +19,7 @@ memory.
 | `hv dash` | Open the read-only web dashboard (served by the sync daemon) |
 | `hv decide` | Record a decision |
 | `hv discover` | Find hives on your tailnet |
-| `hv doctor` | Check that your device is healthy; `--fix` self-heals (orphan daemons + Claude Code hooks/skill); subcommands `merkle`, `rebuild` |
+| `hv doctor` | Check that your device is healthy; `--fix` self-heals (orphan daemons + Claude Code hooks/skill); subcommands `merkle`, `rebuild`. *(3.1)* For a contract-1 module it also runs the module's own `doctor` (`HIVE_DOCTOR_MODE` in the environment names the caller: `manual` by default, `timer` from the 15-minute timer) |
 | `hv entity` | Track named things (people, projects, concepts); `join`/`unjoin` a module's entity to a shared one *(2.1)* |
 | `hv feed` | Read-only journal feed for modules and operators: entries past a per-node cursor, as JSON *(2.1)* |
 | `hv group` | The membership roster (`list`); the lifecycle (admit/revoke/deny/change/purge) is `hive-mind group …` (owner) |
@@ -1376,11 +1376,11 @@ hive-mind <subcommand> [options]
 ### `hive-mind module` — Install and manage modules *(2.1, Linux only)*
 
 ```
-hive-mind module add <name> --from <repo> [--publisher KEY] [--principal P]
+hive-mind module add <name> --from <repo> [--publisher KEY] [--principal P] [--require-healthy]   # --require-healthy: (3.1) exit 1 when the module's doctor reports a fail
                      [--set KEY=VALUE]... [--set-fleet KEY=VALUE]... [--set-env KEY=VARIABLE]... [--non-interactive]   # (3.1)
 hive-mind module add --abort <name>          # (2.3)
 hive-mind module remove <name>
-hive-mind module update <name> [--from <repo>] [--publisher KEY] [--set ...] [--set-fleet ...] [--set-env ...] [--non-interactive]
+hive-mind module update <name> [--from <repo>] [--publisher KEY] [--require-healthy] [--set ...] [--set-fleet ...] [--set-env ...] [--non-interactive]
 hive-mind module list
 hive-mind module check <dir> [--run] [--deny TERM] [--json]       # (3.1)
 hive-mind module config <name> set <key> [<value>] [--fleet | --fleet-node DEVICE] [--stdin] | unset <key> | list [--merged] | get <key> | validate   # get, validate, --fleet*, --stdin: (3.1)

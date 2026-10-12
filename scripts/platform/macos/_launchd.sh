@@ -95,7 +95,7 @@ PLIST
   </array>
   <key>WorkingDirectory</key><string>$hive_dir</string>
   <key>EnvironmentVariables</key>
-  <dict><key>HIVE_HOME</key><string>$hive_dir</string></dict>
+  <dict><key>HIVE_HOME</key><string>$hive_dir</string><key>HIVE_DOCTOR_MODE</key><string>timer</string></dict>
   <key>RunAtLoad</key><true/>
   <key>StartInterval</key><integer>900</integer>
   <key>StandardOutPath</key><string>$_LAUNCHD_LOG_DIR/hive-doctor.log</string>
