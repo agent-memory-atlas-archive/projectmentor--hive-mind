@@ -770,6 +770,7 @@ def test_config_secret_key_is_refused_on_argv_and_taken_from_stdin(hive, tmp_pat
     d = tmp_path / "modules" / "demo"
     r = _run(hive, "module", "config", "demo", "set", "channel.github.token", "ghp_argvsecret", check=False)
     assert r.returncode == 1 and "ghp_argvsecret" not in r.stdout + r.stderr
+    assert "do not put it on the command line" in r.stderr
     assert "channel.github.token" not in json.loads((d / "config").read_text())
     env = dict(os.environ, HIVE_HOME=str(hive), HIVE_MODULES_DIR=str(tmp_path / "modules"))
     p = subprocess.run([sys.executable, str(PROJECT / "hivemind_ctl.py"), "module", "config", "demo", "set",

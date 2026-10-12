@@ -1651,7 +1651,8 @@ def _config_value_arg(args, key, spec):
         return _read_secret_file(args.file)
     if secret:
         if args.value is not None:
-            raise ModuleError(f"{key} is a secret: it is never taken from the command line (shell history, `ps`). "
+            raise ModuleError(f"{key} is a secret: do not put it on the command line (shell history, `ps`); "
+                              "it is never taken from the command line. "
                               "Omit the value to be asked, or pass --stdin or --file PATH")
         if sys.stdin is None or not sys.stdin.isatty():
             raise ModuleError(f"{key} is a secret: no terminal to ask on, so pass --stdin or --file PATH")
