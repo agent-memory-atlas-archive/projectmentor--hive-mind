@@ -37,6 +37,8 @@ introduced (a contract) or tagged (a patch).
 - Tests: the signer-seam only-caller guard now follows names bound to the `ed25519` module or its `sign` attribute (aliases, `getattr`, walrus), with planted alias probes (#386).
 - The `hv-move-gate` CI job and `scripts/common/hv_move_gate.py` are retired now the 3.1 split is done; docs and comments that cited `hv` line numbers or described `hv` as one file point at `hivemind/parts/` (#380).
 - Document the S2 exec ban's limits in `docs/THREAT_MODEL.md`: what a static name list cannot catch, and that only a writer of signed core can plant it (#384); docs only.
+- `hv module config set` never echoes the value (matches main, #399): it prints `set <key>` or `<key> is already set`; `owner unlock` names its passphrase variable as a literal. Clears CodeQL clear-text-logging alerts 14–18.
+- Tests: three macOS-only test failures fixed (boot-unit uninstall tests now pose as Linux via a `uname` shim; owner-agent wrong-uid test tolerates EPIPE).
 - **3.1: contract 3.1.** `CONTRACT_VERSION` is `3.1`, additive for the adapter surface: no verb, flag or output an adapter calls changes, so an adapter written for 3.0 keeps working. A module author gains manifest contract 1 (`cli`, `runtimes`, `config_schema`, `status`, `doctor`, `reads`, `ui`, `trust`), and the dashboard and session telemetry are now the `hdash` and `hwatch` modules. `docs/CONTRACT_HISTORY.md` has the entry.
 
 ## 3.0.1 — 2026-10-11 · `v3.0.1`
