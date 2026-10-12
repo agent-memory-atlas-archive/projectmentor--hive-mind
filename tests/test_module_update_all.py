@@ -7,6 +7,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 PROJECT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT))
 sys.path.insert(0, str(PROJECT / "tests"))
@@ -116,3 +118,34 @@ def test_a_disabled_module_runs_no_hooks(hive, tmp_path, units):
     refresh(hive)
     assert "disabled" in _state(hive)["demo"]
     assert not fire()
+
+
+@LINUX_ONLY
+def test_a_disabled_module_loses_its_launcher_and_a_failed_update_does_not_bring_it_back(hive, tmp_path, units, monkeypatch):
+    bindir = tmp_path / "launchers"
+    bindir.mkdir(mode=0o755)
+    monkeypatch.setenv("HIVE_BIN_DIR", str(bindir))
+    files = {**HOOK, "cli.sh": "#!/bin/sh\nexit 0\n"}
+    kw = dict(files=files, min_core="3.1", contract=1, config=None, cli={"name": "democtl", "command": ["cli.sh"]},
+              service={"command": ["run.sh"]})
+    pub = _publish(tmp_path / "repo", **kw)
+    add(hive, tmp_path / "repo", pub)
+    assert (bindir / "democtl").exists()
+    break_installed(tmp_path)
+    _publish(tmp_path / "repo", version="2.0.0", seed=OTHER_SEED, **kw)
+    refresh(hive)
+    assert "disabled" in _state(hive)["demo"]
+    assert not (bindir / "democtl").exists()                                # the launcher would still run the rejected tree
+    kw["service"] = {"command": ["run.sh"], "restart": "always"}             # the fix changes the unit text...
+    _publish(tmp_path / "repo", version="2.1.0", **kw)                      # ...and the unit file cannot be written
+    unit = units[0] / "hive-module-demo.service"
+    unit.chmod(0o400)
+    try:
+        r = _run(hive, "module", "update", "demo", check=False)
+    finally:
+        unit.chmod(0o600)
+    if r.returncode == 0:
+        pytest.skip("the unit file stayed writable (running as root)")
+    rec = _state(hive)["demo"]
+    assert "disabled" in rec and rec["version"] == "1.0.0"
+    assert not (bindir / "democtl").exists()                                # the rollback left it stopped, not runnable

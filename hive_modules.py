@@ -1949,7 +1949,8 @@ def _update_tree(lib, args, state, rec, source, src, manifest, head):
                     install_units(lib, args.name, before_manifest, recorded_path(rec))
                 if plan and plan.get("launcher") != rec.get("launcher"):
                     remove_launcher(plan["bin_dir"], plan.get("launcher"), args.name)
-                _restore_launcher(lib, args.name, rec, before_manifest)
+                if not is_disabled(rec):              # a disabled module's launcher stays gone: it would run the rejected tree
+                    _restore_launcher(lib, args.name, rec, before_manifest)
             except (OSError, ValueError, KeyError):
                 pass
         shutil.rmtree(staging, ignore_errors=True)
