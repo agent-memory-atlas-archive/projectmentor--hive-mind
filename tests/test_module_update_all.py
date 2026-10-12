@@ -149,3 +149,16 @@ def test_a_disabled_module_loses_its_launcher_and_a_failed_update_does_not_bring
     rec = _state(hive)["demo"]
     assert "disabled" in rec and rec["version"] == "1.0.0"
     assert not (bindir / "democtl").exists()                                # the rollback left it stopped, not runnable
+
+
+@LINUX_ONLY
+def test_refresh_never_raises_the_trust_tier_without_the_owner_key(hive, tmp_path, units, monkeypatch):
+    pub = _publish(tmp_path / "repo", trust="confined", min_core="3.1", contract=1, config=None)
+    add(hive, tmp_path / "repo", pub)
+    _publish(tmp_path / "repo", version="1.1.0", min_core="3.1", contract=1, config=None)     # no `trust`: confined -> trusted
+    monkeypatch.delenv("HIVE_OWNER_KEY_PASSPHRASE")
+    before, tree = _state(hive), sorted((p.name, p.read_bytes()) for p in (tmp_path / "modules" / "demo").rglob("*") if p.is_file())
+    r = refresh(hive)
+    assert "NOT updated" in r.stderr and "owner unlock" in r.stderr
+    assert _state(hive) == before and before["demo"]["version"] == "1.0.0" and before["demo"]["trust"] == "confined"
+    assert sorted((p.name, p.read_bytes()) for p in (tmp_path / "modules" / "demo").rglob("*") if p.is_file()) == tree

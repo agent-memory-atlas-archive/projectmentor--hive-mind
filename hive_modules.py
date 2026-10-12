@@ -60,9 +60,10 @@ NOT_SUPPORTED = "module management is not supported on this platform yet (2.1 sh
 HOOK_EVENTS = ("session-start", "user-prompt", "precompact", "sessionend", "notification", "stop")
 BASE_KEYS = {"name", "version", "min_core", "publisher", "files", "service", "hooks", "config", "quota"}
 # Manifest contract 1 (3.1): optional, and only under `contract`. A manifest without `contract` is a 2.1/3.0 manifest.
-CONTRACT_KEYS = ("cli", "runtimes", "config_schema", "status", "doctor", "reads", "ui")
+CONTRACT_KEYS = ("cli", "runtimes", "config_schema", "status", "doctor", "reads", "ui", "trust")
 MANIFEST_KEYS = BASE_KEYS | {"contract", *CONTRACT_KEYS}
 CONTRACTS = (1,)                                    # the manifest contracts this core knows
+TRUST_TIERS = ("confined", "trusted")                # lowest first; a manifest without `trust` is `trusted`
 CONTRACT_MIN_CORE = {1: (3, 1)}                     # the oldest core a manifest of that contract may name in `min_core`
 QUOTA_KEYS = ("per_hour", "per_day", "entry_bytes", "lifetime")
 QUOTA_DEFAULTS = {"per_hour": 60, "per_day": 500, "entry_bytes": 16 * 1024, "lifetime": 50000}
@@ -239,6 +240,31 @@ def _reads_record(manifest):
     """{"reads": [...]} for the `.modules.json` row of a manifest that declares read routes, else {}: the row of a
     manifest without `contract` is byte-for-byte what it was. `hive_module_api` serves a route only if it is here."""
     return {"reads": list(manifest["reads"])} if manifest.get("reads") else {}
+
+
+def signed_trust(manifest):
+    """The tier the publisher signed: `trusted` when the manifest does not say."""
+    return manifest.get("trust", "trusted")
+
+
+def effective_trust(rec):
+    """The tier this node holds a module to: the lower of what the publisher signed and what the operator set locally.
+    A row from before the field existed reads as `trusted`, as a manifest without it does."""
+    signed, local = rec.get("trust", "trusted"), rec.get("trust_local")
+    return local if local in TRUST_TIERS and TRUST_TIERS.index(local) < TRUST_TIERS.index(signed) else signed
+
+
+def _trust_record(manifest):
+    """{"trust": "confined"} for a module signed `confined`, else {}: a `trusted` row is byte-for-byte what it was."""
+    return {"trust": "confined"} if signed_trust(manifest) == "confined" else {}
+
+
+def trust_summary(manifest):
+    """The install-summary line for a manifest's tier. `trusted` is stated loudly: it is the tier of a manifest that
+    says nothing, and it runs with this user's access."""
+    if signed_trust(manifest) == "confined":
+        return "trust: confined (the publisher signed it to run with reduced access)"
+    return "trust: TRUSTED (runs as your user, with your user's access; the publisher did not sign it as confined)"
 
 
 def reads_summary(manifest):
@@ -432,6 +458,8 @@ def _validate_contract(m):
                 or not all(isinstance(r, str) and RUNTIME_NAME.match(r) and r not in (".", "..") for r in rt)):
             raise ModuleError(f"manifest runtimes must be at most {MAX_RUNTIMES} distinct program names (letters, digits, . _ -; "
                               "no slash: a module names programs, never directories)")
+    if "trust" in m and m["trust"] not in TRUST_TIERS:
+        raise ModuleError(f"manifest trust must be one of: {', '.join(TRUST_TIERS)} (absent means trusted)")
     if "reads" in m:
         rd = m["reads"]
         if not isinstance(rd, list) or len(set(map(str, rd))) != len(rd) or not all(r in READ_ROUTES for r in rd):
@@ -602,6 +630,7 @@ def _confirm_publisher(manifest, expected, pinned=None):
                               f"{fingerprint(pinned)}: refusing. Remove and re-add it to change publishers.")
         return
     print(f"module {manifest['name']} {manifest['version']} is signed by publisher key {pub} (fingerprint {fingerprint(pub)})")
+    print("  " + trust_summary(manifest))
     if reads_summary(manifest):
         print("  " + reads_summary(manifest))
     if expected is not None:
@@ -771,7 +800,7 @@ def _complete_add(lib, args, name, root, rec):
         state[name] = {"version": manifest["version"], "publisher": manifest["publisher"], "device_id": dev,
                        "source": rec["source"], "commit": rec["commit"], "installed_at": int(time.time()),
                        "quota": dict(manifest.get("quota") or {}), "owner_quota": {},
-                       **_reads_record(manifest)}
+                       **_reads_record(manifest), **_trust_record(manifest)}
         record_plan(state[name], plan)
         save_state(lib, state)
     except BaseException:
@@ -1819,7 +1848,7 @@ def cmd_add(lib, args):
             state[name] = {"version": manifest["version"], "publisher": manifest["publisher"], "device_id": device_id,
                            "source": args.source, "commit": head, "installed_at": int(time.time()),
                            "quota": dict(manifest.get("quota") or {}), "owner_quota": {},
-                           **_reads_record(manifest)}
+                           **_reads_record(manifest), **_trust_record(manifest)}
             record_plan(state[name], plan)
             save_state(lib, state)
         except BaseException:
@@ -1906,6 +1935,40 @@ def _remove_without_owner(lib, name, device_id, state):
         print(f"removed module {name} from this node; its device {device_id} is already {_device_state(lib, device_id)}")
 
 
+def _check_trust_raise(lib, rec, manifest, prompt=True):
+    """An update may keep or lower the tier the module holds; one that signs a higher tier than the node last held it
+    at is a raise, and only the owner's key may make it. Checked before anything is fetched into place."""
+    old = rec.get("trust", "trusted")
+    if TRUST_TIERS.index(signed_trust(manifest)) > TRUST_TIERS.index(old):
+        print(f"module {manifest['name']}: this update raises the signed trust tier from {old} to {signed_trust(manifest)}")
+        _require_owner(lib, prompt=prompt)
+
+
+def cmd_trust(lib, args):
+    """Show a module's tier, or set the node-local one. `confined` lowers it and needs no key; `trusted` clears that
+    lowering, which is a raise, so it needs the owner's key. Neither goes above what the publisher signed."""
+    state = load_state(lib)
+    rec = state.get(args.name)
+    if rec is None:
+        raise ModuleError(f"module {args.name!r} is not installed")
+    if args.tier is None:
+        print(f"{args.name}: {effective_trust(rec)} (signed {rec.get('trust', 'trusted')}"
+              + (f", lowered on this node to {rec['trust_local']}" if rec.get("trust_local") else "") + ")")
+        return
+    if args.tier == "trusted":
+        if rec.get("trust_local"):
+            _require_owner(lib)
+            rec.pop("trust_local")
+            save_state(lib, state)
+        if rec.get("trust", "trusted") == "confined":
+            print(f"{args.name} stays confined: the publisher signed it that way, and only a signed manifest raises it")
+            return
+    elif rec.get("trust", "trusted") != "confined":
+        rec["trust_local"] = "confined"
+        save_state(lib, state)
+    print(f"{args.name}: {effective_trust(rec)}")
+
+
 def cmd_update(lib, args):
     ok, why = platform_supported()
     if not ok:
@@ -1936,6 +1999,8 @@ def _update_tree(lib, args, state, rec, source, src, manifest, head):
     """Swap the verified `manifest` tree at `src` in for the installed module, its units and launcher with it, and roll
     back on failure. A successful update lifts a `disabled` mark: this version is one the core admits."""
     root = modules_dir()
+    _check_trust_raise(lib, rec, manifest, prompt=_may_prompt(args))
+    print(f"module {args.name} {manifest['version']} declares: {trust_summary(manifest)}")
     if reads_summary(manifest):                   # the pinned key needs no prompt, but the new read access is shown
         print(f"module {args.name} {manifest['version']} declares: {reads_summary(manifest)}")
     try:
@@ -1988,6 +2053,8 @@ def _update_tree(lib, args, state, rec, source, src, manifest, head):
     record_plan(rec, plan)
     rec.pop("reads", None)                                  # the new manifest's list replaces the old, or none
     rec.update(_reads_record(manifest))
+    rec.pop("trust", None)                                  # the signed tier is the new manifest's; trust_local stays
+    rec.update(_trust_record(manifest))
     rec.pop("disabled", None)                               # a disabled-incompatible module is back
     if gone[1] and gone[1] != rec.get("launcher"):          # the new version renamed (or dropped) its cli
         remove_launcher(*gone, args.name)
@@ -2152,11 +2219,11 @@ def cmd_list(lib, args):
     if not state:
         print("No modules installed.")
         return
-    print(f"{'NAME':<16}{'VERSION':<10}{'PUBLISHER':<18}{'SIGNATURE':<10}{'SERVICE':<14}{'DEVICE':<10}QUOTA USE")
+    print(f"{'NAME':<16}{'VERSION':<10}{'PUBLISHER':<18}{'SIGNATURE':<10}{'SERVICE':<14}{'DEVICE':<10}{'TRUST':<10}QUOTA USE")
     for name, rec in sorted(state.items()):
         sig = _installed_signature(lib, name)
         print(f"{name:<16}{rec['version']:<10}{fingerprint(rec['publisher']):<18}{sig.split(' ')[0]:<10}"
-              f"{service_state(name):<14}{_device_state(lib, rec['device_id']):<10}{_quota_use(lib, rec['device_id'])}")
+              f"{service_state(name):<14}{_device_state(lib, rec['device_id']):<10}{effective_trust(rec):<10}{_quota_use(lib, rec['device_id'])}")
         if sig != "valid":
             print(f"  ! {sig}")
 
@@ -2781,6 +2848,9 @@ def build_parser():
     i.add_argument("--principal", help="the operator's principal for the module's device (default: this device's)")
     i.add_argument("--json", action="store_true", help="print one JSON object; never prompts")
     _install_flags(i)
+    t = sub.add_parser("trust", help="show a module's trust tier, or lower it on this node (confined); clearing the lowering needs the owner key")
+    t.add_argument("name")
+    t.add_argument("tier", nargs="?", choices=TRUST_TIERS)
     sub.add_parser("list", help="installed modules: version, publisher, signature, service, device, quota use")
     sub.add_parser("reapply", help=argparse.SUPPRESS)           # internal: re-renders the units
     rf = sub.add_parser("refresh", help="update every installed module to the newest version this core admits, or disable one that has none (`hive-mind update` runs this)")
@@ -2822,7 +2892,7 @@ def build_parser():
 
 VERBS = {"add": cmd_add, "install": cmd_install, "remove": cmd_remove, "update": cmd_update, "list": cmd_list, "quota": cmd_quota,
          "reapply": cmd_reapply, "refresh": cmd_refresh, "config": cmd_config, "check": cmd_check, "run": cmd_run, "status": cmd_status,
-         "runtime": cmd_runtime}
+         "runtime": cmd_runtime, "trust": cmd_trust}
 
 
 def main(lib, argv):

@@ -582,3 +582,73 @@ def test_check_on_a_git_checkout_does_not_run_its_fsmonitor_hook(tmp_path):
     subprocess.run(["git", "-C", str(tmp_path), "config", "core.fsmonitor", f"touch {marker}; false"], check=True)
     assert hive_modules.check_module(tmp_path, CORE)[0] == []
     assert not marker.exists()
+
+
+# ── the `trust` tier (B9) ───────────────────────────────────────────────────────────────────────────
+
+def test_trust_accepts_the_two_tiers_and_absence():
+    for t in ("trusted", "confined"):
+        assert check(manifest(trust=t))["trust"] == t
+    assert "trust" not in check(manifest())
+    assert hive_modules.signed_trust(check(manifest())) == "trusted"
+
+
+@pytest.mark.parametrize("bad", ["root", "", "Trusted", None, 1, True, ["confined"]])
+def test_trust_refuses_anything_else(bad):
+    m = manifest()
+    m["trust"] = bad
+    refused(m, "trust")
+
+
+def test_trust_needs_contract():
+    m = manifest(trust="confined")
+    del m["contract"]
+    refused(m, "without `contract`")
+
+
+def test_effective_trust_is_the_lower_and_never_above_signed():
+    eff = hive_modules.effective_trust
+    assert eff({}) == "trusted"
+    assert eff({"trust": "confined"}) == "confined"
+    assert eff({"trust_local": "confined"}) == "confined"
+    assert eff({"trust": "confined", "trust_local": "trusted"}) == "confined"
+    assert eff({"trust_local": "bogus"}) == "trusted"
+
+
+def test_trust_record_and_summary():
+    assert hive_modules._trust_record(manifest()) == {}
+    assert hive_modules._trust_record(manifest(trust="trusted")) == {}
+    assert hive_modules._trust_record(manifest(trust="confined")) == {"trust": "confined"}
+    assert "TRUSTED" in hive_modules.trust_summary(manifest())
+    assert "confined" in hive_modules.trust_summary(manifest(trust="confined"))
+
+
+def test_trust_raise_on_update_needs_owner(monkeypatch):
+    class Lib:
+        def _owner_key_exists(self):
+            return False
+    with pytest.raises(ModuleError):
+        hive_modules._check_trust_raise(Lib(), {"trust": "confined"}, manifest())
+    hive_modules._check_trust_raise(Lib(), {"trust": "confined"}, manifest(trust="confined"))
+    hive_modules._check_trust_raise(Lib(), {}, manifest(trust="confined"))
+    hive_modules._check_trust_raise(Lib(), {}, manifest())
+
+
+def test_trust_verb_lowers_without_owner_and_raise_needs_it(tmp_path, monkeypatch, capsys):
+    saved = {}
+    state = {"demo": {"version": "1"}}
+    monkeypatch.setattr(hive_modules, "load_state", lambda lib: state)
+    monkeypatch.setattr(hive_modules, "save_state", lambda lib, s: saved.update(s))
+
+    class Lib:
+        def _owner_key_exists(self):
+            return False
+    ns = lambda tier: type("A", (), {"name": "demo", "tier": tier})()  # noqa: E731
+    hive_modules.cmd_trust(Lib(), ns("confined"))
+    assert state["demo"]["trust_local"] == "confined" and hive_modules.effective_trust(state["demo"]) == "confined"
+    with pytest.raises(ModuleError):
+        hive_modules.cmd_trust(Lib(), ns("trusted"))
+    assert state["demo"]["trust_local"] == "confined"
+    state["demo"] = {"version": "1", "trust": "confined"}
+    hive_modules.cmd_trust(Lib(), ns("trusted"))
+    assert hive_modules.effective_trust(state["demo"]) == "confined"

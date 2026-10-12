@@ -562,6 +562,17 @@ directories user-owned). The Windows logon task is written by the installer or `
 distro and user names are refused unless they are plain `[A-Za-z0-9._-]`, so nothing reaches the Windows command
 line quoted. Doctor only checks that the task exists; it does not check what the task runs.
 
+### Module trust tier (3.1, B9)
+
+A signed manifest may carry `trust`: `trusted` or `confined`, absent meaning `trusted`. In this change the field is only
+validated, shown at `module add` / `update` / `list` and recorded; **no unit is hardened yet**, so a `confined` module
+runs exactly as a `trusted` one until the security pass adds the confined unit. Do not rely on `confined` for isolation
+before that lands. The tier can go down on a node (`module trust <name> confined`, node-local) and up only with the
+owner key (clearing that lowering, or an update that signs a higher tier than the node last held), never above what the
+publisher signed. Residual, needing an admitted device or local access and so accepted for 3.x: a process running as the
+operator's own user can edit `.modules.json` and so change the node-local tier; the OS account is the boundary. A
+publisher key holder can sign `trusted`; the pinned key and the operator's look at the printed tier are the control.
+
 ## Seat steering (agent seats driven by GitHub and the hive)
 
 A seat is an agent session that the runner wakes on a GitHub event or a hive entry. Text a seat reads can steer

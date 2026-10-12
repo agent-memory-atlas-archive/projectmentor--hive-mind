@@ -1412,6 +1412,7 @@ hive-mind module quota <name> [--per-hour N] [--per-day N] [--entry-bytes N] [--
 hive-mind module run <name> [--] <args>...             # (3.1) the module's cli command, without its launcher
 hive-mind module status <name> [--json]                # (3.1) the module's status envelope; exit 0 when `ok`
 hive-mind module runtime <name> <program> <dir> | --unset   # (3.1) where one of the module's runtimes lives
+hive-mind module trust <name> [confined|trusted]  # (3.1) show the trust tier; `confined` lowers it on this node, `trusted` clears that lowering and needs the owner key
 ```
 
 `install` converges: a new module is installed (as `add` does), an installed one at a different commit is updated, one
