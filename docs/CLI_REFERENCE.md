@@ -489,6 +489,15 @@ For `kind:tool` cells, required credentials are read from an opened **capsule** 
 falling back to the `--env-file` dotenv for smooth migration. `hv wire <claude-agent-cell>` replaced
 `hv doctor wire-agent`, which 2.0 removed.
 
+A credential reaches a cell's shell **only through the environment**. In `verify.cmd`, write `{NAME}` and
+`hv` runs `${NAME}` in the shell, so the value is never in a command line or in the text the shell parses;
+wrap it in double quotes (`"Bearer ${NAME}"` is written `"Bearer {NAME}"`), or a value with spaces or `*`
+splits into several arguments. A `requires` name must be upper-case letters, digits and `_` (at most 64),
+and not a name the shell, loader, proxy stack or hive reads (`PATH`, `HOME`, `BASH_*`, `LD_*`, `*PROXY*`,
+`HIVE_*`, `GIT_*`, `SSH_*`, ...); `wire --add`, `capsule put`/`rotate` and `hv wire` refuse it.
+**Never put `$NAME` on a tool's argv** (it shows in the process list): hand it over with the tool's
+`--config`, an `@file`, standard input, or netrc. The owner-key passphrase is not passed to steps.
+
 ---
 
 ### `hv capsule` — Seal a secret to the authorized device set
@@ -1387,8 +1396,9 @@ hive-mind module remove <name>
 hive-mind module update <name> [--from <repo>] [--publisher KEY] [--require-healthy] [--set ...] [--set-fleet ...] [--set-env ...] [--non-interactive]
 hive-mind module list
 hive-mind module check <dir> [--run] [--deny TERM] [--json]       # (3.1)
-hive-mind module config <name> set <key> [<value>] [--fleet | --fleet-node DEVICE] [--stdin] | unset <key> | list [--merged] | get <key> | validate   # get, validate, --fleet*, --stdin: (3.1)
+hive-mind module config <name> set <key> [<value>] [--fleet | --fleet-node DEVICE] [--stdin | --file PATH] | unset <key> | list [--merged] | get <key> | validate   # get, validate, --fleet*, --stdin: (3.1)
                           # list, get, validate take --json
+                          # a secret key (token, password, ...) is never taken from argv: --stdin, --file PATH or a hidden prompt
 hive-mind module quota <name> [--per-hour N] [--per-day N] [--entry-bytes N] [--lifetime N]
 hive-mind module run <name> [--] <args>...             # (3.1) the module's cli command, without its launcher
 hive-mind module status <name> [--json]                # (3.1) the module's status envelope; exit 0 when `ok`

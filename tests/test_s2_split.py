@@ -379,13 +379,13 @@ def test_an_owner_policy_capsule_write_is_refused_by_policy_and_a_fertile_one_is
     home = tmp_path / "h"
     assert _ctl(home, "owner", "init").returncode == 0          # capsule_putters defaults to `owner`
     before = _journal_digest(home)
-    r = subprocess.run([sys.executable, str(PROJECT / "hv"), "capsule", "put", "k", "--stdin"],
+    r = subprocess.run([sys.executable, str(PROJECT / "hv"), "capsule", "put", "KEY_ONE", "--stdin"],
                        input="s3cret", env=_env(home), capture_output=True, text=True)
     assert r.returncode == 2 and "`capsule_putters=owner`" in r.stderr and "hive-mind capsule put" in r.stderr, r.stdout + r.stderr
     assert "moved to the control plane" not in r.stderr
     assert _journal_digest(home) == before
     assert _ctl(home, "config", "set", "capsule_putters", "fertile").returncode == 0
-    r = subprocess.run([sys.executable, str(PROJECT / "hv"), "capsule", "put", "k", "--stdin"],
+    r = subprocess.run([sys.executable, str(PROJECT / "hv"), "capsule", "put", "KEY_ONE", "--stdin"],
                        input="s3cret", env=_env(home), capture_output=True, text=True)
     assert r.returncode != 2 and "moved to the control plane" not in r.stderr, r.stderr
 
