@@ -15,6 +15,7 @@ not even rewritten). A settings.json that is not a JSON object is left untouched
 """
 import json
 import os
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -88,7 +89,7 @@ def _write(path, cfg):
 
 
 def run(action, hive_dir, claude_dir):
-    path = Path(claude_dir) / "settings.json"
+    path = (Path(claude_dir) / "settings.json").resolve()   # a symlinked settings.json: write through the link
     cfg = _load(path)
     if cfg is None:
         print("auto-mode: %s is not a JSON object; left untouched" % path, file=sys.stderr)
@@ -107,7 +108,7 @@ def run(action, hive_dir, claude_dir):
         return 1
     if path.exists():
         try:
-            Path(str(path) + ".bak.automode").write_text(path.read_text())
+            shutil.copy2(str(path), str(path) + ".bak.automode")
         except OSError:
             pass
     _write(path, out)

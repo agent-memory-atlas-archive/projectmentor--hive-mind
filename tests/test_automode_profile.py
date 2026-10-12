@@ -54,3 +54,32 @@ def test_unparseable_or_odd_settings_untouched(tmp_path):
         (tmp_path / "settings.json").write_text(body)
         assert _run(tmp_path, "install", "/opt/hm").returncode == 2
         assert (tmp_path / "settings.json").read_text() == body
+
+
+def test_backup_and_rewrite_keep_file_mode(tmp_path):
+    f = tmp_path / "settings.json"
+    f.write_text(json.dumps({"env": {"TOKEN": "s"}}))
+    f.chmod(0o640)
+    assert _run(tmp_path, "install", "/opt/hm").returncode == 0
+    assert (f.stat().st_mode & 0o777) == 0o640
+    assert ((tmp_path / "settings.json.bak.automode").stat().st_mode & 0o777) == 0o640
+
+
+def test_symlinked_settings_written_through_link(tmp_path):
+    real = tmp_path / "dotfiles" / "settings.json"
+    real.parent.mkdir()
+    real.write_text("{}")
+    cdir = tmp_path / "claude"
+    cdir.mkdir()
+    (cdir / "settings.json").symlink_to(real)
+    assert _run(cdir, "install", "/opt/hm").returncode == 0
+    assert (cdir / "settings.json").is_symlink()
+    assert "autoMode" in json.loads(real.read_text())
+    assert (real.parent / "settings.json.bak.automode").exists()
+
+
+def test_non_object_automode_exits_2_untouched(tmp_path):
+    f = tmp_path / "settings.json"
+    f.write_text('{"autoMode": "x"}')
+    r = _run(tmp_path, "install", "/opt/hm")
+    assert r.returncode == 2 and f.read_text() == '{"autoMode": "x"}'
