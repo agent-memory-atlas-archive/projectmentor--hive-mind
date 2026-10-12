@@ -1,4 +1,4 @@
-# ── Dashboard read API (operator-facing; reused by the sync daemon's /api/* and by `hv dash`) ──
+# ── Dashboard read API (operator-facing; reused by the sync daemon's /api/* and the hdash module) ──
 # Pure read functions returning JSON-able dicts. They reuse the same projections the CLI uses
 # (confidence decay, governance, search), so the dashboard never drifts from `hv`. Read-only:
 # they never write the journal or store.db. The daemon already serves the corpus over the tailnet
@@ -685,37 +685,38 @@ def api_peers(probe=True):
     return out
 
 
-def dash(args):
-    """Print the read-only web dashboard URL the sync daemon serves, and (unless --print) try to open a
-    browser. The dashboard and /api/* answer loopback callers only (a remote browser gets 403 since
-    the GHSA-242f read-auth fix), so the URL is this device's own; another device's data is shown
-    through the dashboard's signed per-node view."""
-    port = _self_sync_port()
-    local = f"http://127.0.0.1:{port}/"
-    up = False
+# Commands that left core for a module (3.1). `hv <command>` runs the module's CLI through `hive-mind module run`, a
+# subprocess: `hv` imports no module code and no control plane. Removed in 4.0.
+_FORWARDED = {"dash": "hdash"}
+_MODULE_SOURCES = {"hdash": "https://github.com/projectmentor/hive-mind-dash"}
+
+
+def _module_installed(name):
     try:
-        import urllib.request
-        urllib.request.urlopen(f"http://127.0.0.1:{port}/sync/hello", timeout=2)
-        up = True
-    except Exception:
-        up = False
-    print("HiveMind dashboard")
-    print(f"  Local:    {local}")
-    if not up:
-        print("\n  ⚠ The sync daemon isn't answering on this port — the dashboard won't load yet.")
-        print("    Check it with `hive-mind status`, then retry `hv dash`.")
-        return
-    if getattr(args, "print_only", False):
-        return
-    import shutil
-    opener = next(([c] for c in ("termux-open-url", "xdg-open", "open") if shutil.which(c)), None)
-    if opener:
-        try:
-            subprocess.Popen(opener + [local], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            print("\n  Opening in your browser…")
-            return
-        except Exception:
-            pass
-    print("\n  (Couldn't auto-open a browser — open the Local URL above.)")
+        return name in json.loads((HIVE_HOME / ".modules.json").read_text())
+    except (OSError, ValueError, TypeError):
+        return False
 
 
+def _module_run_argv(name, args):
+    """`hive-mind module run <name> -- <args>`, else the module's own launcher; None when neither is on PATH."""
+    ctl = shutil.which("hive-mind")
+    if ctl:
+        return [ctl, "module", "run", name, "--", *args]
+    launcher = shutil.which(name)
+    return [launcher, *args] if launcher else None
+
+
+def dash(args):
+    """`hv dash` forwards to the hdash module (the dashboard left core in 3.1). Not installed: print the one install
+    line and exit 1. Removed in 4.0."""
+    name = _FORWARDED["dash"]
+    if not _module_installed(name):
+        print("The dashboard is the hdash module (since 3.1) and is not installed on this node. Install it with:")
+        print(f"  hive-mind module install {name} --from {_MODULE_SOURCES[name]}")
+        sys.exit(1)
+    argv = _module_run_argv(name, ["dash"] + (["--print"] if getattr(args, "print_only", False) else []))
+    if argv is None:
+        print(f"{name} is installed but neither `hive-mind` nor `{name}` is on PATH: run `hive-mind module run {name} -- dash`.")
+        sys.exit(1)
+    sys.exit(subprocess.call(argv))

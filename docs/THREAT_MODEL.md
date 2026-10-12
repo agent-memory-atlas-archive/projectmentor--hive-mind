@@ -234,8 +234,23 @@ at once). Concretely:
   not this listener), and a POST that arrives on loopback must carry the `Hive-CSRF` token from
   `$HIVE_HOME/.csrf-token` (0600, never synced) or a valid signed envelope. A local process running as the
   same user can still read the token file; that boundary is the OS account, as before. The dashboard is
-  served with `Content-Security-Policy: default-src 'self'` and builds its page from text nodes, so a
-  journal value cannot run as script.
+  the `hdash` module's since 3.1 (below); it is served with `Content-Security-Policy: default-src 'self'` and
+  builds its page from text nodes, so a journal value cannot run as script.
+- **The dashboard is a module, `hdash` (3.1).** Moving it out of the sync daemon changes who serves the page, not what
+  an unadmitted or remote party can reach. The daemon serves no page now (`/` is 404) and keeps `/api/*` exactly as
+  it was: loopback or a signed peer, `Host`-checked. `hdash serve` is a second loopback listener (`127.0.0.1`, config
+  `port`, default 9896): GET and HEAD only, a request whose `Host` is not that loopback address is 403 (the
+  DNS-rebinding guard the daemon has), no `Origin`-based write because it has no write. It reads the hive two ways:
+  signed `/v1` calls as an admitted module device (`overview`, `tags`, `related`, `audit`, `peers`, `verify`, declared
+  in its `reads`, plus `search` and `item`), and the daemon's loopback `/api/*` for `status`, `telemetry`, `entities`
+  and a peer's `?node=` view (the daemon still resolves that address itself and signs the peer request). Residuals,
+  all needing a local process or an admitted device and so accepted for 3.x: any local process can `GET` the hdash
+  port and read what the page shows, as it could read the daemon's `/api/*` before (the OS account is the boundary;
+  `reads` is a declaration, not a sandbox here); hdash's `/v1` reads carry tailnet addresses (`peers`) and the local
+  integrity verdict (`verify`) to an admitted module device that declares them; and `search` and `item` through `/v1`
+  leave out owner-forgotten facts that the old page showed. Operator rule: remove hdash on a node where other local
+  OS accounts must not see the hive (`hive-mind module remove hdash`); the daemon's `/api/*` stays loopback-open
+  either way, as before.
 - **Unsigned entries cannot fork a chain.** `_verify_entry` accepts an entry with no signature at all
   (historical entries predate device keys), so an unsigned entry could take an admitted device's future
   `(node_id, seq)`, become that device's chain tip, and make the device's own later entry drop as a

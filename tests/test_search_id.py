@@ -67,7 +67,3 @@ def test_search_needs_a_query_or_an_id(populated):
     r = populated.run("search", check=False)
     assert r.returncode == 2 and "--id" in r.stderr
 
-
-def test_dashboard_opens_an_idea_by_deep_link():
-    html = (Path(__file__).resolve().parent.parent / "dashboard" / "app.js").read_text()
-    assert "r.kind==='idea'" in html and "d.kind==='idea'" in html
