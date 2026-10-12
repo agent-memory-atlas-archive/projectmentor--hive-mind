@@ -384,6 +384,16 @@ at once). Concretely:
   access could still reference it. Only an admitted party (a repository writer) can do that; accepted for
   3.x. `SIGN_APP_ID` and `SIGN_APP_KEY` are read from the `signing` Environment once added there, and from
   the repository until then. Operator rule: keep write access to the repository to the people who may sign.
+- **Credentials handed to a cell run in the operator's uid.** A tool cell's secrets travel in the child
+  environment, not the command line. Any process with the operator's uid can read `/proc/<pid>/environ`,
+  ptrace the shell or run `hv capsule get`; that is the design. A secret is inherited by every grandchild,
+  crash dump and sourced profile, and a step that puts `$NAME` on a tool's argv reopens the process-list
+  leak. A cell author runs arbitrary shell as the operator, so credential-name validation removes
+  footguns, not that authority. A capsule putter under `capsule_putters=fertile` chooses the value; it is
+  inert unless a step evals it. Per-OS environment protection is unverified outside Linux and WSL.
+  Operator rules: never `eval` a credential, never place `$NAME` on argv, and keep `cell_writers` and
+  `capsule_putters` at `owner` unless every admitted device is trusted. The same holds for a module's
+  per-node config: a secret key is read from stdin, a file or a prompt, never argv.
 
 ## Seat steering (agent seats driven by GitHub and the hive)
 

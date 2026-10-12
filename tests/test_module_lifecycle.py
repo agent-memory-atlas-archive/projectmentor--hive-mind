@@ -741,3 +741,22 @@ def test_a_module_service_is_ordered_after_hive_sync_without_requiring_it():
         text = hive_modules.render_units("demo", {"service": svc}, Path("/m"), Path("/k"))["hive-module-demo.service"]
         assert "After=network.target hive-sync.service\n" in text
         assert "Wants=" not in text and "Requires=" not in text
+
+
+@LINUX_ONLY
+def test_config_secret_key_is_refused_on_argv_and_taken_from_stdin(hive, tmp_path):
+    pub = _publish(tmp_path / "repo")
+    _add(hive, tmp_path / "repo", pub)
+    d = tmp_path / "modules" / "demo"
+    r = _run(hive, "module", "config", "demo", "set", "channel.github.token", "ghp_argvsecret", check=False)
+    assert r.returncode == 1 and "ghp_argvsecret" not in r.stdout + r.stderr
+    assert "channel.github.token" not in json.loads((d / "config").read_text())
+    env = dict(os.environ, HIVE_HOME=str(hive), HIVE_MODULES_DIR=str(tmp_path / "modules"))
+    p = subprocess.run([sys.executable, str(PROJECT / "hivemind_ctl.py"), "module", "config", "demo", "set",
+                        "channel.github.token", "--stdin"], input="ghp_stdinsecret\n", env=env,
+                       capture_output=True, text=True)
+    assert p.returncode == 0, p.stderr
+    assert "ghp_stdinsecret" not in p.stdout + p.stderr
+    assert json.loads((d / "config").read_text())["channel.github.token"] == "ghp_stdinsecret"
+    assert "ghp_stdinsecret" not in _run(hive, "module", "config", "demo", "list").stdout
+    assert "channel.github.token=********" in _run(hive, "module", "config", "demo", "list").stdout
