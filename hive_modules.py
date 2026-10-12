@@ -762,7 +762,7 @@ def cmd_config(lib, args):
         if len(value) > vocabulary.MODULE_VALUE_MAX:
             raise ModuleError(f"config value is longer than {vocabulary.MODULE_VALUE_MAX} characters")
         have[args.key] = value
-        print(f"{args.name}: set {args.key}" + ("" if secret else f"={value}"))
+        print(f"{args.name}: set {args.key}")
     else:
         if args.key not in have:
             raise ModuleError(f"{args.name} has no config key {args.key!r}")
