@@ -539,6 +539,19 @@ at once). Concretely:
   3.x. `SIGN_APP_ID` and `SIGN_APP_KEY` are read from the `signing` Environment once added there, and from
   the repository until then. Operator rule: keep write access to the repository to the people who may sign.
 
+### Boot pass (`hv doctor --boot`, 3.1, #344)
+
+`hive-doctor-boot.service` runs the same `hv doctor --fix` code as the timer, once per boot, as the user, with no new
+privilege. Its fixes are the existing ones (restart the managed unit, re-render a module unit its verified manifest
+renders, re-wire hooks); it adds a bounded wait and a report, and writes no file outside the hive. The report is a
+fact tagged `boot`, source `doctor`; its text is built from check names and details this node computed, cut to 900
+characters. It runs `claude --version` and `grok --version` (the first of each on the user's `PATH`) with a 10-second
+bound, so a replaced binary on that `PATH` runs at boot as it would at any shell. That needs write access to the
+user's own `PATH`, so it is an admitted-device residual (accepted for 3.x; the operator rule is to keep `PATH`
+directories user-owned). The Windows logon task is written by the installer or `hive-mind update`, not by doctor; its
+distro and user names are refused unless they are plain `[A-Za-z0-9._-]`, so nothing reaches the Windows command
+line quoted. Doctor only checks that the task exists; it does not check what the task runs.
+
 ## Seat steering (agent seats driven by GitHub and the hive)
 
 A seat is an agent session that the runner wakes on a GitHub event or a hive entry. Text a seat reads can steer

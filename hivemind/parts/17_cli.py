@@ -20,7 +20,7 @@ def build_parser(plane="data"):
             '  hv decide "chose Y" --rationale "because"                  # record a decision\n'
             "  hv retract <fact-id> [--reason ...]                        # peer negative evidence (rejected)\n"
                         "  hv stats | sync now|daemon\n"
-            "  hv doctor [--format json] [--fix]                          # health check (+ self-heal)\n"
+            "  hv doctor [--format json] [--fix | --boot]                 # health check (+ self-heal / boot pass)\n"
             "  hv doctor merkle | rebuild                                 # sync diag / rebuild db\n"
             "  hv wire claude                                             # (re)wire the Claude Code hooks + skill\n"
             "\nconfidence: derived in [-CAP,+CAP] from distinct corroborators minus retractors;\n"
@@ -184,6 +184,9 @@ def build_parser(plane="data"):
                                help="Take safe remedial action: kill orphan sync daemons + restart the managed unit, and re-assert the Claude Code hooks/skill")
     doctor_parser.add_argument("--dry-run", action="store_true",
                                help="With --fix: PREVIEW the remedial actions (kill/restart/rewire) without making any change")
+    doctor_parser.add_argument("--boot", action="store_true",
+                               help="The boot pass: wait (bounded) for the sync daemon, check the platform, run --fix, recheck, "
+                                    "and record one `boot` fact for this boot")
     doctor_sub = doctor_parser.add_subparsers(dest="doctor_action")
     doctor_sub.add_parser("merkle", help="Show the Merkle index over the journal (sync diagnostic)")
     doctor_sub.add_parser("rebuild", help="Rebuild store.db from the journal")
