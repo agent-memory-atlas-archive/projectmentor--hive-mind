@@ -36,8 +36,10 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -247,6 +249,14 @@ def _check_argv(label, cmd):
         raise ModuleError(f"manifest {label} may not leave the module's directory")
     if any(_has_control(a) for a in cmd):
         raise ModuleError(f"manifest {label} arguments may not hold control characters")
+    _check_bare_word(label, cmd[0])
+
+
+def _check_bare_word(label, first):
+    """A first word with no slash is looked up on PATH through `env`, which would take `-x` for an option and
+    `A=b` for an assignment: neither is a program name."""
+    if "/" not in first and (first.startswith("-") or "=" in first):
+        raise ModuleError(f"manifest {label} starts with {first!r}, which is not a program name")
 
 
 def _config_key_ok(module, key):
@@ -383,6 +393,8 @@ def _validate_contract(m):
     for field in ("status", "doctor"):
         if field in m:
             _check_argv(field, m[field])
+    if m.get("service"):
+        _check_bare_word("service command", m["service"]["command"][0])
     if "runtimes" in m:
         rt = m["runtimes"]
         if (not isinstance(rt, list) or len(rt) > MAX_RUNTIMES or len(set(map(str, rt))) != len(rt)
@@ -649,6 +661,7 @@ def _stage_for_owner(lib, args, name, root):
         if manifest["name"] != name:
             raise ModuleError(f"the repository holds module {manifest['name']!r}, not {name!r}")
         _confirm_publisher(manifest, args.publisher)
+        contract_plan(name, manifest, load_state(lib))                      # a launcher collision refuses before staging
         install_config(lib, args, manifest, owner=False, enforce=False)     # values are asked for at the install run
         root.mkdir(parents=True, exist_ok=True)
         os.chmod(root, 0o700)
@@ -705,19 +718,24 @@ def _complete_add(lib, args, name, root, rec):
                           f"`hive-mind module add --abort {name}` and start again")
     if (root / name).exists():
         raise ModuleError(f"module {name!r} is already installed: use `hive-mind module update {name}`")
-    node_vals, _fleet = install_config(lib, args, manifest, owner=False)
     state = load_state(lib)
+    plan = contract_plan(name, manifest, state)
+    node_vals, _fleet = install_config(lib, args, manifest, owner=False)
     renamed = False
     try:
         _write_config(staging, {**manifest.get("config", {}), **node_vals})
         os.rename(staging, root / name)
         renamed = True
-        note = install_units(lib, name, manifest)
+        note = install_units(lib, name, manifest, plan and plan["path"])
+        apply_launcher(lib, name, manifest, plan)
         state[name] = {"version": manifest["version"], "publisher": manifest["publisher"], "device_id": dev,
                        "source": rec["source"], "commit": rec["commit"], "installed_at": int(time.time()),
                        "quota": dict(manifest.get("quota") or {}), "owner_quota": {}}
+        record_plan(state[name], plan)
         save_state(lib, state)
     except BaseException:
+        if plan and plan.get("launcher"):
+            remove_launcher(plan["bin_dir"], plan["launcher"], name)
         try:
             remove_units(name)
         except ModuleError:                          # still draining: the add's own error is the one to show
@@ -727,6 +745,7 @@ def _complete_add(lib, args, name, root, rec):
             (staging / "config").unlink(missing_ok=True)       # staging is again exactly the tree that was verified
         raise
     _pending_path(name).unlink(missing_ok=True)
+    warn_missing(name, plan)
     print(f"installed module {name} {manifest['version']} (device {dev}, principal {gov['principals'].get(dev)}); "
           + (f"service {unit_names(name)[0]}" + (" with a timer" if manifest["service"].get("interval") else "")
              if manifest.get("service") else "no service")
@@ -805,14 +824,17 @@ def _env(key, value):
     return f'Environment="{esc}"'
 
 
-def render_units(name, manifest, module_dir, key_dir):
+def render_units(name, manifest, module_dir, key_dir, path=None):
     """{filename: text} for a module's unit(s), or {} when its manifest has no `service` block.
 
     It runs as the operator's user (a user unit), in the module's own directory, with the module's own key
     directory and nothing of the owner's in its environment. The command's first word is made absolute: a path
     inside the module (one it ships, or any relative path) is anchored to its directory and any other bare name is
     looked up by `env`. Unlike the sync unit it
-    has no `ExecStartPre` that kills by command line (such a pattern could match another module)."""
+    has no `ExecStartPre` that kills by command line (such a pattern could match another module).
+
+    `path` (a contract-1 module's recorded PATH, see `unit_path`) becomes the unit's `PATH`; without it the unit has
+    none, as in 2.1."""
     svc = manifest.get("service")
     if not svc:
         return {}
@@ -826,7 +848,7 @@ def render_units(name, manifest, module_dir, key_dir):
     lines += ["[Service]", f"Type={'oneshot' if interval else 'simple'}", f"WorkingDirectory={str(module_dir).replace('%', '%%')}",
               "ExecStart=" + " ".join(_quote(a) for a in cmd),
               _env("HIVE_MODULE_NAME", name), _env("HIVE_MODULE_DIR", module_dir),
-              _env("HIVE_MODULE_KEY_DIR", key_dir), "NoNewPrivileges=yes",
+              _env("HIVE_MODULE_KEY_DIR", key_dir), *([_env("PATH", path)] if path else []), "NoNewPrivileges=yes",
               "StandardOutput=journal", "StandardError=journal"]
     grace = svc.get("stop_grace")
     if grace:                           # SIGTERM the main process only, let it drain, SIGKILL the group after `grace`
@@ -842,11 +864,11 @@ def render_units(name, manifest, module_dir, key_dir):
     return out
 
 
-def _write_units(lib, name, manifest, only_changed=False):
+def _write_units(lib, name, manifest, only_changed=False, path=None):
     """Stop whatever is installed, then write the module's unit files (and drop a timer it no longer declares).
     Returns the unit to enable and start (the timer when there is one), or None when there is nothing to start:
     no service block, or `only_changed` and the files are already what the manifest renders."""
-    keep = render_units(name, manifest, modules_dir() / name, Path(lib._ensure_key_dir()) / "modules" / name)
+    keep = render_units(name, manifest, modules_dir() / name, Path(lib._ensure_key_dir()) / "modules" / name, path)
     if not keep:
         remove_units(name)
         return None
@@ -879,10 +901,10 @@ def _start_unit(unit):
     return ""
 
 
-def install_units(lib, name, manifest):
+def install_units(lib, name, manifest, path=None):
     """Write the module's unit files and, where a user systemd manager is reachable, enable and (re)start them.
     Without one the files are still written; returns a note for the operator."""
-    unit = _write_units(lib, name, manifest)
+    unit = _write_units(lib, name, manifest, path=path)
     if unit is None:
         return ""
     if not _systemctl("show-environment"):
@@ -934,6 +956,309 @@ def service_state(name):
     except (OSError, subprocess.SubprocessError):
         word = ""
     return word if word in ("active", "inactive", "failed", "activating") else "installed"
+
+
+# ── runtimes, the unit PATH and the CLI launcher (3.1, #294 PR 3) ───────────────────────────────────
+# A contract-1 module names the programs it needs (`runtimes`), never directories. The core finds each in a directory
+# only the operator (or root) can write, records those directories in `.modules.json`, and gives the unit and the
+# launcher one PATH built from them. A manifest without `contract` gets none of this: no PATH in its unit, no launcher.
+
+RUNTIME_SEARCH = ("~/.local/bin", "~/.npm-global/bin", "~/.cargo/bin", "~/.bun/bin", "/opt/homebrew/bin", "/usr/local/bin")
+SYSTEM_PATH = ("/usr/local/bin", "/usr/bin", "/bin")
+LAUNCHER_MARK = "# hive-mind module launcher v1"
+SCRUBBED_ENV = ("HIVE_OWNER_PASSPHRASE", "HIVE_OWNER_KEY_PASSPHRASE", "HIVE_OWNER_SEED", "HIVE_KEY_DIR")
+_LAUNCHER_HEAD = re.compile(re.escape(LAUNCHER_MARK) + r" module=([a-z0-9_-]+) sha256=([0-9a-f]{64})\Z")
+
+
+def safe_dir(d):
+    """Whether `d` may sit on a service PATH: absolute, no `:` or control character in it, a directory, owned by the
+    operator or root, and writable by neither group nor world (a writable directory on a PATH is a hijack)."""
+    d = str(d)
+    if not d.startswith("/") or ":" in d or _has_control(d):
+        return False
+    try:
+        st = os.stat(d)
+    except OSError:
+        return False
+    return stat.S_ISDIR(st.st_mode) and st.st_uid in (os.getuid(), 0) and not st.st_mode & 0o022
+
+
+def _program_in(d, program):
+    p = Path(d) / program
+    return p.is_file() and os.access(p, os.X_OK)
+
+
+def resolve_runtimes(names, overrides=None):
+    """({program: directory}, [programs not found]). Each program is looked for in the invoking PATH, then the fixed
+    operator directories, then the operator's per-module override; only a `safe_dir` counts."""
+    overrides = overrides or {}
+    search = [d for d in os.environ.get("PATH", "").split(":") if d] + [os.path.expanduser(d) for d in RUNTIME_SEARCH]
+    found, missing = {}, []
+    for program in names:
+        order = search + ([overrides[program]] if program in overrides else [])
+        hit = next((d for d in order if safe_dir(d) and _program_in(d, program)), None)
+        if hit:
+            found[program] = hit
+        else:
+            missing.append(program)
+    return found, missing
+
+
+def bin_dir():
+    """Where `hive-mind` and `hv` live, so a launcher sits beside them: $HIVE_BIN_DIR, else the directory `hive-mind`
+    is found in, else ~/.local/bin."""
+    env = os.environ.get("HIVE_BIN_DIR")
+    if env:
+        return Path(env)
+    found = shutil.which("hive-mind")
+    return Path(found).parent if found and found.startswith("/") else Path.home() / ".local" / "bin"
+
+
+def _bin_ok(bdir):
+    """A bin directory a launcher may go in: a `safe_dir`, or one that does not exist yet under a `safe_dir`."""
+    return safe_dir(bdir) or (not os.path.lexists(bdir) and safe_dir(Path(bdir).parent))
+
+
+def unit_path(runtime_dirs, bdir):
+    """The PATH a contract-1 module's unit, launcher and `module run` get: the directories its runtimes resolved to,
+    the bin directory, then the system's."""
+    out = []
+    for d in [*(runtime_dirs or []), bdir, *SYSTEM_PATH]:
+        if d and d not in out:
+            out.append(d)
+    return ":".join(out)
+
+
+def recorded_path(rec):
+    """The PATH recorded for an installed module, or None for one installed without a contract."""
+    if "runtime_dirs" not in rec and "bin_dir" not in rec:
+        return None
+    return unit_path(rec.get("runtime_dirs"), rec.get("bin_dir"))
+
+
+def module_argv(manifest, cmd, module_dir):
+    """The argv to run for one of a manifest's commands: a path inside the module is anchored to its directory, an
+    absolute one stays, and a bare name is looked up on PATH by `env` (as the unit does)."""
+    first = cmd[0]
+    if first.startswith("/"):
+        return list(cmd)
+    if "/" in first or first in manifest.get("files", {}):
+        return [str(module_dir / first), *cmd[1:]]
+    return ["/usr/bin/env", *cmd]
+
+
+def module_env(lib, name, path):
+    """The environment of a module process started by the operator: theirs, without the owner's secrets, plus the
+    module's own name, directory, key directory and PATH."""
+    env = {k: v for k, v in os.environ.items() if k not in SCRUBBED_ENV}
+    env.update(HIVE_MODULE_NAME=name, HIVE_MODULE_DIR=str(modules_dir() / name),
+               HIVE_MODULE_KEY_DIR=str(Path(lib._ensure_key_dir()) / "modules" / name))
+    if path:
+        env["PATH"] = path
+    return env
+
+
+def launcher_text(lib, name, manifest, path):
+    """The launcher file the core renders: the module supplies a name and an argv, never shell text. Every word is
+    single-quoted; the environment is the module's own, and the owner's secrets are unset."""
+    body = "\n".join([
+        "unset " + " ".join(SCRUBBED_ENV),
+        f"HIVE_MODULE_NAME={shlex.quote(name)}",
+        f"HIVE_MODULE_DIR={shlex.quote(str(modules_dir() / name))}",
+        f"HIVE_MODULE_KEY_DIR={shlex.quote(str(Path(lib._ensure_key_dir()) / 'modules' / name))}",
+        f"PATH={shlex.quote(path)}",
+        "export HIVE_MODULE_NAME HIVE_MODULE_DIR HIVE_MODULE_KEY_DIR PATH",
+        "exec " + " ".join(shlex.quote(a) for a in module_argv(manifest, manifest["cli"]["command"], modules_dir() / name)) + ' "$@"',
+        ""])
+    digest = hashlib.sha256(body.encode()).hexdigest()
+    return f"#!/bin/sh\n{LAUNCHER_MARK} module={name} sha256={digest}\n{body}"
+
+
+def _own_launcher(path, name):
+    """Whether `path` is a launcher this core wrote for module `name`, unedited: a regular file, the marker line
+    naming the module, and the digest of the rest matching."""
+    try:
+        if not stat.S_ISREG(os.lstat(path).st_mode) or os.lstat(path).st_size > 64 * 1024:
+            return False
+        lines = Path(path).read_text().split("\n", 2)
+    except (OSError, UnicodeDecodeError):
+        return False
+    m = _LAUNCHER_HEAD.match(lines[1]) if len(lines) == 3 and lines[0] == "#!/bin/sh" else None
+    return bool(m and m.group(1) == name and m.group(2) == hashlib.sha256(lines[2].encode()).hexdigest())
+
+
+def check_launcher_free(bdir, name, cli_name, state):
+    """Refuse, before anything is written, a launcher name another module claims, a file that is not this module's
+    own launcher, or a bin directory others can write to."""
+    for other, rec in state.items():
+        if other != name and rec.get("launcher") == cli_name:
+            raise ModuleError(f"cli name {cli_name!r} is already taken by module {other!r}")
+    if not _bin_ok(bdir):
+        raise ModuleError(f"{bdir} cannot hold a launcher: it must be an absolute directory only you (or root) can write")
+    target = Path(bdir) / cli_name
+    if os.path.lexists(target) and not _own_launcher(target, name):
+        raise ModuleError(f"{target} exists and is not this module's launcher: move it, or pick another cli name")
+
+
+def write_launcher(lib, name, manifest, path, bdir):
+    """Write (or refresh) the module's launcher. Nothing is touched when it already holds the rendered text."""
+    target = Path(bdir) / manifest["cli"]["name"]
+    text = launcher_text(lib, name, manifest, path)
+    try:
+        if target.read_text() == text and not target.is_symlink() and os.access(target, os.X_OK):
+            return
+    except (OSError, UnicodeDecodeError):
+        pass
+    fd, tmp = tempfile.mkstemp(dir=bdir, prefix=f".{target.name}.")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(text)
+        os.chmod(tmp, 0o755)
+        os.replace(tmp, target)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+
+
+def remove_launcher(bdir, cli_name, name):
+    """Delete the launcher if it is still this module's own; anything else at that name is left alone."""
+    if bdir and cli_name and _own_launcher(Path(bdir) / cli_name, name):
+        try:
+            (Path(bdir) / cli_name).unlink()
+        except OSError:
+            pass
+
+
+def contract_plan(name, manifest, state, overrides=None):
+    """What a contract-1 manifest adds to an install, or None for any other manifest: the resolved runtime
+    directories, the bin directory and the launcher name, plus the runtimes not found. Refuses a launcher
+    collision, so call it before anything is written."""
+    if "contract" not in manifest:
+        return None
+    found, missing = resolve_runtimes(manifest.get("runtimes", []), overrides)
+    bdir = bin_dir()
+    plan = {"runtime_dirs": sorted(set(found.values())), "bin_dir": str(bdir) if _bin_ok(bdir) else "", "missing": missing}
+    if manifest.get("cli"):
+        check_launcher_free(bdir, name, manifest["cli"]["name"], state)
+        plan["launcher"] = manifest["cli"]["name"]
+    plan["path"] = unit_path(plan["runtime_dirs"], plan["bin_dir"])
+    return plan
+
+
+def apply_launcher(lib, name, manifest, plan):
+    if plan and plan.get("launcher"):
+        Path(plan["bin_dir"]).mkdir(mode=0o755, exist_ok=True)
+        write_launcher(lib, name, manifest, plan["path"], plan["bin_dir"])
+
+
+def record_plan(rec, plan):
+    """Put a plan's durable part into a module's `.modules.json` row (a no-op for a manifest without `contract`)."""
+    if plan is None:
+        for k in ("runtime_dirs", "bin_dir", "launcher", "runtime_overrides"):
+            rec.pop(k, None)
+        return
+    rec.update(runtime_dirs=plan["runtime_dirs"], bin_dir=plan["bin_dir"])
+    if plan.get("launcher"):
+        rec["launcher"] = plan["launcher"]
+    else:
+        rec.pop("launcher", None)
+
+
+def warn_missing(name, plan):
+    for program in (plan or {}).get("missing", []):
+        print(f"hive-mind module: warning: {name}: runtime {program!r} not found; install it, or run "
+              f"`hive-mind module runtime {name} {program} <dir>`", file=sys.stderr)
+
+
+def _restore_launcher(lib, name, rec, old_manifest):
+    """After a failed update: put the previous launcher back and drop a new one under another name."""
+    try:
+        if rec.get("launcher") and old_manifest.get("cli"):
+            write_launcher(lib, name, old_manifest, recorded_path(rec), rec["bin_dir"])
+    except (OSError, KeyError, ValueError):
+        pass
+
+
+def cmd_run(lib, args):
+    """`module run <name> [--] args…`: the launcher's job without the launcher."""
+    rec = load_state(lib).get(args.name)
+    if rec is None:
+        raise ModuleError(f"module {args.name!r} is not installed")
+    manifest = installed_manifest(lib, args.name)
+    if not manifest.get("cli"):
+        raise ModuleError(f"module {args.name!r} declares no cli")
+    argv = module_argv(manifest, manifest["cli"]["command"], modules_dir() / args.name) + list(args.args)
+    try:
+        rc = subprocess.run(argv, env=module_env(lib, args.name, recorded_path(rec))).returncode
+    except OSError as e:
+        raise ModuleError(f"could not run {argv[0]}: {e}")
+    return rc if rc >= 0 else 128 - rc
+
+
+def module_status(lib, name, rec, manifest):
+    """The module's `status` envelope, or an `unknown` one saying why not. Runs the manifest's argv without a shell,
+    in the module's directory, with a narrow environment, 20 s and 64 KiB at most."""
+    mod_dir = modules_dir() / name
+    env = {"PATH": recorded_path(rec) or unit_path([], ""), "HOME": os.environ.get("HOME", str(Path.home())), "LANG": "C.UTF-8",
+           "HIVE_MODULE_NAME": name, "HIVE_MODULE_DIR": str(mod_dir),
+           "HIVE_MODULE_KEY_DIR": str(Path(lib._ensure_key_dir()) / "modules" / name)}
+    rc, obj, why = _run_json(manifest["status"], manifest["files"], mod_dir, env)
+    problems = [why] if why else ([] if rc == 0 else [f"status exited {rc}, not 0"]) + status_problems(obj)
+    if problems:
+        return {"schema": 1, "state": "unknown", "version": "", "problems": problems, "units": [], "detail": {}}
+    return obj
+
+
+def cmd_status(lib, args):
+    """`module status <name> [--json]`: proxies the module's `status`. Exit 0 when it says `ok`, else 1."""
+    rec = load_state(lib).get(args.name)
+    if rec is None:
+        raise ModuleError(f"module {args.name!r} is not installed")
+    manifest = installed_manifest(lib, args.name)
+    if not manifest.get("status"):
+        raise ModuleError(f"module {args.name!r} declares no status command")
+    env = module_status(lib, args.name, rec, manifest)
+    if args.json:
+        print(json.dumps(env, indent=1, sort_keys=True))
+    else:
+        print(f"{args.name}: {env['state']}" + (f" ({env['version']})" if env["version"] else ""))
+        for u in env.get("units", []):
+            print(f"  unit {u['name']}: {u['state']}")
+        for p in env["problems"]:
+            print(f"  ! {p}")
+    return 0 if env["state"] == "ok" else 1
+
+
+def cmd_runtime(lib, args):
+    """`module runtime <name> <program> <dir>`: the operator tells the core where a runtime lives when the core cannot
+    see it (a dashboard-spawned install has the unit's narrow PATH, not the login PATH). `--unset` forgets it."""
+    state = load_state(lib)
+    rec = state.get(args.name)
+    if rec is None:
+        raise ModuleError(f"module {args.name!r} is not installed")
+    manifest = installed_manifest(lib, args.name)
+    if args.program not in manifest.get("runtimes", []):
+        raise ModuleError(f"module {args.name!r} does not declare the runtime {args.program!r}")
+    mine = dict(rec.get("runtime_overrides") or {})
+    if args.unset:
+        mine.pop(args.program, None)
+    else:
+        if not args.dir:
+            raise ModuleError("module runtime needs a directory (or --unset)")
+        d = os.path.abspath(os.path.expanduser(args.dir))
+        if not safe_dir(d):
+            raise ModuleError(f"{d} cannot go on a service PATH: it must be an absolute directory only you (or root) can write")
+        if not _program_in(d, args.program):
+            raise ModuleError(f"{args.program!r} is not an executable file in {d}")
+        mine[args.program] = d
+    if mine:
+        rec["runtime_overrides"] = mine
+    else:
+        rec.pop("runtime_overrides", None)
+    save_state(lib, state)
+    _reapply_names(lib, [args.name])
+    now = load_state(lib).get(args.name, {})
+    print(f"{args.name}: PATH is now {recorded_path(now)}")
 
 
 # ── verbs ───────────────────────────────────────────────────────────────────────────────────────────
@@ -1387,6 +1712,7 @@ def cmd_add(lib, args):
         if manifest["name"] != name:
             raise ModuleError(f"the repository holds module {manifest['name']!r}, not {name!r}")
         _confirm_publisher(manifest, args.publisher)
+        plan = contract_plan(name, manifest, state)
         node_vals, fleet_vals = install_config(lib, args, manifest, owner=True)
         root.mkdir(parents=True, exist_ok=True)
         os.chmod(root, 0o700)
@@ -1407,25 +1733,30 @@ def cmd_add(lib, args):
                 raise ModuleError("the owner could not admit the module's device: nothing installed")
             _write_config(staging, {**manifest.get("config", {}), **node_vals})
             os.rename(staging, root / name)
-            note = install_units(lib, name, manifest)
+            note = install_units(lib, name, manifest, plan and plan["path"])
+            apply_launcher(lib, name, manifest, plan)
             state[name] = {"version": manifest["version"], "publisher": manifest["publisher"], "device_id": device_id,
                            "source": args.source, "commit": head, "installed_at": int(time.time()),
                            "quota": dict(manifest.get("quota") or {}), "owner_quota": {}}
+            record_plan(state[name], plan)
             save_state(lib, state)
         except BaseException:
             shutil.rmtree(staging, ignore_errors=True)
-            _undo_add(lib, name, device_id)
+            _undo_add(lib, name, device_id, plan)
             raise
         if fleet_vals:
             store_fleet_values(lib, name, manifest["config_schema"], fleet_vals)
+    warn_missing(name, plan)
     print(f"installed module {name} {manifest['version']} (device {device_id}, principal {principal}); "
           + (f"service {unit_names(name)[0]}" + (" with a timer" if manifest["service"].get("interval") else "")
              if manifest.get("service") else "no service")
           + (f" ({note})" if note else "") + "; hooks: " + (", ".join(manifest.get("hooks") or []) or "none"))
 
 
-def _undo_add(lib, name, device_id):
+def _undo_add(lib, name, device_id, plan=None):
     """A failed add leaves nothing: the key goes, and a device that was admitted is revoked."""
+    if plan and plan.get("launcher"):
+        remove_launcher(plan["bin_dir"], plan["launcher"], name)
     try:
         if _device_state(lib, device_id) == "admitted":
             lib._group_change("revoke", device_id)
@@ -1460,6 +1791,7 @@ def cmd_remove(lib, args):
     if _device_state(lib, device_id) == "admitted":
         raise ModuleError("the owner could not revoke the module's device: nothing removed")
     remove_units(args.name)                       # stop it before its files and key go
+    remove_launcher(rec.get("bin_dir"), rec.get("launcher"), args.name)
     shutil.rmtree(modules_dir() / args.name, ignore_errors=True)
     shutil.rmtree(Path(lib._ensure_key_dir()) / "modules" / args.name, ignore_errors=True)
     state.pop(args.name)
@@ -1471,6 +1803,7 @@ def _remove_without_owner(lib, name, device_id, state):
     """Remove on a device without the owner key: stop the unit, delete the tree and the key, and say what only the
     owner can finish. The device id stays admitted until the owner's revoke."""
     remove_units(name)                            # stop it before its files and key go
+    remove_launcher(state[name].get("bin_dir"), state[name].get("launcher"), name)
     shutil.rmtree(modules_dir() / name, ignore_errors=True)
     _clear_pending(lib, name)
     shutil.rmtree(Path(lib._ensure_key_dir()) / "modules" / name, ignore_errors=True)
@@ -1505,6 +1838,7 @@ def cmd_update(lib, args):
             have = _read_config(modules_dir() / args.name / "config")
         except ModuleError:                       # update is the remedy for a broken install: ask for every required key
             before, have = {}, {}
+        plan = contract_plan(args.name, manifest, state, rec.get("runtime_overrides"))
         node_vals, fleet_vals = install_config(lib, args, manifest, owner=lib._owner_key_exists(),
                                                asked=set(manifest.get("config_schema") or {}) - set(before), have=have)
         staging, old = root / f".{args.name}.staging", root / f".{args.name}.old"
@@ -1522,21 +1856,31 @@ def cmd_update(lib, args):
             os.rename(live, old)                  # two renames: a crash between them leaves the old copy at `.old`
             swapped = True                        # only now is `.old` this update's; a stale one is never rolled back
             os.rename(staging, live)
-            note = install_units(lib, args.name, manifest)
+            note = install_units(lib, args.name, manifest, plan and plan["path"])
+            apply_launcher(lib, args.name, manifest, plan)
         except BaseException:
             if swapped:
                 shutil.rmtree(live, ignore_errors=True)
                 os.rename(old, live)
                 try:                                  # put the old unit back beside the old files
-                    install_units(lib, args.name, json.loads((live / MANIFEST).read_text()))
+                    before_manifest = json.loads((live / MANIFEST).read_text())
+                    install_units(lib, args.name, before_manifest, recorded_path(rec))
+                    if plan and plan.get("launcher") != rec.get("launcher"):
+                        remove_launcher(plan["bin_dir"], plan.get("launcher"), args.name)
+                    _restore_launcher(lib, args.name, rec, before_manifest)
                 except (OSError, ValueError, KeyError):
                     pass
             shutil.rmtree(staging, ignore_errors=True)
             raise
         shutil.rmtree(old, ignore_errors=True)
+        gone = (rec.get("bin_dir"), rec.get("launcher"))
         rec.update(version=manifest["version"], source=source, commit=head,
                    quota=dict(manifest.get("quota") or {}))     # the owner's own limits (owner_quota) are kept
+        record_plan(rec, plan)
+        if gone[1] and gone[1] != rec.get("launcher"):          # the new version renamed (or dropped) its cli
+            remove_launcher(*gone, args.name)
         save_state(lib, state)
+        warn_missing(args.name, plan)
         if fleet_vals:
             store_fleet_values(lib, args.name, manifest["config_schema"], fleet_vals)
     print(f"updated module {args.name} to {manifest['version']}; its key, device and pinned publisher are unchanged"
@@ -1602,18 +1946,43 @@ def cmd_reapply(lib, args):
     """Internal, run by `hive-mind update` after a core update: render every installed module's units again, write
     the files that changed, reload systemd once and restart only those units. It never fails: a module that cannot
     be re-applied is a warning that names it."""
+    _reapply_names(lib, sorted(load_state(lib)))
+
+
+def _reapply_names(lib, names):
+    """Re-render the units (and, for a contract-1 module, re-resolve its runtimes and refresh its launcher and
+    recorded PATH) of the named modules. Never raises."""
     if not platform_supported()[0]:
         return
-    pending = []
-    for name in sorted(load_state(lib)):
+    pending, dirty = [], False
+    state = load_state(lib)
+    for name in names:
+        rec = state.get(name)
+        if rec is None:
+            continue
         try:
             manifest = check_tree(modules_dir() / name, lib.CONTRACT_VERSION, ignore=("config",))
-            unit = _write_units(lib, name, manifest, only_changed=True)
+            plan = contract_plan(name, manifest, state, rec.get("runtime_overrides"))
+            unit = _write_units(lib, name, manifest, only_changed=True, path=plan and plan["path"])
+            if plan:
+                gone = (rec.get("bin_dir"), rec.get("launcher"))
+                apply_launcher(lib, name, manifest, plan)
+                before = dict(rec)
+                record_plan(rec, plan)
+                dirty = dirty or rec != before
+                if gone[1] and gone[1] != rec.get("launcher"):
+                    remove_launcher(*gone, name)
+                warn_missing(name, plan)
         except (ModuleError, OSError, ValueError, KeyError) as e:
             print(f"hive-mind module: warning: {name}: units not re-applied ({e})", file=sys.stderr)
             continue
         if unit:
             pending.append((name, unit))
+    if dirty:
+        try:
+            save_state(lib, state)
+        except OSError as e:
+            print(f"hive-mind module: warning: could not record the runtimes ({e})", file=sys.stderr)
     if not pending:
         return
     if not _systemctl("show-environment"):
@@ -1879,6 +2248,17 @@ def build_parser():
     c.add_argument("--merged", action="store_true", help="a module without a config_schema: list/get across the layers too")
     c.add_argument("--json", action="store_true", help="list, get and validate print JSON (a secret is masked)")
     c.add_argument("--stdin", action="store_true", help="set: read the value from standard input (the way to give a secret in a script)")
+    ru = sub.add_parser("run", help="run a module's cli command without its launcher: module run <name> [--] <args>")
+    ru.add_argument("name")
+    ru.add_argument("args", nargs="*", help="passed to the module's command unchanged")
+    st = sub.add_parser("status", help="run a module's status command; exit 0 when it says ok")
+    st.add_argument("name")
+    st.add_argument("--json", action="store_true", help="print the module's status envelope as JSON")
+    rt = sub.add_parser("runtime", help="tell the core which directory holds one of a module's runtimes (when it cannot find it)")
+    rt.add_argument("name")
+    rt.add_argument("program")
+    rt.add_argument("dir", nargs="?")
+    rt.add_argument("--unset", action="store_true", help="forget the override")
     k = sub.add_parser("check", help="check a module directory against the module contract (what `add` would refuse; for publishers and CI)")
     k.add_argument("dir")
     k.add_argument("--run", action="store_true", help="also run its `status` and `doctor` commands in a throwaway directory and check what they print")
@@ -1888,12 +2268,20 @@ def build_parser():
 
 
 VERBS = {"add": cmd_add, "remove": cmd_remove, "update": cmd_update, "list": cmd_list, "quota": cmd_quota,
-         "reapply": cmd_reapply, "config": cmd_config, "check": cmd_check}
+         "reapply": cmd_reapply, "config": cmd_config, "check": cmd_check, "run": cmd_run, "status": cmd_status,
+         "runtime": cmd_runtime}
 
 
 def main(lib, argv):
     """Run `hive-mind module <argv>` against the control-plane library `lib`. Returns an exit status."""
-    args = build_parser().parse_args(argv)
+    if argv[:1] == ["run"]:                  # everything after the name belongs to the module's command, flags included
+        if len(argv) < 2 or argv[1].startswith("-"):
+            print("usage: hive-mind module run <name> [--] <args>", file=sys.stderr)
+            return 2
+        argv = ["run", argv[1], *argv[2:]] if argv[2:3] != ["--"] else ["run", argv[1], *argv[3:]]
+        args = argparse.Namespace(verb="run", name=argv[1], args=argv[2:])
+    else:
+        args = build_parser().parse_args(argv)
     if args.verb == "config":
         takes_key = args.action in ("get", "set", "unset")
         extra = (args.key if not takes_key else args.value if args.action != "set" else None)
@@ -1902,7 +2290,7 @@ def main(lib, argv):
             return 2
     try:
         rc = VERBS[args.verb](lib, args)
-        return (rc or 0) if args.verb in ("check", "config") else 0
+        return (rc or 0) if args.verb in ("check", "config", "run", "status") else 0
     except ModuleError as e:
         print(f"hive-mind module: {e}", file=sys.stderr)
         return 1
