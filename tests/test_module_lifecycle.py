@@ -750,6 +750,7 @@ def test_config_secret_key_is_refused_on_argv_and_taken_from_stdin(hive, tmp_pat
     d = tmp_path / "modules" / "demo"
     r = _run(hive, "module", "config", "demo", "set", "channel.github.token", "ghp_argvsecret", check=False)
     assert r.returncode == 1 and "ghp_argvsecret" not in r.stdout + r.stderr
+    assert "do not put it on the command line" in r.stdout + r.stderr
     assert "channel.github.token" not in json.loads((d / "config").read_text())
     env = dict(os.environ, HIVE_HOME=str(hive), HIVE_MODULES_DIR=str(tmp_path / "modules"))
     p = subprocess.run([sys.executable, str(PROJECT / "hivemind_ctl.py"), "module", "config", "demo", "set",
@@ -771,3 +772,12 @@ def test_config_set_non_secret_key_from_stdin_does_not_echo_the_value(hive, tmp_
                         "poll", "--stdin"], input="plainvalue-9271\n", env=env, capture_output=True, text=True)
     assert p.returncode == 0, p.stderr
     assert "plainvalue-9271" not in p.stdout + p.stderr
+
+
+@LINUX_ONLY
+def test_stdin_and_file_apply_only_to_config_set(hive, tmp_path):
+    pub = _publish(tmp_path / "repo")
+    _add(hive, tmp_path / "repo", pub)
+    for flag in (["--stdin"], ["--file", str(tmp_path / "f")]):
+        r = _run(hive, "module", "config", "demo", "list", *flag, check=False)
+        assert r.returncode == 2 and "only apply to config set" in r.stdout + r.stderr
