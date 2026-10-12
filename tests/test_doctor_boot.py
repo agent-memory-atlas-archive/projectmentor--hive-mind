@@ -154,6 +154,9 @@ def _uninstall(tmp_path, extra_env):
     shim.mkdir()
     (shim / "systemctl").write_text(f'#!/bin/sh\necho "$*" >> "{tmp_path}/sysctl"\n')
     (shim / "systemctl").chmod(0o755)
+    # the script picks its arm from `uname`; these tests cover the systemd arm, so pose as Linux on any host
+    (shim / "uname").write_text('#!/bin/sh\ncase "$1" in -o) echo GNU/Linux ;; *) echo Linux ;; esac\n')
+    (shim / "uname").chmod(0o755)
     hive = tmp_path / "hivedir"
     hive.mkdir()
     env = dict(os.environ, HOME=str(home), HIVE_DIR=str(hive), BIN_DIR=str(tmp_path / "ubin"),

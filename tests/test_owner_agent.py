@@ -261,10 +261,10 @@ def test_there_is_no_op_that_unlocks_or_returns_the_seed(served):
 def test_a_connection_from_another_uid_is_closed_without_a_reply(served):
     a, c = served(peer_uid_fn=lambda conn: os.getuid() + 1)
     s = socket.socket(socket.AF_UNIX); s.settimeout(3); s.connect(a.sock_path)
-    owner_agent.write_frame(s, {"op": "status"})
-    try:
+    try:                       # macOS may already have closed the socket (EPIPE) by the time we write
+        owner_agent.write_frame(s, {"op": "status"})
         assert s.recv(10) == b""
-    except ConnectionResetError:
+    except (ConnectionResetError, BrokenPipeError):
         pass
 
 
