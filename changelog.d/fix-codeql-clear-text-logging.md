@@ -1,0 +1,1 @@
+- `hv module config set` never echoes the value (matches main, #399): it prints `set <key>` or `<key> is already set`; `owner unlock` names its passphrase variable as a literal. Clears CodeQL clear-text-logging alerts 14–18.
