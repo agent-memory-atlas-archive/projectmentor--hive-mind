@@ -27,7 +27,7 @@ Old lines stay. A fact earns **confidence**, which means trust, when different a
 agree on their own. An agent cannot raise that trust by repeating itself.
 A decision can later get a score from what happened after you made it.
 Each device keeps the whole hive. The devices copy new lines to each other
-over Tailscale, a private network between your devices. Your notes stay on your devices.
+over Tailscale, a private network between your devices.
 
 Pinecone, Weaviate, LlamaIndex, and LangGraph help one program search a pile of text.
 HiveMind keeps the notes your agents share, and a record of who agreed.
