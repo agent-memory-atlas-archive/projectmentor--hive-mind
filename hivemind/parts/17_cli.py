@@ -363,21 +363,9 @@ def build_parser(plane="data"):
                              help="set the outbound mode (#107): enforce pushes only to a peer whose hello "
                                   "verified; applies from the next sync round")
 
-    tel_parser = subparsers.add_parser("telemetry", help="Local-only session telemetry (observability, NOT facts)")
-    tel_sub = tel_parser.add_subparsers(dest="telemetry_action")
-    tel_rec = tel_sub.add_parser("record", help="Record a session start/end event (for hooks)")
-    tel_rec.add_argument("--event", required=True, choices=["start", "end"])
-    tel_rec.add_argument("--agent", default="agent", help="agent name, e.g. claude-code, hermes")
-    tel_rec.add_argument("--identity", default="", help="stable agent-instance id (keeps same-named agents distinct)")
-    tel_rec.add_argument("--session", default="", help="session id")
-    tel_rec.add_argument("--cwd", default="", help="working dir (for project + transcript lookup)")
-    tel_rec.add_argument("--transcript", default="", help="explicit transcript path (else auto-located by session)")
-    tel_rep = tel_sub.add_parser("report", help="Aggregate telemetry (this device)")
-    tel_rep.add_argument("--since", default="", help="window, e.g. 7d, 24h, 30m (default: all)")
-    tel_rep.add_argument("--by", choices=["project", "agent", "node"], default=None)
-    tel_rep.add_argument("--format", choices=["text", "json"], default="text")
-    tel_lst = tel_sub.add_parser("list", help="Recent sessions")
-    tel_lst.add_argument("--limit", type=int, default=20)
+    tel_parser = subparsers.add_parser("telemetry", help="Session telemetry (forwards to the hwatch module; removed in 4.0)")
+    tel_parser.add_argument("rest", nargs=argparse.REMAINDER,
+                            help="record|report|list and their options, passed to `hwatch telemetry` (see `hwatch telemetry --help`)")
 
     return parser
 

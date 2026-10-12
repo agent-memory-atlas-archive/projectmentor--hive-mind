@@ -104,7 +104,6 @@ PARTS = (
     "hivemind/parts/13_doctor_status.py",
     "hivemind/parts/14_peers.py",
     "hivemind/parts/15_doctor_control_join.py",
-    "hivemind/parts/16_telemetry.py",
     "hivemind/parts/17_cli.py",
 )
 for _part in PARTS:

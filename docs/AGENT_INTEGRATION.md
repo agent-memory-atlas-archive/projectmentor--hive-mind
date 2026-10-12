@@ -140,7 +140,9 @@ call is fixed; you provide the plumbing (where the text comes from, where the ou
    stable `--agent` and `--identity` (your instance discriminator) plus `--session`/`--cwd`. This is
    pure observability — token usage, duration, cost — written to a LOCAL-ONLY lane that **never enters
    the corpus, the journal, or sync**. It has no effect on knowledge or confidence; skip it entirely
-   if you do not want it. Never write telemetry as a `hv remember` fact.
+   if you do not want it. Never write telemetry as a `hv remember` fact. Since core 3.1 the verb is
+   served by the hwatch module (`hv telemetry` forwards to `hwatch telemetry`); with the module absent `record` is a
+   silent no-op that exits 0, so a hook never needs to guard it.
 
 ---
 

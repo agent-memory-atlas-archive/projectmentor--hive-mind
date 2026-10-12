@@ -309,6 +309,14 @@ Install it the same way as any other module, with `hive-mind module add hwatch -
 Its fleet keys are `x-hwatch:…`, set by the owner. Its per-node keys are
 `hive-mind module config hwatch …`.
 
+## hwatch telemetry
+
+Session telemetry is **hwatch's** since 3.1 (`hwatch telemetry record|report|list`). The module declares `cli: hwatch`, so
+the core writes a `hwatch` launcher (§ the `cli` slot) and `hv telemetry` forwards to `hive-mind module run hwatch --
+telemetry …`. It keeps the store core wrote, `$HIVE_HOME/.telemetry/telemetry.db`, so nothing is copied or migrated. A
+node without hwatch records nothing and the hooks stay silent. hwatch's manifest is contract 1 from this release
+(`min_core` 3.1, a `config_schema` for the keys it already knew, no `config` block), so it needs a 3.1 core.
+
 ## hdash
 
 **hdash** is the dashboard as a module ([`projectmentor/hive-mind-dash`](https://github.com/projectmentor/hive-mind-dash)),
