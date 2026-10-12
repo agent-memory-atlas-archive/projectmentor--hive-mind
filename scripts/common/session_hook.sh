@@ -7,6 +7,8 @@
 # local-only store (.telemetry/) and never enters the journal/merkle. Wired from
 # the GLOBAL ~/.claude/settings.json so it fires for every Claude Code session.
 #
+# Since core 3.1 `hv telemetry` forwards to the hwatch module and `record` is a silent no-op when it is not installed.
+#
 # Contract: best-effort and NON-BLOCKING. Every path exits 0 and the hv call is
 # capped with `timeout`, so it can never fail or slow a session.
 #

@@ -687,8 +687,9 @@ def api_peers(probe=True):
 
 # Commands that left core for a module (3.1). `hv <command>` runs the module's CLI through `hive-mind module run`, a
 # subprocess: `hv` imports no module code and no control plane. Removed in 4.0.
-_FORWARDED = {"dash": "hdash"}
-_MODULE_SOURCES = {"hdash": "https://github.com/projectmentor/hive-mind-dash"}
+_FORWARDED = {"dash": "hdash", "telemetry": "hwatch"}
+_MODULE_SOURCES = {"hdash": "https://github.com/projectmentor/hive-mind-dash",
+                   "hwatch": "https://github.com/projectmentor/hive-mind-hwatch"}
 
 
 def _module_installed(name):
@@ -720,3 +721,47 @@ def dash(args):
         print(f"{name} is installed but neither `hive-mind` nor `{name}` is on PATH: run `hive-mind module run {name} -- dash`.")
         sys.exit(1)
     sys.exit(subprocess.call(argv))
+
+
+def telemetry_cmd(args):
+    """`hv telemetry …` forwards to `hwatch telemetry …` (session telemetry left core in 3.1). Removed in 4.0.
+    `record` runs from session hooks at every start and end, so it is silent and exits 0 whether or not the module is
+    there. `report` and `list` print the install line and exit 1 when it is not."""
+    name = _FORWARDED["telemetry"]
+    rest = list(getattr(args, "rest", None) or [])
+    recording = rest[:1] == ["record"]
+    if not _module_installed(name):
+        if recording:
+            return
+        print("Session telemetry is the hwatch module (since 3.1) and is not installed on this node. Install it with:")
+        print(f"  hive-mind module install {name} --from {_MODULE_SOURCES[name]}")
+        sys.exit(1)
+    argv = _module_run_argv(name, ["telemetry", *rest])
+    if recording:
+        if argv:
+            try:
+                subprocess.call(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except OSError:
+                pass
+        return
+    if argv is None:
+        print(f"{name} is installed but neither `hive-mind` nor `{name}` is on PATH: run `hive-mind module run {name} -- telemetry`.")
+        sys.exit(1)
+    sys.exit(subprocess.call(argv))
+
+
+# The session telemetry store is written and reported by the hwatch module (`hwatch telemetry`). Core only reads it,
+# for the loopback `/api/telemetry` the dashboard shows: read-only, never created, and never part of the journal.
+TELEMETRY_DB = HIVE_HOME / ".telemetry" / "telemetry.db"
+
+
+def _telemetry_rows(since=""):
+    """Every session row, newest first, from the store hwatch writes; none if there is no store yet."""
+    if not TELEMETRY_DB.is_file():
+        return []
+    conn = sqlite3.connect(TELEMETRY_DB.resolve().as_uri() + "?mode=ro", uri=True)   # as_uri() escapes # ? % in the path
+    conn.row_factory = sqlite3.Row
+    try:
+        return conn.execute("SELECT * FROM telemetry_sessions ORDER BY COALESCE(started_at, updated_at) DESC").fetchall()
+    finally:
+        conn.close()

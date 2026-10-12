@@ -37,7 +37,7 @@ memory.
 | `hive-mind unforget` | Owner only: reverse an owner forget (`hive-mind retract --owner`) |
 | `hive-mind migrate forget` | Owner only (3.0): re-issue, owner-signed, the forgets that only the pre-genesis grandfather keeps in effect; `--check` lists them |
 | `hv sync` | Sync with peer nodes; `auth` sets the read-auth mode, `auth --outbound` what a peer must prove before this node pushes to it |
-| `hv telemetry` | Local-only session observability (never synced) |
+| `hv telemetry` | Session observability (forwards to the hwatch module; removed in 4.0) |
 | `hv verify` | Check that this install is the official, signed release |
 | `hv version` | Print the agent contract version |
 | `hv whoami` | Show this device's identity and membership status (sterile/fertile/owner) |
@@ -1344,8 +1344,13 @@ hv telemetry record|report|list …
 - **`hv audit`** lists facts to reconcile: redundant, obsolete, due for a re-check (`volatile` facts
   past their freshness window), missing (with `--session`), and CONTRAVENED (a correction that names
   a still-live fact in prose but never resolved it).
-- **`hv telemetry`** records and reports session observability (duration, tokens, cost) in a
-  local-only store that never enters the journal and never syncs.
+- **`hv telemetry`** *(3.1)* forwards to the **hwatch module** (`hive-mind module run hwatch -- telemetry …`; the
+  command is `hwatch telemetry record|report|list`). The module records and reports session observability (duration,
+  tokens, cost) in the same local-only store as before (`$HIVE_HOME/.telemetry/telemetry.db`: never in the journal,
+  never synced), so history carries over. `record` runs from session hooks, so it prints nothing and exits 0 when
+  hwatch is not installed (a node without the module behaves as before and records nothing); `report` and `list`
+  print the install line (`hive-mind module install hwatch --from …`) and exit 1. The forwarder is removed in 4.0:
+  use `hwatch telemetry`.
 
 ---
 

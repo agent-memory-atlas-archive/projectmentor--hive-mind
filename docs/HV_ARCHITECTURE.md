@@ -149,7 +149,7 @@ changes: one runtime namespace, the same names, the same `__file__`. A part is n
   digest), `11_release_node` (`version`, `verify`, identity commands, daemon management, `wire`), `12_capsules_keys`
   (`capsule`, key-file hygiene), `13_doctor_status` (`_doctor_status` and helpers), `14_peers` (peer candidates,
   address proving), `15_doctor_control_join` (`doctor`, `owner`, `group`, `admit`, `migrate`, `config`, `peers`,
-  `discover`, `join`), `16_telemetry`, `17_cli` (`build_parser`, dispatch). `hv` keeps the header, the loader and the
+  `discover`, `join`), `17_cli` (`build_parser`, dispatch). `hv` keeps the header, the loader and the
   `if __name__ == "__main__":` footer.
 - **What guards the split**: the move PRs were checked against their base byte for byte; that gate is retired, since
   there is no old `hv` left to compare with. What stays are the structural checks (list equals directory, size cap, the
