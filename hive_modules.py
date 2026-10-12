@@ -219,6 +219,25 @@ CLI_RESERVED = frozenset({"hv", "hive-mind", "hive-dispatch", "hive-sync", "hive
 RUNTIME_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
 MAX_RUNTIMES = 16
 READ_ROUTES = ("overview", "tags", "related", "audit", "peers", "verify", "node")
+TAILNET_READS = ("peers", "node")                   # carry tailnet addresses
+NODE_LOCAL_READS = ("overview", "peers", "verify")  # carry this node's own state, not only the feed's
+
+
+def _reads_record(manifest):
+    """{"reads": [...]} for the `.modules.json` row of a manifest that declares read routes, else {}: the row of a
+    manifest without `contract` is byte-for-byte what it was. `hive_module_api` serves a route only if it is here."""
+    return {"reads": list(manifest["reads"])} if manifest.get("reads") else {}
+
+
+def reads_summary(manifest):
+    """The install-summary line for a manifest's `reads`, or "" when it declares none. Marks what carries tailnet
+    addresses and what is node-local, so the operator sees what the module is being given before it is admitted."""
+    reads = manifest.get("reads") or []
+    if not reads:
+        return ""
+    marks = [r + (" [tailnet addresses]" if r in TAILNET_READS else "") + (" [node-local]" if r in NODE_LOCAL_READS else "")
+             for r in reads]
+    return "reads (/v1, read-only): " + ", ".join(marks)
 CONFIG_TYPES, CONFIG_SCOPES = ("string", "int", "bool", "enum"), ("node", "fleet", "fleet-node")
 CONFIG_SPEC_KEYS = {"type", "default", "scope", "description", "max", "min", "values", "required_at_install",
                     "secret", "identifying"}
@@ -571,6 +590,8 @@ def _confirm_publisher(manifest, expected, pinned=None):
                               f"{fingerprint(pinned)}: refusing. Remove and re-add it to change publishers.")
         return
     print(f"module {manifest['name']} {manifest['version']} is signed by publisher key {pub} (fingerprint {fingerprint(pub)})")
+    if reads_summary(manifest):
+        print("  " + reads_summary(manifest))
     if expected is not None:
         if expected != pub:
             raise ModuleError(f"--publisher does not match the manifest's publisher key ({fingerprint(pub)}): refusing")
@@ -730,7 +751,8 @@ def _complete_add(lib, args, name, root, rec):
         apply_launcher(lib, name, manifest, plan)
         state[name] = {"version": manifest["version"], "publisher": manifest["publisher"], "device_id": dev,
                        "source": rec["source"], "commit": rec["commit"], "installed_at": int(time.time()),
-                       "quota": dict(manifest.get("quota") or {}), "owner_quota": {}}
+                       "quota": dict(manifest.get("quota") or {}), "owner_quota": {},
+                       **_reads_record(manifest)}
         record_plan(state[name], plan)
         save_state(lib, state)
     except BaseException:
@@ -1737,7 +1759,8 @@ def cmd_add(lib, args):
             apply_launcher(lib, name, manifest, plan)
             state[name] = {"version": manifest["version"], "publisher": manifest["publisher"], "device_id": device_id,
                            "source": args.source, "commit": head, "installed_at": int(time.time()),
-                           "quota": dict(manifest.get("quota") or {}), "owner_quota": {}}
+                           "quota": dict(manifest.get("quota") or {}), "owner_quota": {},
+                           **_reads_record(manifest)}
             record_plan(state[name], plan)
             save_state(lib, state)
         except BaseException:
@@ -1833,6 +1856,8 @@ def cmd_update(lib, args):
         if manifest["name"] != args.name:
             raise ModuleError(f"the repository holds module {manifest['name']!r}, not {args.name!r}")
         _confirm_publisher(manifest, args.publisher, pinned=rec["publisher"])
+        if reads_summary(manifest):                   # the pinned key needs no prompt, but the new read access is shown
+            print(f"module {args.name} {manifest['version']} declares: {reads_summary(manifest)}")
         try:
             before = installed_manifest(lib, args.name).get("config_schema") or {}
             have = _read_config(modules_dir() / args.name / "config")
@@ -1877,6 +1902,8 @@ def cmd_update(lib, args):
         rec.update(version=manifest["version"], source=source, commit=head,
                    quota=dict(manifest.get("quota") or {}))     # the owner's own limits (owner_quota) are kept
         record_plan(rec, plan)
+        rec.pop("reads", None)                                  # the new manifest's list replaces the old, or none
+        rec.update(_reads_record(manifest))
         if gone[1] and gone[1] != rec.get("launcher"):          # the new version renamed (or dropped) its cli
             remove_launcher(*gone, args.name)
         save_state(lib, state)

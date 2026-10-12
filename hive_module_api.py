@@ -9,6 +9,8 @@ through the core. It is data plane only. It imports no owner-key code (the S2 bo
   GET  /v1/search   -> `api_search`: ?q=&tag=&kind=&min_confidence=&limit=&offset=&sort=&status=
   GET  /v1/item     -> `api_item`: ?id=<h:... or node_id:seq>
   GET  /v1/entity   -> `entity_view`: ?name=<entity name>, with the module entities a core `same-as` joins to it
+  GET  /v1/overview, tags, related, audit, peers, verify, node -> the dashboard reads (3.1): served only to a module
+                       whose signed manifest names the route in `reads` (see `_read_route`)
   GET  /v1/tip      -> {node_id, seq, hash}: the caller's own chain tip (seq 0 and `sha256:genesis` before its first write)
   POST /v1/entries  -> append one entry the module signed itself (see `route_entries`)
 
@@ -221,11 +223,15 @@ def route_root(ctx, q):
     gen = gov.get("genesis_device")     # a member from genesis, though `owner init` writes no admit for it (as `_admitted_content`)
     members = set(gov.get("admitted") or ()) | ({gen} if gen and gen not in (gov.get("revoked") or ()) else set())
     nodes = members - set(gov.get("purged") or ()) - set(gov.get("modules") or ())
-    return {"api": API_VERSIONS, "contract": getattr(hv, "CONTRACT_VERSION", None), "hive_id": gov.get("hive_id", ""),
-            "device_id": ctx["device_id"], "module": ctx["module"],
-            "node_id": hv.NODE_ID, "node_devices": len(nodes),     # a string and a count: no device list, address or principal
-            "quota": quota_state(ctx["device_id"], ctx["module"])[0],
-            "config": _module_config(gov, ctx["module"])}
+    out = {"api": API_VERSIONS, "contract": getattr(hv, "CONTRACT_VERSION", None), "hive_id": gov.get("hive_id", ""),
+           "device_id": ctx["device_id"], "module": ctx["module"],
+           "node_id": hv.NODE_ID, "node_devices": len(nodes),     # a string and a count: no device list, address or principal
+           "quota": quota_state(ctx["device_id"], ctx["module"])[0],
+           "config": _module_config(gov, ctx["module"])}
+    reads = declared_reads(ctx["module"])
+    if reads:                     # only a module that declared some sees the key, so every other answer is unchanged
+        out["reads"] = reads
+    return out
 
 
 def route_tip(ctx, q):
@@ -446,6 +452,98 @@ def route_item(ctx, q):
     return out
 
 
+# The read routes of 3.1 (design §5). A module is served one only if its signed manifest names it in `reads`; the
+# installer records that list in `.modules.json` (`reads`), the same row `limits_for` reads. Each is the matching
+# `/api/*` computation in `hv`, with owner-forgotten facts left out where it can carry them. `hive_modules.READ_ROUTES`
+# validates the manifest field and a test pins the two tuples equal (this module imports nothing from `hive_modules`).
+READ_ROUTES = ("overview", "tags", "related", "audit", "peers", "verify", "node")
+READ_BURST, READ_RATE = 60, 5.0     # per-device token bucket: a burst of 60, refilled 5 a second. Reads never touch the write quota
+_read_buckets = {}                  # device id -> (tokens, last refill time)
+_read_lock = threading.Lock()
+_undeclared_logged = set()
+
+
+def declared_reads(module):
+    """The read routes `module` may use: the `reads` of its record in `.modules.json`, narrowed to the known names. A
+    missing, unreadable or malformed record reads as none, which can only withhold a route."""
+    try:
+        rec = json.loads((daemon.hv.HIVE_HOME / ".modules.json").read_text()).get(module)
+        reads = rec.get("reads") if isinstance(rec, dict) else None
+    except (OSError, ValueError, AttributeError):
+        return []
+    return [r for r in READ_ROUTES if isinstance(reads, list) and r in reads]
+
+
+def _read_take(device_id, now=None):
+    """Spend one token from `device_id`'s read bucket: None, or the seconds until one is free."""
+    now = time.monotonic() if now is None else now
+    with _read_lock:
+        tokens, last = _read_buckets.get(device_id, (float(READ_BURST), now))
+        tokens = min(float(READ_BURST), tokens + max(0.0, now - last) * READ_RATE)
+        if tokens < 1.0:
+            _read_buckets[device_id] = (tokens, now)
+            return (1.0 - tokens) / READ_RATE
+        _read_buckets[device_id] = (tokens - 1.0, now)
+        return None
+
+
+def _read_route(name, fn):
+    """Wrap a read route: 403 (logged once per module and route) unless the manifest declared it, then 429 past the
+    device's read bucket. The check runs on every request, so an `update` that drops a route takes effect at once."""
+    def route(ctx, q):
+        if name not in declared_reads(ctx["module"]):
+            if (ctx["module"], name) not in _undeclared_logged:
+                _undeclared_logged.add((ctx["module"], name))
+                print(f"module api: {ctx['module']} read /v1/{name}, which its manifest does not declare in `reads`",
+                      file=sys.stderr)
+            raise _refused(403, "forbidden", detail="read-not-declared", route=name)
+        wait = _read_take(ctx["device_id"])
+        if wait is not None:
+            secs = max(1, math.ceil(wait))
+            raise _Refused(429, {"error": "too many reads", "retry_after": secs}, {"Retry-After": str(secs)})
+        return fn(ctx, q)
+    route.__name__ = f"route_{name}"
+    return route
+
+
+def _read_overview(ctx, q):
+    return daemon.hv.api_overview()
+
+
+def _read_tags(ctx, q):
+    return daemon.hv.api_tags()
+
+
+def _read_related(ctx, q):
+    raw = q.get("id", [""])[0]
+    if not raw.isascii() or not raw.isdigit() or len(raw) > 18:
+        raise _Refused(400, {"error": "id is required: the local row id of the fact or decision"})
+    return daemon.hv.api_related(kind=_choice(q, "kind", "fact", ("fact", "decision")), item_id=int(raw),
+                                 include_forgotten=False)
+
+
+def _read_audit(ctx, q):
+    return daemon.hv.api_audit(include_forgotten=False)
+
+
+def _read_peers(ctx, q):
+    return {"peers": daemon.hv.api_peers(probe=q.get("probe", ["1"])[0] not in ("0", "false", "no"))}
+
+
+def _read_verify(ctx, q):
+    return daemon.hv.api_verify()
+
+
+def _read_node(ctx, q):
+    node = q.get("node", [""])[0]
+    if not node or len(node) > 128:
+        raise _Refused(400, {"error": "node is required: an admitted peer's device id"})
+    addr = daemon.hv.api_node_addr(node)
+    if not addr:
+        raise _Refused(404, {"error": f"no reachable admitted peer {node!r}"})
+    return {"node": node, "addr": addr}
+
+
 def route_entity(ctx, q):
     """An entity and its linked facts, with each `x-<module>:` entity a core `same-as` joins to it (2.1, #208): the
     view `hv entity show --name` prints. Forgotten facts are left out, as on `/v1/search`."""
@@ -468,7 +566,10 @@ def route_entity(ctx, q):
 
 # The whole route table. A route is in this dict or it does not exist; `tests/test_module_api.py` pins it.
 ROUTES = {"/v1/": route_root, "/v1/feed": route_feed, "/v1/search": route_search, "/v1/item": route_item,
-          "/v1/tip": route_tip, "/v1/entries": route_entries, "/v1/entity": route_entity}
+          "/v1/tip": route_tip, "/v1/entries": route_entries, "/v1/entity": route_entity,
+          **{f"/v1/{n}": _read_route(n, f) for n, f in (
+              ("overview", _read_overview), ("tags", _read_tags), ("related", _read_related), ("audit", _read_audit),
+              ("peers", _read_peers), ("verify", _read_verify), ("node", _read_node))}}
 WRITE_ROUTES = ("/v1/entries",)             # the POST routes; every other route is GET
 
 

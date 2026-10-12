@@ -744,3 +744,20 @@ def test_a_module_service_is_ordered_after_hive_sync_without_requiring_it():
         text = hive_modules.render_units("demo", {"service": svc}, Path("/m"), Path("/k"))["hive-module-demo.service"]
         assert "After=network.target hive-sync.service\n" in text
         assert "Wants=" not in text and "Requires=" not in text
+
+
+@LINUX_ONLY
+def test_update_shows_records_and_replaces_the_declared_reads(hive, tmp_path):
+    pub = _publish(tmp_path / "repo")
+    _add(hive, tmp_path / "repo", pub)
+    assert "reads" not in _state(hive)["demo"]
+    _publish(tmp_path / "repo", version="1.1.0", contract=1, config=None, min_core="3.1", reads=["peers", "node"])
+    r = _run(hive, "module", "update", "demo")
+    assert "reads (/v1, read-only): " in r.stdout and "peers [tailnet addresses]" in r.stdout
+    assert _state(hive)["demo"]["reads"] == ["peers", "node"]
+    _publish(tmp_path / "repo", version="1.2.0", contract=1, config=None, min_core="3.1", reads=["tags"])
+    r = _run(hive, "module", "update", "demo")
+    assert _state(hive)["demo"]["reads"] == ["tags"]                 # replaced, not merged
+    _publish(tmp_path / "repo", version="1.3.0")
+    r = _run(hive, "module", "update", "demo")
+    assert "reads (/v1" not in r.stdout and "reads" not in _state(hive)["demo"]

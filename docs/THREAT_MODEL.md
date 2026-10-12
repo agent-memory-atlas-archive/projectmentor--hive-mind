@@ -467,6 +467,19 @@ at once). Concretely:
   and a module that spawns a detached child can outlive it. A module's `cli.name` is a command on the operator's PATH for
   as long as it is installed, so the operator is trusting that name to the publisher: read it at install. Only an
   admitted publisher key signs a manifest, so a gap that needs one is an admitted-device residual (accepted for 3.x).
+- **Read routes (3.1) hand an admitted module the hive's view of itself.** `GET /v1/overview`, `tags`, `related`,
+  `audit`, `peers`, `verify` and `node` are served only to a module whose signed manifest names the route in `reads`,
+  which the install summary (`module add` and `module update`) lists; they take no owner-key material, no capsule body and no governance state the feed
+  does not already carry, and `related` and `audit` leave owner-forgotten facts out (`tags` and the `overview` counts do not: a module that declares them, which only an admitted device with a publisher-signed manifest can, sees the names and counts of forgotten facts too, an accepted residual). Three carry node-local data
+  the feed does not: `overview` (this node's address and role), `peers` (a live probe of each peer, with tailnet
+  addresses and join-request labels) and `verify` (the local integrity verdict). `peers` and `node` therefore give a
+  declaring module the tailnet map. That is an admitted-device residual, accepted for 3.x: only a device the owner
+  admitted as that module's, running a manifest the publisher signed, can read them. `reads` gates `/v1` and nothing
+  else: any local process can still `GET` the loopback `/api/*` routes, which answer every loopback caller (B9), so
+  `reads` is a declaration the operator sees, not a sandbox. The read bucket (a burst of 60, then 5 a second, per
+  device, in memory) bounds how much work a module can ask of the node (`overview` and `audit` read the whole
+  journal); it resets when the daemon restarts, and it is not a defence against the operator's own processes.
+  Operator rule: install a module that declares `peers` or `node` only if you would give it the tailnet addresses.
 - **`hv doctor` `owner-copies` is a name-only check.** It looks one level deep in four directories
   (`$HIVE_HOME`, the current directory, the home directory, the identity stash) for `hive-owner-*.key` and
   the stash's `.owner-key`, and never opens a file. The default export and `--plaintext` share a basename,
