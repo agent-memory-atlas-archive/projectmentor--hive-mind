@@ -54,7 +54,7 @@ def test_secret_is_in_environ_not_in_the_command_line(tmp_path):
     out.mkdir()
     secret = "s3cr3t-value-ABC"
     r = _cell(tmp_path, "t1", ["MYTOK"], [f"env > {out}/environ"],
-              {"cmd": f"ps -o args= -p $$ > {out}/cmdline; test -s {out}/environ && echo OK # \"{{MYTOK}}\"",
+              {"cmd": f"ps -ww -o args= -p $$ > {out}/cmdline; test -s {out}/environ && echo OK # \"{{MYTOK}}\"",
                "expect": "OK"}, home)
     assert r.returncode == 0, r.stderr
     run(home, "wire", "t1", "--env-file", _envf(tmp_path, MYTOK=secret))
