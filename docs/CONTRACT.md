@@ -47,7 +47,7 @@ Everything a module can reach is marked with one of three tiers.
 - **The `x-<module>:` rule** and the **manifest format** (the fields in `MODULE_API.md`; an unknown field is
   refused, so adding one is a MINOR and raises `min_core`).
 - **Manifest contract 1 (3.1)**: the optional fields `contract`, `cli`, `runtimes`, `config_schema`, `status`,
-  `doctor`, `reads` and `ui`, and the rules `validate_manifest` applies to them ([`MODULES.md`](MODULES.md)). A manifest
+  `doctor`, `reads`, `ui` and `trust`, and the rules `validate_manifest` applies to them ([`MODULES.md`](MODULES.md)). A manifest
   is signed, so its shape cannot be amended in place: a new field, or a stricter or looser rule, is contract `2`, which
   a 3.1 node refuses by name. A manifest without `contract` is a 2.1/3.0 manifest and keeps its meaning; a contract-1
   manifest needs `min_core` 3.1, so a 3.0 node refuses it (as unknown fields). `ui_block.schema.json` is the one
