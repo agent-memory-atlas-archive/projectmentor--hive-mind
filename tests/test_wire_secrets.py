@@ -49,6 +49,10 @@ def _envf(tmp_path, **kv):
     return str(f)
 
 
+LINUX_ONLY = pytest.mark.skipif(not sys.platform.startswith("linux"), reason="reads /proc and relies on Linux E2BIG limits")
+
+
+@LINUX_ONLY
 def test_secret_is_in_environ_not_in_the_command_line(tmp_path):
     home, out = tmp_path / "h", tmp_path / "out"
     out.mkdir()
@@ -111,7 +115,13 @@ def test_failing_step_output_is_redacted_and_odd_values_do_not_crash(tmp_path):
     _cell(tmp_path, "t6", ["MYTOK"], ['echo "leak $MYTOK" >&2; exit 3'], {"cmd": "false"}, home)
     r = run(home, "wire", "t6", "--env-file", _envf(tmp_path, MYTOK="topsecretvalue"))
     assert "step failed" in r.stdout and "topsecretvalue" not in r.stdout + r.stderr and "***" in r.stdout
-    r = run(home, "wire", "t6", "--env-file", _envf(tmp_path, MYTOK="v" * 200000))
+
+
+@LINUX_ONLY
+def test_oversize_credential_is_reported_not_a_traceback(tmp_path):
+    home = tmp_path / "h"
+    _cell(tmp_path, "t7", ["MYTOK"], ["true"], {"cmd": "false"}, home)
+    r = run(home, "wire", "t7", "--env-file", _envf(tmp_path, MYTOK="v" * 200000))
     assert "Traceback" not in r.stderr and "could not run" in r.stdout
 
 
