@@ -1,1 +1,0 @@
-- Tests: three macOS-only test failures fixed (boot-unit uninstall tests now pose as Linux via a `uname` shim; owner-agent wrong-uid test tolerates EPIPE).

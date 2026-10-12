@@ -1,1 +1,0 @@
-- Make `hivemind` and `hivemind.crypto` regular packages (`__init__.py`) so a same-named package on `sys.path` cannot shadow the signer seam import.

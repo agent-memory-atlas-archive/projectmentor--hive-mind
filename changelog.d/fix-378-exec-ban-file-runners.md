@@ -1,1 +1,0 @@
-- The S2 exec ban also catches the file-running APIs (`runpy`, `importlib` loaders, `imp`, `zipimport`, `marshal`, `ctypes`, `__import__` and the rest), with a planted probe per API; tests only, no behaviour change (#378).

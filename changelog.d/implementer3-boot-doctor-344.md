@@ -1,1 +1,0 @@
-- `hv doctor --boot` and `hive-doctor-boot.service` (#344): after a reboot the node waits (bounded) for the sync daemon, checks the platform (linger; on WSL the Windows logon task that starts the distro, which `hive-mind update` now installs), runs `--fix`, rechecks, and records one `boot` fact per boot saying what is up, what was fixed and what needs the operator.
