@@ -1413,7 +1413,8 @@ own device key, has the owner admit it under your principal, and installs its fi
 checkout. `remove` revokes the device and keeps the module's journal entries. `update` re-verifies and swaps
 atomically, and refuses a different publisher key. `quota` is the only way a limit goes above the default. Where the
 platform has no module backend, `add` says so and exits non-zero before it touches anything. The manifest, the unit and
-the limits are in [`MODULE_API.md`](MODULE_API.md). `hive-mind update` re-renders every module's unit afterwards.
+the limits are in [`MODULE_API.md`](MODULE_API.md). `hive-mind update` then runs the internal `module refresh` (below).
+*(3.1)* `hive-mind update` brings every installed module along: `hive-mind module refresh` (internal; `--check` prints the plan and changes nothing) takes each module to the newest signed version at its recorded source that the new core admits, with the same tree check and pinned publisher as `module update`, and never goes to a lower version. A module whose update fails but whose installed version still admits the core keeps running, with a loud warning. A module with no version that admits the core is **disabled**: units stopped and disabled, launcher removed, `.modules.json` marks it, `hv doctor` reports `modules:<name>` as `disabled-incompatible`, and `module run`/`status` and its hooks refuse. The core update still succeeds. `hive-mind module update <name>` (or the next `hive-mind update`) brings it back once a compatible version is published. A second run with nothing new changes nothing.
 *(3.1)* When the manifest declares `reads`, `add` and `update` print them with the publisher key, before you confirm, marking the routes that carry tailnet addresses (`peers`, `node`) or node-local state (`overview`, `peers`, `verify`).
 
 **On a device without the owner key** *(2.3)* (the owner key lives on another machine). `add` fetches, verifies, stages and mints

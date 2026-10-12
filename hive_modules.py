@@ -1221,11 +1221,18 @@ def _restore_launcher(lib, name, rec, old_manifest):
         pass
 
 
+def refuse_disabled(name, rec):
+    if is_disabled(rec):
+        raise ModuleError(f"module {name!r} is disabled: {rec['disabled'].get('reason')}. "
+                          f"Fix it, then run: hive-mind module update {name}")
+
+
 def cmd_run(lib, args):
     """`module run <name> [--] args…`: the launcher's job without the launcher."""
     rec = load_state(lib).get(args.name)
     if rec is None:
         raise ModuleError(f"module {args.name!r} is not installed")
+    refuse_disabled(args.name, rec)
     manifest = installed_manifest(lib, args.name)
     if not manifest.get("cli"):
         raise ModuleError(f"module {args.name!r} declares no cli")
@@ -1261,6 +1268,7 @@ def cmd_status(lib, args):
     rec = load_state(lib).get(args.name)
     if rec is None:
         raise ModuleError(f"module {args.name!r} is not installed")
+    refuse_disabled(args.name, rec)
     manifest = installed_manifest(lib, args.name)
     if not manifest.get("status"):
         raise ModuleError(f"module {args.name!r} declares no status command")
@@ -1881,71 +1889,105 @@ def cmd_update(lib, args):
     if rec is None:
         raise ModuleError(f"module {args.name!r} is not installed")
     source = args.source or rec["source"]            # no owner key needed: it admits, revokes and re-limits nothing
-    root = modules_dir()
     with tempfile.TemporaryDirectory(prefix="hive-module-") as tmp:
         src = Path(tmp) / "src"
         tracked, head = _fetch(source, src)
-        manifest = check_tree(src, lib.CONTRACT_VERSION, tracked)
-        if manifest["name"] != args.name:
-            raise ModuleError(f"the repository holds module {manifest['name']!r}, not {args.name!r}")
-        _confirm_publisher(manifest, args.publisher, pinned=rec["publisher"])
-        if reads_summary(manifest):                   # the pinned key needs no prompt, but the new read access is shown
-            print(f"module {args.name} {manifest['version']} declares: {reads_summary(manifest)}")
-        try:
-            before = installed_manifest(lib, args.name).get("config_schema") or {}
-            have = _read_config(modules_dir() / args.name / "config")
-        except ModuleError:                       # update is the remedy for a broken install: ask for every required key
-            before, have = {}, {}
-        plan = contract_plan(args.name, manifest, state, rec.get("runtime_overrides"))
-        node_vals, fleet_vals = install_config(lib, args, manifest, owner=lib._owner_key_exists(),
-                                               asked=set(manifest.get("config_schema") or {}) - set(before), have=have)
-        staging, old = root / f".{args.name}.staging", root / f".{args.name}.old"
-        try:
-            _stage(src, manifest, staging)
-        except (ModuleError, OSError):
-            shutil.rmtree(staging, ignore_errors=True)
-            raise
-        live = root / args.name
-        swapped = False
-        try:
-            _write_config(staging, {**manifest.get("config", {}), **node_vals,
-                                    **(json.loads((live / "config").read_text()) if (live / "config").exists() else {})})
-            shutil.rmtree(old, ignore_errors=True)
-            os.rename(live, old)                  # two renames: a crash between them leaves the old copy at `.old`
-            swapped = True                        # only now is `.old` this update's; a stale one is never rolled back
-            os.rename(staging, live)
-            note = install_units(lib, args.name, manifest, plan and plan["path"])
-            apply_launcher(lib, args.name, manifest, plan)
-        except BaseException:
-            if swapped:
-                shutil.rmtree(live, ignore_errors=True)
-                os.rename(old, live)
-                try:                                  # put the old unit back beside the old files
-                    before_manifest = json.loads((live / MANIFEST).read_text())
-                    install_units(lib, args.name, before_manifest, recorded_path(rec))
-                    if plan and plan.get("launcher") != rec.get("launcher"):
-                        remove_launcher(plan["bin_dir"], plan.get("launcher"), args.name)
-                    _restore_launcher(lib, args.name, rec, before_manifest)
-                except (OSError, ValueError, KeyError):
-                    pass
-            shutil.rmtree(staging, ignore_errors=True)
-            raise
+        manifest = _candidate(lib, args.name, rec, src, tracked, args.publisher)
+        return _update_tree(lib, args, state, rec, source, src, manifest, head)
+
+
+def _candidate(lib, name, rec, src, tracked, publisher=None):
+    """The verified manifest of the fetched tree `src` as an update of installed module `name`: the same tree check as
+    an add, the same module, signed by the pinned publisher. Raises ModuleError."""
+    manifest = check_tree(src, lib.CONTRACT_VERSION, tracked)
+    if manifest["name"] != name:
+        raise ModuleError(f"the repository holds module {manifest['name']!r}, not {name!r}")
+    _confirm_publisher(manifest, publisher, pinned=rec["publisher"])
+    return manifest
+
+
+def _update_tree(lib, args, state, rec, source, src, manifest, head):
+    """Swap the verified `manifest` tree at `src` in for the installed module, its units and launcher with it, and roll
+    back on failure. A successful update lifts a `disabled` mark: this version is one the core admits."""
+    root = modules_dir()
+    if reads_summary(manifest):                   # the pinned key needs no prompt, but the new read access is shown
+        print(f"module {args.name} {manifest['version']} declares: {reads_summary(manifest)}")
+    try:
+        before = installed_manifest(lib, args.name).get("config_schema") or {}
+        have = _read_config(modules_dir() / args.name / "config")
+    except ModuleError:                       # update is the remedy for a broken install: ask for every required key
+        before, have = {}, {}
+    plan = contract_plan(args.name, manifest, state, rec.get("runtime_overrides"))
+    node_vals, fleet_vals = install_config(lib, args, manifest, owner=lib._owner_key_exists(),
+                                           asked=set(manifest.get("config_schema") or {}) - set(before), have=have)
+    staging, old = root / f".{args.name}.staging", root / f".{args.name}.old"
+    try:
+        _stage(src, manifest, staging)
+    except (ModuleError, OSError):
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    live = root / args.name
+    swapped = False
+    try:
+        _write_config(staging, {**manifest.get("config", {}), **node_vals,
+                                **(json.loads((live / "config").read_text()) if (live / "config").exists() else {})})
         shutil.rmtree(old, ignore_errors=True)
-        gone = (rec.get("bin_dir"), rec.get("launcher"))
-        rec.update(version=manifest["version"], source=source, commit=head,
-                   quota=dict(manifest.get("quota") or {}))     # the owner's own limits (owner_quota) are kept
-        record_plan(rec, plan)
-        rec.pop("reads", None)                                  # the new manifest's list replaces the old, or none
-        rec.update(_reads_record(manifest))
-        if gone[1] and gone[1] != rec.get("launcher"):          # the new version renamed (or dropped) its cli
-            remove_launcher(*gone, args.name)
-        save_state(lib, state)
-        warn_missing(args.name, plan)
-        if fleet_vals:
-            store_fleet_values(lib, args.name, manifest["config_schema"], fleet_vals)
+        os.rename(live, old)                  # two renames: a crash between them leaves the old copy at `.old`
+        swapped = True                        # only now is `.old` this update's; a stale one is never rolled back
+        os.rename(staging, live)
+        note = install_units(lib, args.name, manifest, plan and plan["path"])
+        apply_launcher(lib, args.name, manifest, plan)
+    except BaseException:
+        if swapped:
+            shutil.rmtree(live, ignore_errors=True)
+            os.rename(old, live)
+            try:                                  # put the old unit back beside the old files
+                before_manifest = json.loads((live / MANIFEST).read_text())
+                if is_disabled(rec):                  # still disabled: the failed attempt's start is undone, nothing is revived
+                    _stop_units(args.name)
+                else:
+                    install_units(lib, args.name, before_manifest, recorded_path(rec))
+                if plan and plan.get("launcher") != rec.get("launcher"):
+                    remove_launcher(plan["bin_dir"], plan.get("launcher"), args.name)
+                _restore_launcher(lib, args.name, rec, before_manifest)
+            except (OSError, ValueError, KeyError):
+                pass
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    shutil.rmtree(old, ignore_errors=True)
+    gone = (rec.get("bin_dir"), rec.get("launcher"))
+    rec.update(version=manifest["version"], source=source, commit=head,
+               quota=dict(manifest.get("quota") or {}))     # the owner's own limits (owner_quota) are kept
+    record_plan(rec, plan)
+    rec.pop("reads", None)                                  # the new manifest's list replaces the old, or none
+    rec.update(_reads_record(manifest))
+    rec.pop("disabled", None)                               # a disabled-incompatible module is back
+    if gone[1] and gone[1] != rec.get("launcher"):          # the new version renamed (or dropped) its cli
+        remove_launcher(*gone, args.name)
+    save_state(lib, state)
+    warn_missing(args.name, plan)
+    if fleet_vals:
+        store_fleet_values(lib, args.name, manifest["config_schema"], fleet_vals)
     print(f"updated module {args.name} to {manifest['version']}; its key, device and pinned publisher are unchanged"
           + (f" ({note})" if note else ""))
     return _healthy_rc(args, doctor_after(lib, args.name, "update"))
+
+
+def is_disabled(rec):
+    """Whether `hive-mind update` disabled this module because no version of it admits this core."""
+    return isinstance(rec, dict) and isinstance(rec.get("disabled"), dict)
+
+
+def _stop_units(name):
+    """Stop and disable the module's units without deleting them, so the update that fixes it can start them again.
+    Only the module's own two units are named: seat sessions it started in their own scopes are not touched. Returns
+    False when a unit would not stop."""
+    ok = True
+    d = unit_dir()
+    for f in reversed(unit_names(name)):
+        if (d / f).exists():
+            ok = _systemctl("disable", "--now", f, timeout=_stop_timeout(_unit_grace(d / f))) and ok
+    return ok
 
 
 def _installed_signature(lib, name):
@@ -2128,7 +2170,7 @@ def _reapply_names(lib, names):
     state = load_state(lib)
     for name in names:
         rec = state.get(name)
-        if rec is None:
+        if rec is None or is_disabled(rec):       # a disabled module's units stay off until an update fixes it
             continue
         try:
             manifest = check_tree(modules_dir() / name, lib.CONTRACT_VERSION, ignore=("config",))
@@ -2164,6 +2206,115 @@ def _reapply_names(lib, names):
         note = _start_unit(unit)
         if note:
             print(f"hive-mind module: warning: {name}: {note}", file=sys.stderr)
+
+
+# ── `hive-mind update` brings the installed modules along (3.1, #390) ───────────────────────────────
+
+def _version_key(v):
+    """The leading dotted integers of a version string as a tuple, or None when there are none."""
+    m = re.match(r"\d+(\.\d+)*", v if isinstance(v, str) else "")
+    return tuple(int(x) for x in m.group(0).split(".")) if m else None
+
+
+def _installed_compat(lib, name):
+    """None when the installed tree still verifies under this core (so it is compatible), else why not. An OSError
+    is not an answer about compatibility: it is None too, so a read error never disables a module."""
+    try:
+        check_tree(modules_dir() / name, lib.CONTRACT_VERSION, ignore=("config",))
+    except ModuleError as e:
+        return str(e)
+    except OSError:
+        return None
+    return None
+
+
+def _refresh_args(name):
+    return argparse.Namespace(name=name, source=None, publisher=None, set=[], set_fleet=[], set_env=[],
+                              non_interactive=True, no_owner_prompt=True, require_healthy=False)
+
+
+def _loud(lines):
+    bar = "!" * 72
+    print("\n".join(["", bar, *lines, bar, ""]), file=sys.stderr)
+
+
+def _refresh_one(lib, name, state, check):
+    """One module. Returns "current", "updated", "kept" (update failed, the installed version still admits this core)
+    or "disabled". Nothing here raises."""
+    rec = state[name]
+    off = is_disabled(rec)
+    reason, manifest = None, None
+    try:
+        with tempfile.TemporaryDirectory(prefix="hive-module-") as tmp:
+            src = Path(tmp) / "src"
+            tracked, head = _fetch(rec["source"], src)
+            manifest = _candidate(lib, name, rec, src, tracked)
+            have, new = _version_key(rec.get("version")), _version_key(manifest["version"])
+            if have and new and new < have:
+                raise ModuleError(f"the source offers {manifest['version']}, older than the installed {rec['version']}: "
+                                  "an automatic update never goes back")
+            if not off and head == rec.get("commit") and _installed_signature(lib, name) == "valid":
+                print(f"module {name} {rec['version']} is current")
+                return "current"
+            if check:
+                print(f"module {name}: would {'re-enable and ' if off else ''}update {rec['version']} -> {manifest['version']}")
+                return "updated"
+            _update_tree(lib, _refresh_args(name), state, rec, rec["source"], src, manifest, head)
+            return "updated"
+    except (ModuleError, OSError, ValueError, KeyError, TypeError, lib.OwnerKeyLocked) as e:
+        reason = str(e) or type(e).__name__
+    except subprocess.SubprocessError as e:
+        reason = f"git failed ({e})"
+    problem = _installed_compat(lib, name)
+    if off:
+        _loud([f"module {name} stays DISABLED: {reason}",
+               f"fix it, then run: hive-mind module update {name}"])
+        return "disabled"
+    if problem is None:
+        _loud([f"module {name} {rec.get('version')} was NOT updated: {reason}",
+               "The installed version still works with this core and keeps running.",
+               f"To retry: hive-mind module update {name}"])
+        return "kept"
+    if check:
+        print(f"module {name}: would DISABLE (no version admits this core: {reason}; installed: {problem})")
+        return "disabled"
+    _disable(lib, name, state, f"{reason}; the installed version does not admit this core ({problem})")
+    return "disabled"
+
+
+def _disable(lib, name, state, why):
+    rec = state[name]
+    stopped = _stop_units(name)
+    if rec.get("bin_dir") and rec.get("launcher"):
+        with contextlib.suppress(OSError, ModuleError):
+            remove_launcher(rec["bin_dir"], rec["launcher"], name)      # the launcher would still run its code
+    rec["disabled"] = {"reason": why[:500], "core": str(lib.CONTRACT_VERSION), "at": int(time.time())}
+    save_state(lib, state)
+    _loud([f"module {name} is DISABLED: no version of it works with this core.", f"why: {why}",
+           "Its units are stopped and disabled, its hooks and command are off; nothing else of it was deleted."
+           + ("" if stopped else f" A unit would not stop: check `systemctl --user status hive-module-{name}`."),
+           f"`hv doctor` reports modules:{name} as disabled-incompatible until it is fixed.",
+           f"To bring it back once a compatible version is published: hive-mind module update {name}",
+           "The core update itself succeeded."])
+
+
+def cmd_refresh(lib, args):
+    """Internal, run by `hive-mind update` after the core update: bring each installed module to the newest signed
+    version at its recorded source that this core admits, or say loudly why not. It never fails the core update.
+    `--check` plans the same run and changes nothing."""
+    if not platform_supported()[0]:
+        return 0
+    state = load_state(lib)
+    keep = []
+    for name in sorted(state):
+        if not isinstance(state[name], dict) or not vocabulary.valid_module_name(name):
+            continue
+        outcome = _refresh_one(lib, name, state, args.check)
+        if outcome in ("current", "kept") and not args.check:
+            keep.append(name)
+    if keep:
+        _reapply_names(lib, keep)       # the new core's unit text, for a module that stays on its installed version
+    return 0
 
 
 # ── `module check`: the publisher's conformance run ─────────────────────────────────────────────────
@@ -2589,7 +2740,9 @@ def build_parser():
     i.add_argument("--json", action="store_true", help="print one JSON object; never prompts")
     _install_flags(i)
     sub.add_parser("list", help="installed modules: version, publisher, signature, service, device, quota use")
-    sub.add_parser("reapply", help=argparse.SUPPRESS)           # internal: `hive-mind update` re-renders the units
+    sub.add_parser("reapply", help=argparse.SUPPRESS)           # internal: re-renders the units
+    rf = sub.add_parser("refresh", help="update every installed module to the newest version this core admits, or disable one that has none (`hive-mind update` runs this)")
+    rf.add_argument("--check", action="store_true", help="show what would be updated or disabled; change nothing")
     q = sub.add_parser("quota", help="the owner raises or lowers a module's limits")
     q.add_argument("name")
     for k in QUOTA_KEYS:
@@ -2625,7 +2778,7 @@ def build_parser():
 
 
 VERBS = {"add": cmd_add, "install": cmd_install, "remove": cmd_remove, "update": cmd_update, "list": cmd_list, "quota": cmd_quota,
-         "reapply": cmd_reapply, "config": cmd_config, "check": cmd_check, "run": cmd_run, "status": cmd_status,
+         "reapply": cmd_reapply, "refresh": cmd_refresh, "config": cmd_config, "check": cmd_check, "run": cmd_run, "status": cmd_status,
          "runtime": cmd_runtime}
 
 

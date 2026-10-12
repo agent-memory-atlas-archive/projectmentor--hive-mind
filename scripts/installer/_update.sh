@@ -456,13 +456,21 @@ for _ in $(seq 1 "${HIVE_DAEMON_WAIT_S:-15}"); do
 done
 if [ "$_up" = 1 ]; then ok "Daemon responding"; else echo "  Daemon may still be starting — check the daemon logs."; fi
 
-# 2.1 (M2): the core's unit renderer may have changed, so installed modules' units are rendered again too. Only the
-# files that changed are written and only their units restarted. It never fails the update: a module that cannot
-# be re-applied is a warning that names it.
+# 3.1 (#390): installed modules come along. Each is brought to the newest signed version at its recorded source that
+# this core admits, its files and its units swapped in one step, so the new core's unit text never restarts a module
+# that is still on old code. One that stays on its installed version (the update failed, or it is current) has its
+# units re-rendered as before (2.1, M2); one with no version that admits this core is disabled, loudly. It never
+# fails the core update. `hive-mind module refresh --check` shows the plan.
 if [ -f "$HIVE_DIR/hivemind_ctl.py" ]; then
-  _mod_out="$(python3 "$HIVE_DIR/hivemind_ctl.py" module reapply 2>&1)" \
-    || _mod_out="${_mod_out:+$_mod_out$'\n'}hive-mind module: warning: module units could not be re-applied"
-  while IFS= read -r _l; do [ -n "$_l" ] && warn "${_l#hive-mind module: warning: }"; done <<<"$_mod_out"
+  _mod_out="$(python3 "$HIVE_DIR/hivemind_ctl.py" module refresh 2>&1)" \
+    || _mod_out="${_mod_out:+$_mod_out$'\n'}hive-mind module: warning: installed modules could not be brought up to date"
+  while IFS= read -r _l; do
+    [ -n "$_l" ] || continue
+    case "$_l" in
+      "hive-mind module: warning: "*) warn "${_l#hive-mind module: warning: }" ;;
+      *) echo "  $_l" ;;
+    esac
+  done <<<"$_mod_out"
 fi
 
 info "Rebuilding database..."
