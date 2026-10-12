@@ -690,11 +690,55 @@ def _load_env_file(path):
     return out
 
 
-def _subst(s, mapping):
-    """Replace {VAR} placeholders in a verify URL/header/cmd from `mapping` (unknown vars left as-is)."""
+def _subst(s, mapping, as_env=False):
+    """Replace {VAR} placeholders in a verify URL/header/cmd from `mapping` (unknown vars left as-is).
+    as_env=True writes `${VAR}` instead of the value, for text a shell will parse: the secret then
+    travels in the child's environment, never in the command line or the shell's input."""
     for k, v in mapping.items():
-        s = s.replace("{" + k + "}", v)
+        s = s.replace("{" + k + "}", "${" + k + "}" if as_env else v)
     return s
+
+
+_ENV_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
+_ENV_NAME_DENY = ("PATH", "HOME", "SHELL", "ENV", "BASH_*", "SHELLOPTS", "BASHOPTS", "IFS", "PS4",
+                  "PROMPT_COMMAND", "CDPATH", "GLOBIGNORE", "TMPDIR", "LANG", "LC_*", "LD_*", "DYLD_*",
+                  "*PROXY*", "HIVE_*", "PYTHON*", "NODE_OPTIONS", "GIT_*", "SSH_*")
+
+
+_ENV_ENTRY_MAX = 131072                # Linux MAX_ARG_STRLEN: one environment entry
+
+
+def _env_name_ok(name):
+    """May `name` be a credential variable handed to a cell's shell? Upper-case identifier, and not one
+    the shell, loader, proxy stack or hive itself reads."""
+    return (isinstance(name, str) and bool(_ENV_NAME_RE.match(name))
+            and not any(fnmatch.fnmatchcase(name, pat) for pat in _ENV_NAME_DENY))
+
+
+def _env_name_problem(names):
+    bad = [n for n in (names or []) if not _env_name_ok(n)]
+    if not bad:
+        return None
+    return (f"credential name(s) {bad} are not allowed: use A-Z, 0-9 and _ (start with a letter, at most "
+            f"64), and not a name the shell, loader, proxy or hive reads (PATH, HOME, BASH_*, LD_*, "
+            f"*PROXY*, HIVE_*, GIT_*, ...)")
+
+
+def _child_env(secrets):
+    """Environment for a cell's shell: ours, minus the owner-key passphrase, plus the secrets."""
+    env = dict(os.environ)
+    env.pop("HIVE_OWNER_KEY_PASSPHRASE", None)
+    for k, v in secrets.items():       # reject what exec would refuse, the same way on every platform
+        if "\0" in k or "\0" in v or len(k) + len(v) + 1 > _ENV_ENTRY_MAX:
+            raise ValueError(f"credential {k!r} contains a NUL byte or is larger than {_ENV_ENTRY_MAX} bytes")
+    env.update(secrets)
+    return env
+
+
+def _redact(text, secrets):
+    for v in sorted((v for v in secrets.values() if v), key=len, reverse=True):
+        text = text.replace(v, "***")
+    return text
 
 
 def _run_verify(cell, secrets):
@@ -717,8 +761,11 @@ def _run_verify(cell, secrets):
         except Exception:
             return False
     if v.get("cmd"):
-        r = subprocess.run(["bash", "-lc", _subst(v["cmd"], secrets)],
-                           env=dict(os.environ, **secrets), capture_output=True, text=True)
+        try:
+            r = subprocess.run(["bash", "-lc", _subst(v["cmd"], secrets, as_env=True)],
+                               env=_child_env(secrets), capture_output=True, text=True)
+        except (ValueError, OSError):
+            return False
         exp = v.get("expect")
         return r.returncode == 0 and (exp in (r.stdout + r.stderr) if exp else True)
     return True
@@ -732,6 +779,10 @@ def _wire_tool(cell, env_file=None):
     ef = env_file or "~/.claude/.env"
     requires = cell.get("requires") or []
     # Prefer sealed CAPSULES (encrypt-to-device); fall back to the per-device .env for un-sealed creds.
+    bad = _env_name_problem(requires) if isinstance(requires, list) else "requires must be a list"
+    if bad:
+        print(f"{name}: {bad}")
+        return 1
     secrets = {}
     if requires:
         caps = _capsule_state(merkle.read_all_entries(JOURNAL_DIR))
@@ -761,11 +812,17 @@ def _wire_tool(cell, env_file=None):
     if not steps:
         print(f"{name}: no steps for platform {plat!r} (and verify not yet passing).")
         return 1
-    env = dict(os.environ, **{k: secrets[k] for k in requires})
     for step in steps:
-        r = subprocess.run(["bash", "-lc", step], env=env, capture_output=True, text=True)
+        try:
+            env = _child_env({k: secrets[k] for k in requires})
+            r = subprocess.run(["bash", "-lc", step], env=env, capture_output=True, text=True)
+        except (ValueError, OSError) as e:
+            print(f"{name}: step could not run ({plat}): {_redact(str(e), secrets)[:200]} "
+                  f"(a credential may contain a NUL byte or be too large)")
+            return 1
         if r.returncode != 0:
-            print(f"{name}: step failed ({plat}): {step}\n  {(r.stderr or r.stdout).strip()[:400]}")
+            out = _redact((r.stderr or r.stdout).strip(), secrets)[:400]
+            print(f"{name}: step failed ({plat}): {_redact(step, secrets)}\n  {out}")
             return 1
     if _run_verify(cell, secrets):
         print(f"{name}: provisioned + verified ✓ ({plat})")
@@ -847,6 +904,12 @@ def wire_cmd(args):
         if problem is not None:
             print(f"Not a valid {t}: {problem}.")
             return
+        if t == "cell":
+            req = payload.get("requires") or []
+            problem = _env_name_problem(req) if isinstance(req, list) else "'requires' must be a list"
+            if problem:
+                print(f"Not a valid cell: {problem}.")
+                return
         gov = _governance_state(entries)
         writers = gov.get("config", {}).get("cell_writers", "owner")
         if gov.get("owner_id"):                 # cells are executable: gate the write (hive #60)

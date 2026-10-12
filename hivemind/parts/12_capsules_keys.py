@@ -229,6 +229,9 @@ def capsule_cmd(args):
                       "owner device, or `hive-mind config set capsule_putters fertile`."); return 1
             if putters == "fertile" and NODE_ID not in gov.get("admitted", set()):
                 print("Only admitted devices may store capsules on this hive."); return 1
+        bad = _env_name_problem([args.name] if action == "put" and getattr(args, "name", None) else [])
+        if bad:
+            print(bad.replace("credential name(s)", "capsule name(s)")); return 1
         recips, missing, suspect = _recipient_pubkeys(entries, gov)
         if not recips:                                  # pre-owner / solo: seal to THIS device
             sc = _my_curve_scalar()

@@ -761,3 +761,33 @@ def test_update_shows_records_and_replaces_the_declared_reads(hive, tmp_path):
     _publish(tmp_path / "repo", version="1.3.0")
     r = _run(hive, "module", "update", "demo")
     assert "reads (/v1" not in r.stdout and "reads" not in _state(hive)["demo"]
+
+
+@LINUX_ONLY
+def test_config_secret_key_is_refused_on_argv_and_taken_from_stdin(hive, tmp_path):
+    pub = _publish(tmp_path / "repo")
+    _add(hive, tmp_path / "repo", pub)
+    d = tmp_path / "modules" / "demo"
+    r = _run(hive, "module", "config", "demo", "set", "channel.github.token", "ghp_argvsecret", check=False)
+    assert r.returncode == 1 and "ghp_argvsecret" not in r.stdout + r.stderr
+    assert "channel.github.token" not in json.loads((d / "config").read_text())
+    env = dict(os.environ, HIVE_HOME=str(hive), HIVE_MODULES_DIR=str(tmp_path / "modules"))
+    p = subprocess.run([sys.executable, str(PROJECT / "hivemind_ctl.py"), "module", "config", "demo", "set",
+                        "channel.github.token", "--stdin"], input="ghp_stdinsecret\n", env=env,
+                       capture_output=True, text=True)
+    assert p.returncode == 0, p.stderr
+    assert "ghp_stdinsecret" not in p.stdout + p.stderr
+    assert json.loads((d / "config").read_text())["channel.github.token"] == "ghp_stdinsecret"
+    assert "ghp_stdinsecret" not in _run(hive, "module", "config", "demo", "list").stdout
+    assert "channel.github.token=********" in _run(hive, "module", "config", "demo", "list").stdout
+
+
+@LINUX_ONLY
+def test_config_set_non_secret_key_from_stdin_does_not_echo_the_value(hive, tmp_path):
+    pub = _publish(tmp_path / "repo")
+    _add(hive, tmp_path / "repo", pub)
+    env = dict(os.environ, HIVE_HOME=str(hive), HIVE_MODULES_DIR=str(tmp_path / "modules"))
+    p = subprocess.run([sys.executable, str(PROJECT / "hivemind_ctl.py"), "module", "config", "demo", "set",
+                        "poll", "--stdin"], input="plainvalue-9271\n", env=env, capture_output=True, text=True)
+    assert p.returncode == 0, p.stderr
+    assert "plainvalue-9271" not in p.stdout + p.stderr

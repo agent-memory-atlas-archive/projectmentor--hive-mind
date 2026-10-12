@@ -1367,6 +1367,25 @@ def _save_config(path, have):
 # else its schema default. A module without a schema keeps the 2.1/3.0 behaviour: free-form keys in the node file.
 
 MASK = "********"
+
+_SECRET_KEY_RE = re.compile(r"token|secret|passw|passphrase|credential|api[._-]?key|private|(^|[._-])key$", re.I)
+
+
+def _is_secret_key(key):
+    """A config key that holds a secret, by name: its value never travels on argv or into output."""
+    return bool(_SECRET_KEY_RE.search(key or ""))
+
+
+def _read_secret_file(path):
+    try:
+        value = Path(path).expanduser().read_text().rstrip("\n")
+    except (OSError, ValueError) as e:
+        raise ModuleError(f"could not read {path}: {e}")
+    if len(value) > vocabulary.MODULE_VALUE_MAX:
+        raise ModuleError(f"the value is longer than {vocabulary.MODULE_VALUE_MAX} characters")
+    return value
+
+
 _DEVICE_TAG = re.compile(r"(?:k1:)?([0-9a-f]{16})\Z")
 _SEGMENT = re.compile(r"[a-z0-9_-]+\Z")
 _NODE_KEY = re.compile(r"node\.([0-9a-f]{16})\.(.+)\Z")
@@ -1619,17 +1638,23 @@ def store_fleet_values(lib, name, schema, fleet_vals):
 
 
 def _config_value_arg(args, key, spec):
-    secret = bool(spec and spec.get("secret"))
+    secret = bool(spec and spec.get("secret")) or (spec is None and _is_secret_key(key))
+    if getattr(args, "stdin", False) and getattr(args, "file", None):
+        raise ModuleError("give the value with --stdin or --file, not both")
     if getattr(args, "stdin", False):
         if args.value is not None:
             raise ModuleError("--stdin takes the value from standard input: do not also give it as an argument")
         return _read_secret_line()
+    if getattr(args, "file", None):
+        if args.value is not None:
+            raise ModuleError("--file takes the value from a file: do not also give it as an argument")
+        return _read_secret_file(args.file)
     if secret:
         if args.value is not None:
             raise ModuleError(f"{key} is a secret: it is never taken from the command line (shell history, `ps`). "
-                              "Omit the value to be asked, or pass --stdin")
+                              "Omit the value to be asked, or pass --stdin or --file PATH")
         if sys.stdin is None or not sys.stdin.isatty():
-            raise ModuleError(f"{key} is a secret: no terminal to ask on, so pass --stdin")
+            raise ModuleError(f"{key} is a secret: no terminal to ask on, so pass --stdin or --file PATH")
         return getpass.getpass(f"{key} (hidden): ")
     if args.value is None:
         raise ModuleError("config set needs a value")
@@ -1648,13 +1673,14 @@ def _config_set_verb(lib, args, name, schema, node, path):
     if spec and spec.get("scope", "node") != layer:
         raise ModuleError(f"{key} has scope {spec.get('scope', 'node')}: set it with {SCOPE_FLAG[spec.get('scope', 'node')]}")
     value = _config_value_arg(args, key, spec)
+    secret_key = (bool(spec.get("secret")) if spec else _is_secret_key(key)) or bool(args.stdin or args.file)   # a value given out of band is never echoed
     if spec:
         problem = config_value_problem(spec, value)
         if problem:
             raise ModuleError(f"{key}: {problem}")
     elif len(value) > vocabulary.MODULE_VALUE_MAX:
         raise ModuleError(f"config value is longer than {vocabulary.MODULE_VALUE_MAX} characters")
-    shown = MASK if spec and spec.get("secret") else value
+    shown = MASK if secret_key else value
     if layer == "node":
         if schema is not None and {r["key"]: r["value"] for r in merged_config(schema, node, {}, {})}.get(key) == value:
             print(f"{name}: {key} is already {shown}: nothing changed")
@@ -1705,7 +1731,7 @@ def cmd_config(lib, args):
     if action == "list":
         if not merged and not args.json:
             for k in sorted(node):
-                print(f"{k}={node[k]}")
+                print(f"{k}={MASK if _is_secret_key(k) and node[k] else node[k]}")
             return
         _print_rows(merged_config(schema, node, fleet, mine), args.json)
         return
@@ -2774,6 +2800,7 @@ def build_parser():
     c.add_argument("--merged", action="store_true", help="a module without a config_schema: list/get across the layers too")
     c.add_argument("--json", action="store_true", help="list, get and validate print JSON (a secret is masked)")
     c.add_argument("--stdin", action="store_true", help="set: read the value from standard input (the way to give a secret in a script)")
+    c.add_argument("--file", metavar="PATH", help="set: read the value from a file (the way to give a secret in a script)")
     ru = sub.add_parser("run", help="run a module's cli command without its launcher: module run <name> [--] <args>")
     ru.add_argument("name")
     ru.add_argument("args", nargs="*", help="passed to the module's command unchanged")
@@ -2811,6 +2838,9 @@ def main(lib, argv):
     if args.verb == "config":
         takes_key = args.action in ("get", "set", "unset")
         extra = (args.key if not takes_key else args.value if args.action != "set" else None)
+        if args.action != "set" and (args.stdin or args.file):
+            print("hive-mind module: --stdin/--file only apply to config set", file=sys.stderr)
+            return 2
         if extra is not None or (takes_key and args.key is None):
             print(f"hive-mind module: config {args.action} takes the wrong arguments", file=sys.stderr)
             return 2

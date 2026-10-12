@@ -96,3 +96,25 @@ def test_cli_put_get_rotate_roundtrip(tmp_path):
     assert run("capsule", "get", "MYTOK", "--raw").stdout == "hunter2"
     run("capsule", "rotate", "MYTOK")
     assert run("capsule", "get", "MYTOK", "--raw").stdout == "hunter2"   # still opens after rotate
+
+
+def test_rotate_reseals_a_capsule_whatever_its_name(tmp_path, monkeypatch):
+    """A capsule an older hive journaled under a lowercase name is still resealed by rotate (bare or named):
+    rotation is what reseals after a device is removed, so it must not skip a name the new rule refuses."""
+    home, stash = tmp_path / "h", tmp_path / "stash"
+    monkeypatch.setenv("HIVE_IDENTITY_STASH", str(stash))
+    env = dict(os.environ, HIVE_HOME=str(home), HIVE_IDENTITY_STASH=str(stash))
+
+    def run(*args):
+        r = subprocess.run([sys.executable, str(PROJECT / "hv"), *args], env=env, capture_output=True, text=True)
+        assert r.returncode == 0, r.stderr
+        return r
+    run("config", "identity", "init")
+    hv = _loadhv(home, monkeypatch)
+    sc = hv._my_curve_scalar()
+    cap = hv._capsule_build("lowtok", "credential", b"v1", {hv.NODE_ID: x25519.scalarmult_base(sc)}, 1, "", hv.NODE_ID)
+    hv.append_journal("capsule", hv._authorize_content_payload(cap))
+    assert "lowtok" in run("capsule", "rotate").stdout
+    assert "v2" in run("capsule", "get", "lowtok").stdout or run("capsule", "get", "lowtok", "--raw").stdout == "v1"
+    assert "Rotated 'lowtok'" in run("capsule", "rotate", "lowtok").stdout
+    assert run("capsule", "get", "lowtok", "--raw").stdout == "v1"
