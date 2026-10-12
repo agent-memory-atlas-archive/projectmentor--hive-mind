@@ -72,6 +72,14 @@ def test_install_stores_node_values_in_the_node_file_and_fleet_values_in_the_jou
 
 
 @LINUX_ONLY
+def test_a_fleet_template_key_at_install_is_stored(hive, tmp_path):
+    schema = {**SCHEMA, "chan.{name}.url": {"type": "string", "scope": "fleet", "description": "Channel url"}}
+    pub = publish(tmp_path / "repo", schema=schema)
+    _add(hive, tmp_path / "repo", pub, "demo", True, *REQUIRED, "--set-fleet", "chan.x.url=http://a")
+    assert fleet_values(hive)["x-demo:chan.x.url"] == "http://a"
+
+
+@LINUX_ONLY
 def test_a_missing_required_key_refuses_before_anything_is_staged(hive, tmp_path):
     pub = publish(tmp_path / "repo")
     r = _add(hive, tmp_path / "repo", pub, "demo", False, "--non-interactive")

@@ -1231,7 +1231,7 @@ def store_fleet(lib, name, key, value, spec, tag=None):
 def store_fleet_values(lib, name, schema, fleet_vals):
     try:
         for key, value in fleet_vals.items():
-            store_fleet(lib, name, key, value, schema[key])
+            store_fleet(lib, name, key, value, schema_entry(schema, key)[1])
     except ModuleError as e:
         raise ModuleError(f"module {name} is installed, but a fleet setting was not stored: {e}. "
                           f"Set it with `hive-mind module config {name} set <key> <value> --fleet`")
