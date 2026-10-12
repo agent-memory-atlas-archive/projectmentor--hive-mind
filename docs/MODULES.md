@@ -294,8 +294,29 @@ On a **member machine** (no owner key), `add` is the two-step above. `update` ne
 unit and deletes the tree and the key, then prints the owner's `hive-mind group revoke <device>`
 line: the device id stays admitted until the owner runs it. `quota` stays owner-only.
 
-`hive-mind update` then runs the internal `hive-mind module reapply`: it re-renders units that
-changed and never fails the core update.
+`hive-mind update` then runs the internal `hive-mind module refresh` *(3.1)* for every installed module, after the core
+files are in place and the daemon is restarted:
+
+1. It clones the module's **recorded source**, runs the same tree check as `update` (signature, digests, `min_core`,
+   known `contract`) and requires the **pinned publisher**. A different signer is refused. A version that is not strictly
+   newer than the installed one (compared as `major[.minor[.patch]]` integers) is refused too, and so is one the two
+   strings cannot be ordered by (a suffix, a leading `v`, a fourth component); the same version string republished is
+   kept. An automatic update only goes forward; `module update` by hand takes any tree the pinned publisher signed. The newest version is the source's default-branch head.
+   A manifest without `contract` is compatible with every 3.x core.
+2. A newer compatible version replaces the module in one step, its files and its units together, so the new core's
+   unit text never restarts a module that is still on old code (decision h:98d0d79694). Running seat sessions are not
+   killed: the core touches only the module's own units. One status line per module.
+3. If the update fails but the installed version still admits this core, it stays, its units are re-rendered as before,
+   and a loud warning names the module and the reason.
+4. If it fails and the installed version does not admit this core (it no longer verifies, or the core refuses it), the
+   module is **disabled**: units stopped and disabled (not deleted), launcher removed, `disabled` recorded in
+   `.modules.json`. A boxed message names the module, why, and the one command that brings it back. Its hooks do not
+   run, `module run` and `status` refuse, and `hv doctor` reports `modules:<name>` as `disabled-incompatible` (a fail).
+5. `hive-mind module update <name>`, or the next `hive-mind update`, installs a compatible version and re-enables it.
+
+The core update succeeds in every case, and a second run with nothing new changes nothing. `hive-mind module refresh
+--check` prints the plan and changes nothing. A new required config key with no default cannot be asked for here (no
+prompt): that update fails as in step 3, and `hive-mind module update <name> --set ...` finishes it.
 
 `hv doctor` reports each installed module as `modules:<name>`. A missing, tampered or wrongly
 signed manifest **fails**. An absent or stopped unit, a revoked device, missing config, a down

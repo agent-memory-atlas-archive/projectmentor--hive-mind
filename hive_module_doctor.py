@@ -232,6 +232,10 @@ def _module(hv, gov, name, rec, entries, listener, now):
         return {"name": f"modules:{name}", "status": "fail",
                 "detail": f"its {hive_modules.STATE_FILE} record is not an object; `hive-mind module remove {name}` "
                           f"cannot reach it: remove the record and re-add the module"}
+    if hive_modules.is_disabled(rec):
+        return {"name": f"modules:{name}", "status": "fail",
+                "detail": f"disabled-incompatible: {rec['disabled'].get('reason')}. Its units, hooks and command are off. "
+                          f"Once a version that admits this core is published: `hive-mind module update {name}`"}
     problems, moddir, dev = [], hive_modules.modules_dir() / name, rec.get("device_id")
     key_dir = Path(hv.KEY_DIR) / "modules" / name
     manifest = None
@@ -333,7 +337,7 @@ def fix(hv, dry=False, now=None):
     lines, plan, no_manager = [], [], False
     manager = None                                              # detected once, on the first module with units
     for name, rec in sorted(state.items()):
-        if not isinstance(rec, dict) or _device(gov, name, rec.get("device_id")):
+        if not isinstance(rec, dict) or hive_modules.is_disabled(rec) or _device(gov, name, rec.get("device_id")):
             continue
         try:
             manifest = hive_modules.check_tree(hive_modules.modules_dir() / name, hv.CONTRACT_VERSION,
