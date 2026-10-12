@@ -15,6 +15,10 @@ degraded, not hostile. A record in `.modules.json` that is not an object is repo
 was stopped on purpose: it is reported and left alone, and a running unit that is only not enabled is enabled,
 never restarted. With no user systemd manager `fix` touches no unit and says so. `fix` acts only on a module whose
 manifest verifies, never re-admits a device, and never touches governance.
+
+The module's own `doctor` (3.1, contract 1) runs here, once per `hv doctor`, for a module whose manifest verifies and
+is signed by the pinned publisher: its results join the `modules:<name>` line and are cached. `fix` never runs it, and
+never reads its output as an action (`fix_hint` is text).
 """
 
 import json
@@ -186,6 +190,34 @@ def _config(moddir, manifest, gov=None, node_id=None):
     return out
 
 
+def _runtimes(rec, manifest):
+    """Each runtime the manifest declares must resolve on the PATH the module's unit and launcher get."""
+    names = manifest.get("runtimes") or []
+    if not names:
+        return []
+    path = hive_modules.recorded_path(rec)
+    if path is None:
+        return []
+    dirs = [d for d in path.split(":") if d]
+    return [("warn", f"runtime {n} is not on the module's PATH (`hive-mind module runtime {manifest['name']} {n} <dir>` "
+                     f"tells the core where it lives)")
+            for n in names if not any(hive_modules.safe_dir(d) and hive_modules._program_in(d, n) for d in dirs)]
+
+
+def doctor_mode():
+    """`HIVE_DOCTOR_MODE` for a module's doctor: what the caller of `hv doctor` set (the timer sets `timer`), else manual."""
+    mode = os.environ.get("HIVE_DOCTOR_MODE")
+    return mode if mode in hive_modules.DOCTOR_MODES else "manual"
+
+
+def _own_doctor(hv, name, rec, manifest, key_dir):
+    """Run the module's own doctor and cache what it said. Its results are all warns or worse when it misbehaves."""
+    mode = doctor_mode()
+    results = hive_modules.run_doctor(name, rec, manifest, key_dir, mode)
+    hive_modules.write_doctor_cache(hv.HIVE_HOME, name, mode, manifest["version"], results)
+    return results
+
+
 def _quota(hv, rec, dev, lifetime, now):
     limits, times = _limits(rec), _window_times(hv, dev, now)
     used = {"per_hour": sum(1 for t in times if t > now - 3600), "per_day": len(times), "lifetime": lifetime}
@@ -221,6 +253,14 @@ def _module(hv, gov, name, rec, entries, listener, now):
         problems += _units(name, manifest, key_dir)
         problems += _hooks(moddir, manifest)
         problems += _config(moddir, manifest, gov, hv.NODE_ID)
+    if manifest is not None and manifest["name"] == name:
+        problems += _runtimes(rec, manifest)
+    ran = None
+    if (manifest is not None and manifest["name"] == name and manifest["publisher"] == rec.get("publisher")
+            and manifest.get("doctor")):                    # module code runs only for a manifest the pinned publisher signed
+        ran = _own_doctor(hv, name, rec, manifest, key_dir)
+        problems += [(r["level"], f"{r['check']}: {r['message']}" + (f" ({r['fix_hint']})" if r.get("fix_hint") else ""))
+                     for r in ran if r["level"] != "ok"]
     if not listener[0]:
         problems.append(("warn", f"the module API is not listening on 127.0.0.1:{listener[1]} (the sync daemon serves it)"))
     used = None
@@ -232,7 +272,8 @@ def _module(hv, gov, name, rec, entries, listener, now):
         detail = "; ".join(msg for _s, msg in problems)
     else:
         detail = (f"{rec.get('version')} signed by the pinned publisher, device admitted, "
-                  + (f"quota {used['per_hour']}/h {used['per_day']}/d {used['lifetime']} total" if used else ""))
+                  + (f"quota {used['per_hour']}/h {used['per_day']}/d {used['lifetime']} total" if used else "")
+                  + (f"; its doctor: {len(ran)} ok" if ran else ""))
     return {"name": f"modules:{name}", "status": status, "detail": detail}
 
 

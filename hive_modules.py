@@ -45,6 +45,7 @@ import sys
 import tempfile
 import threading
 import time
+import unicodedata
 from pathlib import Path
 
 import ed25519
@@ -772,6 +773,7 @@ def _complete_add(lib, args, name, root, rec):
           + (f"service {unit_names(name)[0]}" + (" with a timer" if manifest["service"].get("interval") else "")
              if manifest.get("service") else "no service")
           + (f" ({note})" if note else "") + "; hooks: " + (", ".join(manifest.get("hooks") or []) or "none"))
+    return _healthy_rc(args, doctor_after(lib, name, "install"))
 
 
 # ── the unit (M2) ───────────────────────────────────────────────────────────────────────────────────
@@ -1217,13 +1219,18 @@ def cmd_run(lib, args):
     return rc if rc >= 0 else 128 - rc
 
 
+def narrow_env(name, rec, key_dir, **extra):
+    """The environment `status` and `doctor` run in: built from nothing, so no owner secret, identity stash or other
+    `HIVE_*` variable of the caller's reaches module code. The module's PATH, its name, directory and key directory."""
+    return {"PATH": recorded_path(rec) or unit_path([], ""), "HOME": os.environ.get("HOME", str(Path.home())), "LANG": "C.UTF-8",
+            "HIVE_MODULE_NAME": name, "HIVE_MODULE_DIR": str(modules_dir() / name), "HIVE_MODULE_KEY_DIR": str(key_dir), **extra}
+
+
 def module_status(lib, name, rec, manifest):
     """The module's `status` envelope, or an `unknown` one saying why not. Runs the manifest's argv without a shell,
     in the module's directory, with a narrow environment, 20 s and 64 KiB at most."""
     mod_dir = modules_dir() / name
-    env = {"PATH": recorded_path(rec) or unit_path([], ""), "HOME": os.environ.get("HOME", str(Path.home())), "LANG": "C.UTF-8",
-           "HIVE_MODULE_NAME": name, "HIVE_MODULE_DIR": str(mod_dir),
-           "HIVE_MODULE_KEY_DIR": str(Path(lib._ensure_key_dir()) / "modules" / name)}
+    env = narrow_env(name, rec, Path(lib._ensure_key_dir()) / "modules" / name)
     rc, obj, why = _run_json(manifest["status"], manifest["files"], mod_dir, env)
     problems = [why] if why else ([] if rc == 0 else [f"status exited {rc}, not 0"]) + status_problems(obj)
     if problems:
@@ -1774,6 +1781,12 @@ def cmd_add(lib, args):
           + (f"service {unit_names(name)[0]}" + (" with a timer" if manifest["service"].get("interval") else "")
              if manifest.get("service") else "no service")
           + (f" ({note})" if note else "") + "; hooks: " + (", ".join(manifest.get("hooks") or []) or "none"))
+    return _healthy_rc(args, doctor_after(lib, name, "install"))
+
+
+def _healthy_rc(args, worst):
+    """`--require-healthy`: a module whose doctor reported a `fail` makes the verb exit 1. The install stays."""
+    return 1 if getattr(args, "require_healthy", False) and worst == "fail" else 0
 
 
 def _undo_add(lib, name, device_id, plan=None):
@@ -1819,6 +1832,7 @@ def cmd_remove(lib, args):
     shutil.rmtree(Path(lib._ensure_key_dir()) / "modules" / args.name, ignore_errors=True)
     state.pop(args.name)
     save_state(lib, state)
+    drop_doctor_cache(lib.HIVE_HOME, args.name)
     print(f"removed module {args.name}; its device {device_id} is revoked and its entries stay in the journal")
 
 
@@ -1832,6 +1846,7 @@ def _remove_without_owner(lib, name, device_id, state):
     shutil.rmtree(Path(lib._ensure_key_dir()) / "modules" / name, ignore_errors=True)
     state.pop(name)
     save_state(lib, state)
+    drop_doctor_cache(lib.HIVE_HOME, name)
     if _device_state(lib, device_id) == "admitted":
         print(f"removed module {name} from this node; its device {device_id} STAYS ADMITTED until the owner revokes it. "
               f"On the owner machine run:\n  hive-mind group revoke {device_id}")
@@ -1912,6 +1927,7 @@ def cmd_update(lib, args):
             store_fleet_values(lib, args.name, manifest["config_schema"], fleet_vals)
     print(f"updated module {args.name} to {manifest['version']}; its key, device and pinned publisher are unchanged"
           + (f" ({note})" if note else ""))
+    return _healthy_rc(args, doctor_after(lib, args.name, "update"))
 
 
 def _installed_signature(lib, name):
@@ -2084,6 +2100,166 @@ def doctor_problems(obj, returncode):
     return out
 
 
+# ── the doctor slot (3.1, #294 PR 4) ─────────────────────────────────────────────────────────────────
+# The core runs a contract-1 module's own `doctor` (an argv, no shell, 20 s, 64 KiB) and reads what it prints as text.
+# Whatever the module does wrong becomes a `warn` that names it; the core's own checks never wait on it. Results are
+# cached beside the hive (never journaled) so a dashboard shows them and their age without starting module code.
+
+DOCTOR_MODES = ("manual", "install", "update", "boot", "timer")
+DOCTOR_MAX_RESULTS, DOCTOR_MAX_STRING = 100, 400
+DOCTOR_CACHE_DIR = ".module-doctor"
+_DOCTOR_KEYS = {"level", "check", "message", "fix_hint"}
+
+
+def clean_text(value, limit=DOCTOR_MAX_STRING):
+    """Text from a module: control, format (bidi, zero-width) and line-break characters out, whitespace made plain,
+    at most `limit` characters. Rendered as text, never as markup."""
+    out = []
+    for ch in str(value):
+        cat = unicodedata.category(ch)
+        if ch in "\t\n\r":
+            out.append(" ")
+        elif cat not in ("Cc", "Cf", "Zl", "Zp"):
+            out.append(ch)
+    return "".join(out)[:limit]
+
+
+def _doctor_result(level, check, message, fix_hint=None):
+    r = {"level": level, "check": clean_text(check), "message": clean_text(message)}
+    if fix_hint:
+        r["fix_hint"] = clean_text(fix_hint)
+    return r
+
+
+def doctor_results(rc, obj, why):
+    """What the core makes of one doctor run: a list of {level, check, message, fix_hint?}. Never raises. A crash, a
+    timeout, a missing command, an over-long or non-JSON answer, a wrong shape and a bad exit code are each a `warn`;
+    a `fail` the module reported stays a `fail`."""
+    if why:
+        return [_doctor_result("warn", "doctor", f"doctor {why}" + (f" (exit {rc})" if rc else ""))]
+    if not isinstance(obj, dict):
+        return [_doctor_result("warn", "doctor", "doctor did not print a JSON object")]
+    if obj.get("schema") != 1 or not _is_int(obj.get("schema")):
+        return [_doctor_result("warn", "doctor", "doctor `schema` must be 1: its results were not read")]
+    raw = obj.get("results")
+    if not isinstance(raw, list):
+        return [_doctor_result("warn", "doctor", "doctor `results` must be a list: its results were not read")]
+    out = []
+    for i, r in enumerate(raw[:DOCTOR_MAX_RESULTS]):
+        if not (isinstance(r, dict) and r.get("level") in DOCTOR_LEVELS and isinstance(r.get("check"), str)
+                and isinstance(r.get("message"), str) and isinstance(r.get("fix_hint", ""), str) and set(r) <= _DOCTOR_KEYS):
+            out.append(_doctor_result("warn", "doctor", f"doctor result {i} is not {{level: ok|warn|fail, check, message, fix_hint?}}: ignored"))
+        else:
+            out.append(_doctor_result(r["level"], r["check"], r["message"], r.get("fix_hint")))
+    if len(raw) > DOCTOR_MAX_RESULTS:
+        out.append(_doctor_result("warn", "doctor", f"doctor printed {len(raw)} results: only the first {DOCTOR_MAX_RESULTS} are kept"))
+    if rc != 0 and not any(r["level"] == "fail" for r in out):
+        out.append(_doctor_result("warn", "doctor", f"doctor exited {rc}"))
+    return out
+
+
+def run_doctor(name, rec, manifest, key_dir, mode="manual"):
+    """Run the module's `doctor` and return `doctor_results` for it ([] for a manifest without one). The caller has
+    already established that the manifest is the pinned publisher's: this runs module code, with `narrow_env` and
+    `HIVE_DOCTOR_MODE` (manual|install|update|boot|timer) and nothing else of the caller's."""
+    if not manifest.get("doctor"):
+        return []
+    env = narrow_env(name, rec, key_dir, HIVE_DOCTOR_MODE=mode if mode in DOCTOR_MODES else "manual")
+    rc, obj, why = _run_json(manifest["doctor"], manifest["files"], modules_dir() / name, env)
+    return doctor_results(rc, obj, why)
+
+
+def doctor_worst(results):
+    return max((r["level"] for r in results), key=DOCTOR_LEVELS.index, default="ok")
+
+
+def _cache_dir(home, create=False):
+    d = Path(home) / DOCTOR_CACHE_DIR
+    if create:
+        try:
+            d.mkdir(mode=0o700, exist_ok=True)
+        except OSError:
+            return None
+    try:
+        st = os.lstat(d)
+    except OSError:
+        return None
+    return d if stat.S_ISDIR(st.st_mode) and st.st_uid == os.getuid() and not st.st_mode & 0o022 else None
+
+
+def write_doctor_cache(home, name, mode, version, results, now=None):
+    """Keep the latest results in `<home>/.module-doctor/<name>.json` (0600, a 0700 directory of the operator's: a
+    link or a shared directory is not written). Returns whether it was written. Never raises."""
+    if not vocabulary.valid_module_name(name):
+        return False
+    d = _cache_dir(home, create=True)
+    if d is None:
+        return False
+    doc = {"schema": 1, "module": name, "version": clean_text(version, 64), "mode": mode, "at": int(time.time() if now is None else now),
+           "worst": doctor_worst(results), "results": results}
+    tmp = d / f".{name}.{os.getpid()}.tmp"
+    try:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "w") as f:
+            json.dump(doc, f, sort_keys=True)
+        os.replace(tmp, d / f"{name}.json")
+        return True
+    except OSError:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        return False
+
+
+def read_doctor_cache(home, name):
+    """The cached doctor document for `name`, or None (absent, unreadable, over 256 KiB or not shaped as written).
+    Reads a file; runs nothing. Every string is cleaned again, whatever wrote the file."""
+    d = _cache_dir(home)
+    if d is None or not vocabulary.valid_module_name(name):
+        return None
+    try:
+        path = d / f"{name}.json"
+        if not stat.S_ISREG(os.lstat(path).st_mode) or os.lstat(path).st_size > 256 * 1024:
+            return None
+        doc = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    if not (isinstance(doc, dict) and doc.get("schema") == 1 and _is_int(doc.get("at")) and isinstance(doc.get("results"), list)):
+        return None
+    results = [_doctor_result(r["level"], r["check"], r["message"], r.get("fix_hint")) for r in doc["results"][:DOCTOR_MAX_RESULTS]
+               if isinstance(r, dict) and r.get("level") in DOCTOR_LEVELS and isinstance(r.get("check"), str)
+               and isinstance(r.get("message"), str) and isinstance(r.get("fix_hint", ""), str)]
+    return {"module": name, "version": clean_text(doc.get("version", ""), 64), "mode": doc.get("mode") if doc.get("mode") in DOCTOR_MODES else "manual",
+            "at": doc["at"], "worst": doctor_worst(results), "results": results}
+
+
+def drop_doctor_cache(home, name):
+    d = _cache_dir(home)
+    if d is not None and vocabulary.valid_module_name(name):
+        try:
+            os.unlink(d / f"{name}.json")
+        except OSError:
+            pass
+
+
+def doctor_after(lib, name, mode):
+    """The end of `module add` and `update`: run the new module's doctor, cache and print what it says. It never rolls
+    the install back. Returns the worst level ('ok' for a module without a doctor)."""
+    rec = load_state(lib).get(name)
+    try:
+        manifest = installed_manifest(lib, name)
+    except ModuleError:
+        return "ok"
+    if rec is None or not manifest.get("doctor"):
+        return "ok"
+    results = run_doctor(name, rec, manifest, Path(lib._ensure_key_dir()) / "modules" / name, mode)
+    write_doctor_cache(lib.HIVE_HOME, name, mode, manifest["version"], results)
+    for r in results:
+        print(f"  doctor {r['level']}: {r['check']}: {r['message']}" + (f" ({r['fix_hint']})" if r.get("fix_hint") else ""))
+    return doctor_worst(results)
+
+
 def lint_identifying(root, manifest, deny=()):
     """Warnings (not a gate, not a claim): text in the manifest or a shipped file that looks like it names a person,
     host, account or repository. A placeholder (`<user>`, `{org}`, `$HOME`) is not flagged."""
@@ -2235,6 +2411,7 @@ CONFIG_ACTIONS = ("list", "get", "set", "unset", "validate")
 
 
 def _install_flags(p):
+    p.add_argument("--require-healthy", action="store_true", help="exit 1 when the module's doctor reports a fail after the install (the install is kept)")
     p.add_argument("--set", action="append", default=[], metavar="KEY=VALUE", help="a node config value of the module's config_schema (repeatable)")
     p.add_argument("--set-fleet", action="append", default=[], metavar="KEY=VALUE", help="a fleet config value, owner-signed after the install (repeatable)")
     p.add_argument("--set-env", action="append", default=[], metavar="KEY=VARIABLE", help="a node config value read from an environment variable (for a secret)")
@@ -2317,7 +2494,7 @@ def main(lib, argv):
             return 2
     try:
         rc = VERBS[args.verb](lib, args)
-        return (rc or 0) if args.verb in ("check", "config", "run", "status") else 0
+        return (rc or 0) if args.verb in ("check", "config", "run", "status", "add", "update") else 0
     except ModuleError as e:
         print(f"hive-mind module: {e}", file=sys.stderr)
         return 1
