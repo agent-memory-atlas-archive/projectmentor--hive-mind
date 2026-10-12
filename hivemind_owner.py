@@ -218,6 +218,20 @@ def _owner_gate(acts=()):
     return _owner_seed() is not None
 
 
+def _owner_usable_quietly(acts=()):
+    """Whether `_owner_gate(acts)` would pass without asking anything: the key is already open in this process, is not
+    sealed, has its passphrase in the environment, or the unlock agent covers every act in `acts`. Opens nothing."""
+    if _UNLOCKED_SEED is not None or not _is_file(OWNER_SEALED_PATH):
+        return True
+    if os.environ.get(_KEY_PASSPHRASE_ENV) is not None:
+        return True
+    st = _agent_status()
+    if st is None:
+        return False
+    import owner_agent
+    return owner_agent.gate_ok(st, list(acts))
+
+
 def _sign_governance_payload(payload, owner_signer):
     """Attach `owner_pub` then `owner_sig` (the owner's signature over the payload sans owner_sig).
     This authorizes the governance ACTION independently of which device appends the entry.

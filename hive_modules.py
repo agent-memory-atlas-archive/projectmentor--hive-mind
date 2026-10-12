@@ -31,8 +31,10 @@ stopped and removed on `remove`. Hooks (M4, PR 8) and the doctor checks (M7, PR 
 
 import argparse
 import base64
+import contextlib
 import getpass
 import hashlib
+import io
 import json
 import os
 import re
@@ -70,6 +72,14 @@ _HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 
 class ModuleError(Exception):
     """A refusal the operator reads: nothing was installed, minted or signed for it."""
+
+
+class OwnerWait(ModuleError):
+    """The install waits for the owner's admit to reach this node (`module install` exits 3)."""
+
+
+class OwnerLocked(ModuleError):
+    """The owner key is sealed and could not be used without asking (`module install` exits 5)."""
 
 
 # ── places ──────────────────────────────────────────────────────────────────────────────────────────
@@ -611,14 +621,21 @@ def _gov(lib):
     return lib._governance_state(merkle.read_all_entries(lib.JOURNAL_DIR))
 
 
-def _require_owner(lib, acts=()):
+def _require_owner(lib, acts=(), prompt=True):
     """Unlock the owner key before anything is fetched into place, so a locked key or a non-owner device
     refuses with nothing written. `acts` are the acts the command will make: with the unlock agent covering all of
-    them (`owner_agent.gate_ok`) the gate passes without a prompt (#295); otherwise it unlocks, as ever."""
+    them (`owner_agent.gate_ok`) the gate passes without a prompt (#295); otherwise it unlocks, as ever. With
+    `prompt=False` (`module install --non-interactive|--json`) a key that would need a prompt is `OwnerLocked`."""
     if not lib._owner_key_exists():
         raise ModuleError("this device does not hold the owner key: run module commands on the owner machine")
+    if not prompt and not lib._owner_usable_quietly(acts):
+        raise OwnerLocked("the owner key is locked: run `hive-mind owner unlock`, then install again")
     if not lib._owner_gate(acts):
         raise ModuleError("the owner key could not be unlocked")
+
+
+def _may_prompt(args):
+    return not getattr(args, "no_owner_prompt", False)
 
 
 def _operator_principal(lib, given):
@@ -722,7 +739,7 @@ def _complete_add(lib, args, name, root, rec):
     gov = _gov(lib)
     dev = rec["device_id"]
     if gov["modules"].get(dev) != name or dev not in gov["admitted"] or dev in gov["purged"]:
-        raise ModuleError(f"the owner has not admitted {dev} as module {name} on this node yet (it may not have synced). "
+        raise OwnerWait(f"the owner has not admitted {dev} as module {name} on this node yet (it may not have synced). "
                           f"On the owner machine: {_admit_line(rec, name)}")
     staging = root / f".{name}.staging"
     key = Path(lib._ensure_key_dir()) / "modules" / name / "device-key"
@@ -1562,7 +1579,7 @@ def install_config(lib, args, manifest, owner, enforce=True, asked=None, have=No
             raise ModuleError("this module needs these settings before it installs, and no terminal is available to ask: "
                               + "; ".join(missing) + ". Pass --set key=value (--set-fleet for a fleet key)")
     if fleet_vals:
-        _require_owner(lib)
+        _require_owner(lib, [("set-config", manifest["name"])], prompt=_may_prompt(args))
     return node_vals, fleet_vals
 
 
@@ -1733,7 +1750,7 @@ def cmd_add(lib, args):
     if pending is not None:
         raise ModuleError(f"module {name!r} has a pending add from a device without the owner key: "
                           f"`hive-mind module add --abort {name}` first")
-    _require_owner(lib, [("admit", name), ("revoke", None)])
+    _require_owner(lib, [("admit", name), ("revoke", None)], prompt=_may_prompt(args))
     principal = _operator_principal(lib, args.principal)
     with tempfile.TemporaryDirectory(prefix="hive-module-") as tmp:
         src = Path(tmp) / "src"
@@ -1950,6 +1967,115 @@ def _quota_use(lib, device_id):
     times = [t for t in times if isinstance(t, (int, float)) and now - 86400 < t <= now]
     life = sum(1 for n, _ in lib.journal_keys() if n == device_id)
     return f"{sum(1 for t in times if t > now - 3600)}/h {len(times)}/d {life} total"
+
+
+# ── `module install`: the one idempotent command (3.1, #294 PR 5, design §8) ───────────────────────
+
+EXIT_REFUSED, EXIT_WAITING, EXIT_UNHEALTHY, EXIT_LOCKED = 1, 3, 4, 5      # 0 converged, 2 usage (argparse)
+
+
+def _doctor_row(lib, name):
+    """The doctor's `modules:<name>` row for one installed module (step 11). It never raises."""
+    import hive_module_doctor
+    import merkle
+    try:
+        return hive_module_doctor._module(lib, _gov(lib), name, load_state(lib)[name],
+                                          merkle.read_all_entries(lib.JOURNAL_DIR), hive_module_doctor.listener_up(),
+                                          time.time())
+    except Exception as e:
+        return {"name": f"modules:{name}", "status": "warn", "detail": f"the doctor could not run ({e})"}
+
+
+def _install_present(lib, args, rec):
+    """An installed module: a different commit (or a tree that no longer verifies) takes the `update` path; the same
+    commit converges the rest (config given on the command line, units, launcher) and changes nothing else."""
+    name = args.name
+    if args.publisher is not None and args.publisher != rec["publisher"]:
+        raise ModuleError("--publisher does not match the publisher key pinned at the first install: refusing")
+    with tempfile.TemporaryDirectory(prefix="hive-module-") as tmp:
+        _tracked, head = _fetch(args.source, Path(tmp) / "src")
+    if head != rec.get("commit") or args.source != rec["source"] or _installed_signature(lib, name) != "valid":
+        cmd_update(lib, args)
+        return "updated"
+    manifest = installed_manifest(lib, name)
+    path = modules_dir() / name / "config"
+    have = _read_config(path)
+    node_vals, fleet_vals = install_config(lib, args, manifest, owner=lib._owner_key_exists(), enforce=False, have=have)
+    changed = {k: v for k, v in node_vals.items() if have.get(k) != v}
+    gov_cfg = _gov(lib)["module_config"]
+    fleet_changed = {k: v for k, v in fleet_vals.items() if gov_cfg.get(f"x-{name}:{k}") != v}
+    if changed:
+        _save_config(path, {**have, **changed})
+    if fleet_changed:
+        store_fleet_values(lib, name, manifest["config_schema"], fleet_changed)
+    _reapply_names(lib, [name])                  # units and launcher: rewritten only when their text differs
+    if changed or fleet_changed:
+        print(f"module {name} {rec['version']} is installed at {head}: configuration updated")
+        return "configured"
+    print(f"module {name} {rec['version']} is installed at {head}: nothing to do")
+    return "unchanged"
+
+
+def _install(lib, args):
+    ok, why = platform_supported()
+    if not ok:
+        raise ModuleError(why)
+    name = args.name
+    if not vocabulary.valid_module_name(name):
+        raise ModuleError(f"{name!r} is not a valid module name")
+    rec = load_state(lib).get(name)
+    args.source = args.source or (rec or {}).get("source")
+    if not args.source:
+        raise ModuleError(f"module {name!r} is not installed: module install needs --from <repository>")
+    args.abort = False
+    if rec is not None:
+        return _install_present(lib, args, rec)
+    cmd_add(lib, args)
+    return "installed" if name in load_state(lib) else "staged"
+
+
+def cmd_install(lib, args):
+    """Converge on the installed module the manifest and config describe. Exit 0 converged (or nothing to do), 1
+    refused with nothing changed, 3 waiting for the owner's admit (a member node: staged), 4 installed but the doctor
+    reported `fail` (`--require-healthy`), 5 owner key locked. `--json` prints one object and never prompts."""
+    if args.json:
+        args.non_interactive = True
+    args.no_owner_prompt = args.non_interactive
+    out, err = io.StringIO(), io.StringIO()
+    outcome, rc, error, row = "refused", EXIT_REFUSED, None, None
+    with contextlib.redirect_stdout(out) if args.json else contextlib.nullcontext(), \
+            contextlib.redirect_stderr(err) if args.json else contextlib.nullcontext():
+        try:
+            outcome = _install(lib, args)
+            rc = 0
+        except OwnerWait as e:
+            outcome, rc, error = "waiting", EXIT_WAITING, str(e)
+        except OwnerLocked as e:
+            outcome, rc, error = "locked", EXIT_LOCKED, str(e)
+        except lib.OwnerKeyLocked as e:
+            outcome, rc, error = "locked", EXIT_LOCKED, str(e)
+        except ModuleError as e:
+            error = str(e)
+        if outcome == "staged":
+            rc = EXIT_WAITING
+        if rc == 0:
+            row = _doctor_row(lib, args.name)
+            print(f"doctor: {row['name']} {row['status']}: {row['detail']}")
+            if args.require_healthy and row["status"] == "fail":
+                outcome, rc = "unhealthy", EXIT_UNHEALTHY
+        if error and not args.json:
+            print(f"hive-mind module: {error}", file=sys.stderr)
+    if args.json:
+        rec = load_state(lib).get(args.name) or {}
+        pending = _read_pending(args.name)
+        print(json.dumps({"ok": rc == 0, "exit": rc, "name": args.name, "result": outcome,
+                          "version": rec.get("version") or (pending or {}).get("version"),
+                          "commit": rec.get("commit") or (pending or {}).get("commit"),
+                          "admit_line": _admit_line(pending, args.name) if pending and rc == EXIT_WAITING else None,
+                          "error": error, "doctor": row,
+                          "messages": out.getvalue().splitlines(), "warnings": err.getvalue().splitlines()},
+                         indent=1, sort_keys=True))
+    return rc
 
 
 def cmd_list(lib, args):
@@ -2455,6 +2581,13 @@ def build_parser():
     u.add_argument("--from", dest="source", help="a different repository (default: where it came from)")
     u.add_argument("--publisher", help="ignored unless it equals the pinned key")
     _install_flags(u)
+    i = sub.add_parser("install", help="converge on an installed module: install, update or nothing to do; stable exit codes (0 ok, 1 refused, 2 usage, 3 waiting for the owner, 4 unhealthy, 5 owner key locked)")
+    i.add_argument("name")
+    i.add_argument("--from", dest="source", help="the module's git repository (default: where it was installed from)")
+    i.add_argument("--publisher", help="the publisher key you checked (base64); pins it without a prompt")
+    i.add_argument("--principal", help="the operator's principal for the module's device (default: this device's)")
+    i.add_argument("--json", action="store_true", help="print one JSON object; never prompts")
+    _install_flags(i)
     sub.add_parser("list", help="installed modules: version, publisher, signature, service, device, quota use")
     sub.add_parser("reapply", help=argparse.SUPPRESS)           # internal: `hive-mind update` re-renders the units
     q = sub.add_parser("quota", help="the owner raises or lowers a module's limits")
@@ -2491,7 +2624,7 @@ def build_parser():
     return p
 
 
-VERBS = {"add": cmd_add, "remove": cmd_remove, "update": cmd_update, "list": cmd_list, "quota": cmd_quota,
+VERBS = {"add": cmd_add, "install": cmd_install, "remove": cmd_remove, "update": cmd_update, "list": cmd_list, "quota": cmd_quota,
          "reapply": cmd_reapply, "config": cmd_config, "check": cmd_check, "run": cmd_run, "status": cmd_status,
          "runtime": cmd_runtime}
 
@@ -2514,7 +2647,7 @@ def main(lib, argv):
             return 2
     try:
         rc = VERBS[args.verb](lib, args)
-        return (rc or 0) if args.verb in ("check", "config", "run", "status", "add", "update") else 0
+        return (rc or 0) if args.verb in ("check", "config", "run", "status", "add", "update", "install") else 0
     except ModuleError as e:
         print(f"hive-mind module: {e}", file=sys.stderr)
         return 1

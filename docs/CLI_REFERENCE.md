@@ -1376,6 +1376,8 @@ hive-mind <subcommand> [options]
 hive-mind module add <name> --from <repo> [--publisher KEY] [--principal P] [--require-healthy]   # --require-healthy: (3.1) exit 1 when the module's doctor reports a fail
                      [--set KEY=VALUE]... [--set-fleet KEY=VALUE]... [--set-env KEY=VARIABLE]... [--non-interactive]   # (3.1)
 hive-mind module add --abort <name>          # (2.3)
+hive-mind module install <name> [--from <repo>] [--publisher KEY] [--principal P] [--set ...] [--set-fleet ...] [--set-env ...]
+                          [--non-interactive] [--json] [--require-healthy]       # (3.1) the idempotent form of add/update
 hive-mind module remove <name>
 hive-mind module update <name> [--from <repo>] [--publisher KEY] [--require-healthy] [--set ...] [--set-fleet ...] [--set-env ...] [--non-interactive]
 hive-mind module list
@@ -1387,6 +1389,18 @@ hive-mind module run <name> [--] <args>...             # (3.1) the module's cli 
 hive-mind module status <name> [--json]                # (3.1) the module's status envelope; exit 0 when `ok`
 hive-mind module runtime <name> <program> <dir> | --unset   # (3.1) where one of the module's runtimes lives
 ```
+
+`install` converges: a new module is installed (as `add` does), an installed one at a different commit is updated, one
+already at the fetched commit is left alone (`nothing to do`; it signs nothing and writes nothing, bar the `--set` values it
+was given that differ and units or launcher whose text differs). `--from` defaults to where the module came from.
+Exit codes: **0** converged, **1** refused with nothing changed, **2** usage, **3** waiting for the owner's admit (a device
+without the owner key: the add is staged and the owner's `group admit` line is printed), **4** installed but the doctor
+reported `fail` (only with `--require-healthy`), **5** the owner key is locked (`hive-mind owner unlock`). With
+`--non-interactive` or `--json` it never prompts, for a setting or the owner key's passphrase; a key the unlock agent, the
+passphrase variable or an unsealed file does not open is exit 5. `--json` prints one object: `ok`, `exit`, `name`, `result`
+(`installed`, `updated`, `configured`, `unchanged`, `staged`, `waiting`, `refused`, `locked`, `unhealthy`), `version`,
+`commit`, `admit_line`, `error`, `doctor` (the `modules:<name>` row) and the `messages` and `warnings` the steps printed.
+`add` keeps its 3.0 behaviour and exit codes.
 
 `run` passes everything after the name to the module's `cli.command` and returns its exit status; `status` exits 0 when
 the module says `ok` and 1 for any other state, including `unknown` (it did not run or answer in the envelope shape);

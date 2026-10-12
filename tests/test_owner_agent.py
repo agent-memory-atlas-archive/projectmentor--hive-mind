@@ -26,7 +26,7 @@ import merkle  # noqa: E402
 import owner_agent  # noqa: E402
 import ownerkey  # noqa: E402
 from hivemind.crypto import signer as sigseam  # noqa: E402
-from test_module_lifecycle import _publish  # noqa: E402
+from test_module_lifecycle import _publish, units  # noqa: E402,F401
 from test_succession import _run, _device_id  # noqa: E402
 
 LINUX = pytest.mark.skipif(not sys.platform.startswith("linux"), reason="the agent's checks are specified for Linux first")
@@ -547,3 +547,22 @@ def test_a_failed_mlock_is_stated_in_status():
     a = agent(mlocked=False)
     assert a.status()["mlocked"] is False
     assert agent(mlocked=True).status()["mlocked"] is True
+
+
+@LINUX
+def test_install_set_fleet_exits_5_when_the_agent_is_for_another_module_and_writes_nothing(hive, tmp_path, units):
+    schema = {"board": {"type": "string", "max": 20, "scope": "fleet", "description": "A board"},
+              "mode": {"type": "string", "max": 20, "description": "A mode"}}
+    pub = _publish(tmp_path / "repo", config_schema=schema, min_core="3.1", contract=1, config=None)
+    inst = ("module", "install", "demo", "--from", str(tmp_path / "repo"), "--publisher", pub)
+    hive.ctl(*inst, "--set", "mode=a", passphrase=True)
+    unlock(hive, "--module", "other")
+    cfg, state = tmp_path / "modules" / "demo" / "config", hive.home / ".modules.json"
+    before = (cfg.read_bytes(), state.read_bytes())
+    r = hive.ctl(*inst, "--set", "mode=z", "--set-fleet", "board=b2", "--json", check=False)
+    o = json.loads(r.stdout)
+    assert r.returncode == 5 and o["exit"] == 5 and o["result"] == "locked"
+    assert (cfg.read_bytes(), state.read_bytes()) == before
+    assert "passphrase" not in " ".join(o["warnings"]) + r.stderr
+    assert owner_agent.gate_ok({"idle_left": 999, "hard_left": 999, "budget_left": 99, "modules": ["other"]},
+                               [("set-config", "demo")]) is False

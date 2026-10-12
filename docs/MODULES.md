@@ -15,7 +15,8 @@ device as a module under the operator's principal. The module reaches the hive o
 loopback `/v1` API, never through the owner key. It reads the hive, and writes `fact`, `decision`,
 `idea`, `entity` and `link` entries that it signs itself; the core verifies, gates and appends them.
 
-Install with `hive-mind module add`. There is no `hv module`.
+Install with `hive-mind module install <name> --from <repo>` (3.1; the idempotent form, with fixed exit codes and `--json`,
+see `docs/CLI_REFERENCE.md`) or its 3.0 form `hive-mind module add`. There is no `hv module`.
 
 ## Trust model
 
@@ -273,6 +274,7 @@ in the module's directory, with `HIVE_MODULE_NAME`, `HIVE_MODULE_DIR` and `HIVE_
 in its environment and **no owner-key path**.
 
 ```
+hive-mind module install <name> [--from <repo>] [--publisher KEY] [--principal P] [--json] [--require-healthy]   # (3.1)
 hive-mind module add <name> --from <repo> [--publisher KEY] [--principal P]
 hive-mind module add --abort <name>
 hive-mind module update <name> [--from <repo>]
