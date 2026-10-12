@@ -289,6 +289,9 @@ class FakeLib:
     def _owner_seed(self):
         return b"x"
 
+    def _owner_gate(self, acts=()):
+        return True
+
 
 def _args(**kw):
     import argparse
