@@ -1,0 +1,1 @@
+- Docs (hive-mind#470): a short root `AGENTS.md` points agents that discover the repository to the authoritative integration contract, with a five-command capability check.
