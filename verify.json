@@ -1,5 +1,5 @@
 {
-  "digest": "bec4eaaa794392e712bc3cc4b7732330b83392116c43e22c3c210ebcde1c87f0",
+  "digest": "79dfa7f04ce422d33ceafd94460eda8c2ba1a767ea917131117eddceba2bfe19",
   "files": {
     ".github/FUNDING.yml": "ca6c63d7539bb7d2f809b5068781c78de97c028a44c5ae252b11bc1695caf85d",
     ".github/ISSUE_TEMPLATE/bug_report.yml": "22df51b1e51c25f50726392c79811116b88c40370843ff2d4a3e76b643f1cb68",
@@ -18,6 +18,7 @@
     "advisories.json": "e1f7246819257c9cdcb8118aaee972ed89f22fb056d67230320d5ea7fdce6703",
     "cells/example-tool.json": "1ef1bb649f6805631bb6c20940baefb4a4bd867122b2c9e9b565c69aac30f060",
     "chacha20poly1305.py": "6c3bb50dc126dab128184280b4d11cb1494800651e97aea941a821f31ff012fd",
+    "changelog.d/fix-mcp01-positional-sep.md": "f924dec3d0d56ee948f373d84229732e38b1c88b314a2b814c870baa532025a7",
     "changelog.d/implementer2-d10-pin-requests.md": "c05a16342941a7abf1ad4340625e28873d673e2d829050bd6a60c6b4507b1ceb",
     "commandmap.py": "e2b88825cd5e37e16fed082cf6c8dc736b9edffea31c51d997db2d6ac6e47498",
     "config/.peers.json.example": "e81eb4533b4e06969946a8fa1c977e0692bc047275101bcdbae1504355866674",
@@ -74,7 +75,7 @@
     "integrations/claude-code/install.sh": "c8a42009cf6bc8b9a2a5e6efe400e6eade9dccb4f327f424bb65875c1fe728dc",
     "integrations/claude-code/wire-up/SKILL.md": "e99f90fa4feadbb8e300defd09173c73d3b82833e3dc013f0448fd1dabf28159",
     "integrations/hermes/__init__.py": "ffbd955d7097602fdd407cf79f090cf12ffc5cdafdc4fafd6d336b92074e0289",
-    "integrations/mcp/hive_mcp.py": "755cc42cbc5f2fe9c05ccc29e8ad3e44b05ae162c8b3387f802932050af573b2",
+    "integrations/mcp/hive_mcp.py": "c98dc52f30419bd1493d4225b41752914e90940ea727a5264f275bbdead26fe2",
     "integrations/mcp/install.sh": "d99338a4ebfdc667785e7582b0cd16074f79e7206469c4a14094c967f5a975c2",
     "merkle.py": "7eef10599d391f12b0790ccbf70fa373bef25bf406f34e38688959dad81df83a",
     "owner_agent.py": "d20c6052509bc4c07a74ecf153fd83d68b2ed9f621f0decf1e1e1a9a6df249ac",
@@ -210,6 +211,7 @@
     "tests/test_local_ids_refused.py": "9af81b93824da9c951c012f05711df8c02f7d316e48ac77bfcc07332da65ac0b",
     "tests/test_manifest_contract.py": "a6524e1b8c3fe334b53a679264b98f639681e4ac64820dfdbe72550bf97a7a02",
     "tests/test_mcp_parity.py": "31e72cc1ad725e5cfe56c62bd994c74027726527ad7c8e43d9a94693557356da",
+    "tests/test_mcp_positional_sep.py": "8457a817aacbc358290207056c944d0914c216b034ed3d017034b468c7bcaae4",
     "tests/test_membership_ingest.py": "2e8160ceddce3f583257562609a9043ea4bf35abdb9704c2662bdbafdb4e8a82",
     "tests/test_merkle_dedup.py": "be232d5c8466f1f470c98099c620093e0b3031aaa5bc4c9271caf47dcb53cb28",
     "tests/test_migrate_forget.py": "2451804f27ef0a5ad62f738dc37e190434948bd504618dd762c91697883065c2",
@@ -255,7 +257,7 @@
     "tests/test_sealed_owner_key.py": "6d23e96512dc1881cd9c02eb37ed5d311e4dd8433f101fe63d6c90cb4c26fa2b",
     "tests/test_search_id.py": "e849aa86efc4c2c45e0d0b1ad11b169f463ba1c113c726a4d7514fdd73bedd7f",
     "tests/test_service.py": "e6b4afb6dfaa8cd4db73ba5ff953dce810524704f4a59ab60ff8a574386178fe",
-    "tests/test_short_ids.py": "0cdfc03dd788b80a11344400860992618fffe94af700cdc9a737493b474f8c48",
+    "tests/test_short_ids.py": "d51a10021bd74e4a5d82876234737f6b19c7f9aa19835159253b845086f4f57b",
     "tests/test_signer_seam.py": "7ad0050f5ad7492e6862b7cd4a7b927f533454001ea2b82f4eaf7438468a617d",
     "tests/test_small_order_keys.py": "798a2b185d1e460f8154efed5cfeb0136966ab9927bb282c0940378d2afb13f0",
     "tests/test_smoke_isolation.py": "c43e1c7e590110745736a0fd2bd68f44b1b3c4a6afbc7abcb2b27c63c06f9c93",
@@ -287,6 +289,6 @@
     "vocabulary.py": "3a6977fc89573561e6248748db90379acc810ff183556e220ce6bf1b2c0d0d3b",
     "x25519.py": "ec1967595a2306cde860afe4dffab40a3f833d089de6caf5c9c080df8fd45726"
   },
-  "sequence": 629,
+  "sequence": 631,
   "version": "3.1"
 }
