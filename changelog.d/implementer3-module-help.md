@@ -1,0 +1,1 @@
+- **4.1: contract 4.1.** A module's `config_schema` entry may carry an optional plain-language `help` string (at most 400 characters, text only); a module that ships it sets `min_core` 4.1. Additive, no signing, journal or sync change. `docs/CONTRACT_HISTORY.md` has the entry (Part of hive-mind-dash#18).

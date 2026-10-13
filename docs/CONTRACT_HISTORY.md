@@ -6,6 +6,10 @@ where every `grep` that matched it printed the whole line (18,544 characters at 
 here, not on that line. The adapter-facing summary is `docs/AGENT_INTEGRATION.md` §7; release notes are
 `CHANGELOG.md`.
 
+## 4.1
+
+Additive: **`config_schema` entries may carry `help`** (an optional plain-language string, at most 400 characters, no control characters, shown as text only). Nothing an adapter calls changes, so an adapter written for 4.0 keeps working and does not re-integrate. The manifest validator's accept-set for a config entry gains `help`; a 4.0 core refuses a manifest that carries it as an entry naming a field it does not know, so a module that ships `help` sets `min_core` 4.1. The manifest signature, the publisher key and the file-digest scheme are unchanged, and no journal, projection or sync format changes (`PROTOCOL_VERSION` stays 3). Core keys carry the same `help` field in `config schema --json` and `config node`.
+
 ## 4.0
 
 A MAJOR for the adapter surface: **re-integrate (§0), by re-reading.** An adapter that ran a removed verb moves to the module command that replaced it; one that never did changes nothing. No journal, projection, signing, manifest or sync format changes (`PROTOCOL_VERSION` stays 3), and `min_core` is a `>=` compare, so a module declaring `min_core: 3.x` still installs. The 4.0 changes:
