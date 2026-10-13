@@ -341,6 +341,18 @@ telemetry record …` (`hv telemetry` was removed in 4.0). It keeps the store co
 node without hwatch records nothing and the hooks stay silent. hwatch's manifest is contract 1 from this release
 (`min_core` 3.1, a `config_schema` for the keys it already knew, no `config` block), so it needs a 3.1 core.
 
+## hconfig
+
+**hconfig** is the configuration module ([`projectmentor/hive-mind-config`](https://github.com/projectmentor/hive-mind-config), MIT).
+It is a `cli` module (`hconfig`) with no service, no hooks, no runtimes, `reads: []` and `trust: confined`: one registry of every
+setting a node has (`node:` keys, a module's `x-<module>:` keys, and the governed `core:` keys), each with its schema, merged value,
+source, and who may change it and how. Every verb takes `--json`; the protocol is
+[`docs/CLI.md`](https://github.com/projectmentor/hive-mind-config/blob/main/docs/CLI.md) in that repository, and hdash calls it as a subprocess.
+It reads and writes only through this core's own verbs (`hv config schema|show|node`, `hive-mind module list|config … --json`,
+`module config set --non-interactive`) and holds no key: a signed write is the core's, through the owner-unlock agent, or it
+exits 5 and hconfig reports `owner-locked`. It needs a 4.0 core. hdash needs hconfig; install hconfig first with
+`hive-mind module install hconfig --from https://github.com/projectmentor/hive-mind-config`.
+
 ## hdash
 
 **hdash** is the dashboard as a module ([`projectmentor/hive-mind-dash`](https://github.com/projectmentor/hive-mind-dash)),

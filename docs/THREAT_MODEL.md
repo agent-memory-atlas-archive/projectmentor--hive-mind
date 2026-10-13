@@ -599,6 +599,29 @@ Residual, admitted device only and so accepted for 3.x: `ProtectSystem=strict` m
 key directory, `HIVE_HOME` and the modules directory are hidden from a confined unit only because their defaults sit under
 the home. Operator rule: keep `HIVE_KEY_DIR`, `HIVE_HOME` and `HIVE_MODULES_DIR` under the home for `confined` to hide them.
 
+### Configuration module (hconfig, 4.x)
+
+**hconfig** is a front for the core's own configuration verbs. It adds no listener, no socket and no stored credential, has no
+signing code, and reads no passphrase or owner variable (they are removed from the environment of every program it starts).
+A dashboard write is therefore hdash's request gates, then hconfig, then the core verb, then the owner-unlock agent, and the
+passphrase stays on the operator's terminal: hconfig reports `owner-locked` (exit 5) and never prompts. Anything it can do, the
+account that runs it could already do with the core's verbs, so it changes no one's authority; it is as unconfined as its caller
+(its manifest's `confined` tier describes the unit it does not have). It adds no `/v1` use and declares `reads: []`.
+
+`$HIVE_HOME/hconfig/audit.jsonl` is a local convenience record of node and module-node changes made through hconfig: mode 0600
+in a 0700 directory, never synced, with no value for a secret. It is not evidence: any process of the same user can edit it, and a
+change made directly with a core verb is not in it. Governed changes are the journal. Secrets reach hconfig only on standard input
+and print masked everywhere; the plaintext 0600 node file for module secrets is unchanged (a residual of the 3.1 baseline).
+
+**Viewer surface.** hdash can serve a read-only subset to allowlisted tailnet logins (not admitted devices) on its own viewer
+listener. From hconfig that is only governed values whose key is not `identifying`, and non-secret module values whose `ui` marks
+the panel `viewer: true`. Never a `node:` key (including the viewer allowlist itself), a secret, an `identifying` value, the
+owner and device block of `config show`, a `set_by` device id, an audit line or a `write_via` command; and no write: the listener
+has no `POST`. hconfig labels each record (`visibility`); hdash's viewer listener enforces it. The viewer path trusts the identity
+header of the tailnet front end, so it is only as sound as that front end stripping a client-supplied header (a fail-open
+assumption: the operator rule is to expose it through the front end only, never directly). A same-user process already has the
+operator port, so the viewer port gives it nothing more; accepted for 3.x.
+
 ## Seat steering (agent seats driven by GitHub and the hive)
 
 A seat is an agent session that the runner wakes on a GitHub event or a hive entry. Text a seat reads can steer
