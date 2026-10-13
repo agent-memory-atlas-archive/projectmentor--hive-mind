@@ -61,7 +61,7 @@ All logic lives in the `hv` CLI (`$HIVE_HOME/hv`); your adapter only *calls* it.
 | `hv retract <sid>` | Negative evidence. The owner forget, `hive-mind retract <sid> --owner`, is decisive and owner-signed, and runs on the owner's control plane (2.0) |
 | `hv nudge --event=<E> [--session=<id>] [--cwd=<dir>]` | Emit a save/audit hint or a startup digest (reads recent text on **stdin**, prints a terse hint to **stdout**, or nothing) |
 | `hv audit [--depth light\|normal\|deep] [--format json] [--session=<id>]` | Surface redundant / obsolete / missing facts |
-| `hv telemetry record --event=start\|end --agent=<you> --identity=<instance> --session=<id> [--cwd=<dir>]` | **(optional, since 1.1)** record session observability into the LOCAL telemetry lane |
+| `hwatch telemetry record --event=start\|end --agent=<you> --identity=<instance> --session=<id> [--cwd=<dir>]` | **(optional)** record session observability into the LOCAL telemetry lane. The hwatch module's verb since 3.1; `hv telemetry` was removed in 4.0 and exits 2 |
 
 **Contract invariants you can rely on:** `hv nudge`/`hv audit` are best-effort and print to
 stdout (empty = no nudge); `--source` is your stable identity; confidence rises only from
@@ -136,13 +136,13 @@ call is fixed; you provide the plumbing (where the text comes from, where the ou
    These two hooks are best-effort: a hard kill skips them, so they sit on top of audit-on-boot
    (behavior 1), which is the actual guarantee.
 5. **Telemetry (OPTIONAL, since 1.1).** If you want session observability, call
-   `hv telemetry record --event=start` at session start and `--event=end` at session end, passing a
+   `hwatch telemetry record --event=start` at session start and `--event=end` at session end, passing a
    stable `--agent` and `--identity` (your instance discriminator) plus `--session`/`--cwd`. This is
    pure observability — token usage, duration, cost — written to a LOCAL-ONLY lane that **never enters
    the corpus, the journal, or sync**. It has no effect on knowledge or confidence; skip it entirely
    if you do not want it. Never write telemetry as a `hv remember` fact. Since core 3.1 the verb is
-   served by the hwatch module (`hv telemetry` forwards to `hwatch telemetry`); with the module absent `record` is a
-   silent no-op that exits 0, so a hook never needs to guard it.
+   the hwatch module's, and `hv telemetry` was removed in 4.0 (it exits 2 and names `hwatch telemetry`). Call the
+   module only when it is installed, and keep the hook silent and exit 0 when it is not, as `session_hook.sh` does.
 
 ---
 
@@ -639,7 +639,7 @@ generated from `vocabulary.py`, and a name anything else adds takes a prefix.
   `--source` label is unchanged; the device is identified for you.
 - `1.2` — `hv remember` auto-tags transient operational-status claims `volatile` (new optional
   `--no-volatile` flag). Additive: existing calls keep working; you just get smarter freshness tagging.
-- `1.1` — added the optional `hv telemetry` verb (behavior 5). Additive and backward-compatible:
+- `1.1` — added the optional telemetry verb (behavior 5; `hv telemetry` then, `hwatch telemetry` since 3.1). Additive and backward-compatible:
   a `1.0` adapter keeps working unchanged; wire telemetry only if you want it.
 
 - **2.0.3 (#204): a `link` entry is the only way to supersede or resolve.** The pre-1.19 payload fields

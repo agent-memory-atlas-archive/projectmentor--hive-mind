@@ -22,9 +22,8 @@ from pathlib import Path
 PROJECT = Path(__file__).resolve().parent.parent
 DOCS = PROJECT / "docs"
 
-# Intentionally undocumented in the user/agent docs: local-only `hv telemetry report|list`
-# observability flags, surfaced via `hv telemetry ... --help` only. They never touch the
-# corpus and are not part of the agent contract. Document one → remove it from here.
+# Intentionally undocumented in the user/agent docs. These were `hv telemetry report|list` flags (removed in 4.0, now
+# hwatch's) and may match no flag any more. Document one → remove it from here.
 ALLOWLIST = {"--since", "--by", "--limit", "--transcript"}
 
 

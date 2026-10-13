@@ -685,69 +685,18 @@ def api_peers(probe=True):
     return out
 
 
-# Commands that left core for a module (3.1). `hv <command>` runs the module's CLI through `hive-mind module run`, a
-# subprocess: `hv` imports no module code and no control plane. Removed in 4.0.
-_FORWARDED = {"dash": "hdash", "telemetry": "hwatch"}
-_MODULE_SOURCES = {"hdash": "https://github.com/projectmentor/hive-mind-dash",
-                   "hwatch": "https://github.com/projectmentor/hive-mind-hwatch"}
+# Commands that left core for a module. 3.1 forwarded them; 4.0 answers with exit 2 and one line naming the module
+# command that replaced them, the way the 2.0 command moves did. `hv` imports no module code and runs no module.
+_REMOVED_VERBS = {
+    "dash": "the dashboard is the hdash module: run `hdash dash` (`hive-mind module install hdash` to add it)",
+    "telemetry": "session telemetry is the hwatch module: run `hwatch telemetry ...` (`hive-mind module install hwatch` to add it)",
+}
 
 
-def _module_installed(name):
-    try:
-        return name in json.loads((HIVE_HOME / ".modules.json").read_text())
-    except (OSError, ValueError, TypeError):
-        return False
-
-
-def _module_run_argv(name, args):
-    """`hive-mind module run <name> -- <args>`, else the module's own launcher; None when neither is on PATH."""
-    ctl = shutil.which("hive-mind")
-    if ctl:
-        return [ctl, "module", "run", name, "--", *args]
-    launcher = shutil.which(name)
-    return [launcher, *args] if launcher else None
-
-
-def dash(args):
-    """`hv dash` forwards to the hdash module (the dashboard left core in 3.1). Not installed: print the one install
-    line and exit 1. Removed in 4.0."""
-    name = _FORWARDED["dash"]
-    if not _module_installed(name):
-        print("The dashboard is the hdash module (since 3.1) and is not installed on this node. Install it with:")
-        print(f"  hive-mind module install {name} --from {_MODULE_SOURCES[name]}")
-        sys.exit(1)
-    argv = _module_run_argv(name, ["dash"] + (["--print"] if getattr(args, "print_only", False) else []))
-    if argv is None:
-        print(f"{name} is installed but neither `hive-mind` nor `{name}` is on PATH: run `hive-mind module run {name} -- dash`.")
-        sys.exit(1)
-    sys.exit(subprocess.call(argv))
-
-
-def telemetry_cmd(args):
-    """`hv telemetry …` forwards to `hwatch telemetry …` (session telemetry left core in 3.1). Removed in 4.0.
-    `record` runs from session hooks at every start and end, so it is silent and exits 0 whether or not the module is
-    there. `report` and `list` print the install line and exit 1 when it is not."""
-    name = _FORWARDED["telemetry"]
-    rest = list(getattr(args, "rest", None) or [])
-    recording = rest[:1] == ["record"]
-    if not _module_installed(name):
-        if recording:
-            return
-        print("Session telemetry is the hwatch module (since 3.1) and is not installed on this node. Install it with:")
-        print(f"  hive-mind module install {name} --from {_MODULE_SOURCES[name]}")
-        sys.exit(1)
-    argv = _module_run_argv(name, ["telemetry", *rest])
-    if recording:
-        if argv:
-            try:
-                subprocess.call(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            except OSError:
-                pass
-        return
-    if argv is None:
-        print(f"{name} is installed but neither `hive-mind` nor `{name}` is on PATH: run `hive-mind module run {name} -- telemetry`.")
-        sys.exit(1)
-    sys.exit(subprocess.call(argv))
+def removed_verb_cmd(args):
+    """`hv dash` and `hv telemetry …` (removed in 4.0): one line on stderr, exit 2, nothing run, nothing written."""
+    print(f"hv {args.command}: removed in 4.0; {_REMOVED_VERBS[args.command]}", file=sys.stderr)
+    return 2
 
 
 # The session telemetry store is written and reported by the hwatch module (`hwatch telemetry`). Core only reads it,

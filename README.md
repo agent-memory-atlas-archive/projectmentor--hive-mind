@@ -14,11 +14,11 @@ Security: [`SECURITY.md`](SECURITY.md) · Changes: [`CHANGELOG.md`](CHANGELOG.md
 <p align="center">
   <a href="https://hivemind.projectmentor.org/dev/#dashboard">
     <img src="https://hivemind.projectmentor.org/assets/dashboard/01-overview.png"
-         alt="The HiveMind dashboard (hv dash)" width="780"></a>
+         alt="The HiveMind dashboard (hdash dash)" width="780"></a>
 </p>
 
 <p align="center">
-  <em>The HiveMind dashboard, <code>hv dash</code>. Watch the
+  <em>The HiveMind dashboard, <code>hdash dash</code>. Watch the
   <a href="https://hivemind.projectmentor.org">intro video</a> on the site.</em>
 </p>
 
@@ -176,12 +176,12 @@ wsl --shutdown
 ./hv decide --revoke h:7c01d2e9aa --rationale "The Friday ship slipped"
 hive-mind unforget h:9a2b3c4d5e --reason "That forget was a mistake" # owner only
 ./hv stats
-./hv dash            # open the read-only web dashboard (the hdash module: facts, decisions, peers) in your browser
+hdash dash          # open the read-only web dashboard (the hdash module: facts, decisions, peers) in your browser
 ./hv doctor          # health check: integrity, crypto, sync, authorization, trust drift, agent hooks, sync-bind, daemon-code, peer-address, forget-authz (--fix self-heals)
 ./hv sync now        # manual sync to all peers
 ```
 
-The **dashboard** (`hv dash`) is a read-only web view of your hive: an overview, the corpus (facts
+The **dashboard** (`hdash dash`) is a read-only web view of your hive: an overview, the corpus (facts
 and decisions, searchable, filterable by tag, sortable by confidence, importance, utility, or
 recency), your devices and their health, and telemetry. Since 3.1 it is the
 [`hdash` module](https://github.com/projectmentor/hive-mind-dash), served at

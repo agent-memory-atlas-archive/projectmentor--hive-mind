@@ -1,4 +1,4 @@
-"""Dashboard read-API guard, and the `hv dash` forwarder.
+"""Dashboard read-API guard, and the removed `hv dash` verb.
 
 The sync daemon serves a read-only `/api/*` (overview / search / peers) on the sync port; the page itself is the hdash
 module's since 3.1 (its tests live in projectmentor/hive-mind-dash). These are pure read projections that reuse hv's search/confidence/governance,
@@ -315,41 +315,20 @@ def test_a_loopback_post_without_the_token_needs_a_valid_signed_envelope(daemon)
     assert _raw(daemon, "POST", path, good, body)[0] == 403          # replayed nonce
 
 
-def _forwarder_env(tmp_path, monkeypatch, installed):
+def test_hv_dash_is_removed_exit_2_with_the_pointer_and_runs_nothing(tmp_path):
     home = tmp_path / "home"
     home.mkdir()
-    if installed:
-        (home / ".modules.json").write_text(json.dumps({"hdash": {}}))
-    log = tmp_path / "argv.json"
+    log = tmp_path / "argv.txt"
     bindir = tmp_path / "bin"
     bindir.mkdir()
     stub = bindir / "hive-mind"
     stub.write_text(f"#!/bin/sh\nprintf '%s\\n' \"$@\" > {log}\nexit 7\n")
     stub.chmod(0o755)
-    env = dict(os.environ, HIVE_HOME=str(home), PATH=f"{bindir}:{os.environ['PATH']}")
-    return env, log
-
-
-def test_hv_dash_forwards_to_the_module_when_it_is_installed(tmp_path, monkeypatch):
-    env, log = _forwarder_env(tmp_path, monkeypatch, installed=True)
-    r = subprocess.run([sys.executable, str(HV), "dash", "--print"], env=env, capture_output=True, text=True)
-    assert r.returncode == 7                                   # the module's own exit status
-    assert log.read_text().split() == ["module", "run", "hdash", "--", "dash", "--print"]
-    subprocess.run([sys.executable, str(HV), "dash"], env=env, capture_output=True, text=True)
-    assert log.read_text().split() == ["module", "run", "hdash", "--", "dash"]
-
-
-def test_hv_dash_without_the_module_prints_the_install_line_and_runs_nothing(tmp_path, monkeypatch):
-    env, log = _forwarder_env(tmp_path, monkeypatch, installed=False)
-    r = subprocess.run([sys.executable, str(HV), "dash"], env=env, capture_output=True, text=True)
-    assert r.returncode == 1 and not log.exists()
-    assert "hive-mind module install hdash --from https://github.com/projectmentor/hive-mind-dash" in r.stdout
-
-
-def test_hv_dash_installed_but_no_launcher_on_path_says_so(tmp_path):
-    home = tmp_path / "home"
-    home.mkdir()
     (home / ".modules.json").write_text(json.dumps({"hdash": {}}))
-    env = dict(os.environ, HIVE_HOME=str(home), PATH=str(Path(sys.executable).parent))
-    r = subprocess.run([sys.executable, str(HV), "dash"], env=env, capture_output=True, text=True)
-    assert r.returncode == 1 and "hive-mind module run hdash -- dash" in r.stdout
+    env = dict(os.environ, HIVE_HOME=str(home), PATH=f"{bindir}:{os.environ['PATH']}")
+    for extra in ([], ["--print"], ["--bogus", "x"]):
+        r = subprocess.run([sys.executable, str(HV), "dash", *extra], env=env, capture_output=True, text=True)
+        assert r.returncode == 2 and r.stdout == ""
+        assert r.stderr.strip().count("\n") == 0 and "hdash dash" in r.stderr and "removed in 4.0" in r.stderr
+    assert not log.exists()                                    # no forwarding, with the module installed
+    assert not (home / "journal").exists()                     # nothing written

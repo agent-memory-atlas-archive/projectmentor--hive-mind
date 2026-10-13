@@ -263,14 +263,14 @@ at once). Concretely:
   leave out owner-forgotten facts that the old page showed. Operator rule: remove hdash on a node where other local
   OS accounts must not see the hive (`hive-mind module remove hdash`); the daemon's `/api/*` stays loopback-open
   either way, as before.
-- **Session telemetry is a module, `hwatch` (3.1).** `hv telemetry` forwards to `hwatch telemetry` through
-  `hive-mind module run` (a subprocess; `hv` imports no module code and adds no control-plane edge). The forwarder passes
-  its arguments through unchanged and runs no shell. The store is the same local file as before, outside the journal,
+- **Session telemetry is a module, `hwatch` (3.1).** `hv telemetry` forwarded to `hwatch telemetry` in 3.1 and
+  is removed in 4.0 (exit 2, nothing run). The session hook now runs the module itself through `hive-mind module run`
+  (a subprocess; `hv` imports no module code and adds no control-plane edge), passing fixed flags and no shell. The store is the same local file as before, outside the journal,
   and core now only opens it read-only for the loopback `/api/telemetry`. Residuals, all needing a local process or an
   admitted device and so accepted for 3.x: `hwatch telemetry record` writes whatever its caller passes (no signature,
   as before), so a local process can forge or hide a session's tokens and cost; and a module installed under the name
   `hwatch` is run with the operator's own account when a hook fires (the module is signed under its pinned publisher,
-  as every module is). Operator rule: treat `hv telemetry report` as a report, not a control.
+  as every module is). Operator rule: treat `hwatch telemetry report` as a report, not a control.
 - **Unsigned entries cannot fork a chain.** `_verify_entry` accepts an entry with no signature at all
   (historical entries predate device keys), so an unsigned entry could take an admitted device's future
   `(node_id, seq)`, become that device's chain tip, and make the device's own later entry drop as a

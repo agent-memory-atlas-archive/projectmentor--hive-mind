@@ -2,24 +2,30 @@
 # Hive Mind session telemetry hook.
 #
 # Records Claude Code session start/end into the LOCAL telemetry lane via
-# `hv telemetry record` — NOT into the facts corpus. Telemetry is observability
+# `hwatch telemetry record` — NOT into the facts corpus. Telemetry is observability
 # (who/where/when + token usage + cost), not knowledge; it lives in its own
 # local-only store (.telemetry/) and never enters the journal/merkle. Wired from
 # the GLOBAL ~/.claude/settings.json so it fires for every Claude Code session.
 #
-# Since core 3.1 `hv telemetry` forwards to the hwatch module and `record` is a silent no-op when it is not installed.
+# Session telemetry is the hwatch module's (`hv telemetry` was removed in 4.0). This hook runs the module directly and
+# is a silent no-op when it is not installed.
 #
-# Contract: best-effort and NON-BLOCKING. Every path exits 0 and the hv call is
+# Contract: best-effort and NON-BLOCKING. Every path exits 0 and the module call is
 # capped with `timeout`, so it can never fail or slow a session.
 #
 # Usage (from settings.json):  session_hook.sh start  |  session_hook.sh end
 # Reads the hook JSON on stdin (cwd + session_id).
 
 event="${1:-start}"
-HV="${HIVE_HOME:-$HOME/projects/hive-mind}/hv"
 
-# If hv isn't present/executable here, silently do nothing.
-[ -x "$HV" ] || exit 0
+# The module's command: through the control plane when it is on PATH, else the module's own launcher. Neither: do nothing.
+if command -v hive-mind >/dev/null 2>&1; then
+    set -- hive-mind module run hwatch -- telemetry record
+elif command -v hwatch >/dev/null 2>&1; then
+    set -- hwatch telemetry record
+else
+    exit 0
+fi
 
 # Pull cwd + session id out of the hook's stdin JSON (best-effort; python3 is
 # always present since hv itself is python). Two lines so a cwd with spaces is safe.
@@ -38,14 +44,14 @@ node="$(hostname 2>/dev/null || echo node)"
 user="$(id -un 2>/dev/null || echo "${USER:-user}")"
 
 # Record into the telemetry lane. --identity keeps this instance distinct from
-# other agents (and other machines) sharing the "claude-code" name; hv also
+# other agents (and other machines) sharing the "claude-code" name; hwatch also
 # captures node/os_user/ip and, on end, token usage + cost from the transcript.
-timeout 12 "$HV" telemetry record \
+timeout 12 "$@" \
     --event "$event" \
     --agent claude-code \
     --identity "${user}@${node}" \
     --session "$sid" \
     --cwd "$cwd" \
-    >/dev/null 2>&1 || true
+    </dev/null >/dev/null 2>&1 || true
 
 exit 0

@@ -53,7 +53,7 @@ _LOADED = _loaded_code()
 
 # The dashboard page is not served here (3.1): it is the `hdash` module's, which reads the `/api/*` JSON below on
 # loopback or the module API's `/v1`. `/api/*` is the data layer; it is read-only and, as before, loopback-only
-# or signed-peer. `hv dash` forwards to the module and goes in 4.0.
+# or signed-peer. `hv dash` is gone (4.0): run `hdash dash`.
 
 # Sync wire-protocol version. Advertised in /sync/hello and /hive/info so additive handshake
 # changes can be negotiated without a journal-schema break. Bumped to 2 with read-authentication
