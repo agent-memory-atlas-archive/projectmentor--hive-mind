@@ -112,6 +112,13 @@ def test_failing_step_output_is_redacted_and_odd_values_do_not_crash(tmp_path):
     assert "step failed" in r.stdout and "topsecretvalue" not in r.stdout + r.stderr and "***" in r.stdout
 
 
+def test_failing_step_text_is_redacted_too(tmp_path):
+    home = tmp_path / "h"
+    _cell(tmp_path, "t6b", ["MYTOK"], ["echo topsecretvalue; exit 3"], {"cmd": "false"}, home)
+    r = run(home, "wire", "t6b", "--env-file", _envf(tmp_path, MYTOK="topsecretvalue"))
+    assert "step failed" in r.stdout and "topsecretvalue" not in r.stdout + r.stderr
+
+
 def test_oversize_credential_is_reported_not_a_traceback(tmp_path):
     home = tmp_path / "h"
     _cell(tmp_path, "t7", ["MYTOK"], ["true"], {"cmd": "false"}, home)
