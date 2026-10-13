@@ -6,9 +6,17 @@ where every `grep` that matched it printed the whole line (18,544 characters at 
 here, not on that line. The adapter-facing summary is `docs/AGENT_INTEGRATION.md` §7; release notes are
 `CHANGELOG.md`.
 
-## 4.0 (in progress: `CONTRACT_VERSION` is still 3.1 until the contract bump lands)
+## 4.0
 
-**`hv dash` and `hv telemetry` are removed** (#433): each prints one line naming the module command that replaced it (`hdash dash`, `hwatch telemetry …`) on stderr and exits 2, whatever arguments follow, and runs nothing; the 3.1 forwarding through `hive-mind module run` is gone. An adapter that ran `hv telemetry record` at session start and end moves to `hwatch telemetry record` (same flags), or does nothing: the bundled `session_hook.sh` now calls the module directly and stays silent and exits 0 when hwatch is not installed. The MCP tool `hive_telemetry_report` returns the pointer as its text.
+A MAJOR for the adapter surface: **re-integrate (§0), by re-reading.** An adapter that ran a removed verb moves to the module command that replaced it; one that never did changes nothing. No journal, projection, signing, manifest or sync format changes (`PROTOCOL_VERSION` stays 3), and `min_core` is a `>=` compare, so a module declaring `min_core: 3.x` still installs. The 4.0 changes:
+
+**`hive-mind config set` refusals exit 1** (#432): every refusal (unknown key, bad or out-of-range value, an `x-` value too long, no owner key, the #122 guard) exits 1 where most exited 0; success is unchanged. A script that read exit 0 as "set" now sees the refusal. A value of NaN for a ranged key is refused. New read verbs `hive-mind config schema --json` and `config show --json` print the key tables and each governed key's value, source and `set_by`.
+
+**Config node verbs and `--non-interactive`** (#435): `hv config node list|get|set <key> [value] [--json]` reads and writes the node-local keys of `.peers.json`; `hive-mind module list --json` and `hive-mind module config <name> schema` print the module list and an installed manifest's `config_schema`; `config set` and `module config <name> set --fleet|--fleet-node` take `--non-interactive`, which never prompts or reads stdin and exits 5 (nothing signed) when the unlock agent is absent, locked or refuses the act.
+
+**`dashboard_share`** (#437): a node-local key (`NODE_KEYS`, never a `set-config`, never journaled), default off, set with `hive-mind config node set dashboard_share true|false`; hdash reads it to decide whether to start its read-only tailnet viewer listener. Core gains no listener.
+
+**Removed: `hv dash` and `hv telemetry`** (#433): each prints one line naming the module command that replaced it (`hdash dash`, `hwatch telemetry …`) on stderr and exits 2, whatever arguments follow, and runs nothing; the 3.1 forwarding through `hive-mind module run` is gone. An adapter that ran `hv telemetry record` at session start and end moves to `hwatch telemetry record` (same flags), or does nothing: the bundled `session_hook.sh` now calls the module directly and stays silent and exits 0 when hwatch is not installed. The MCP tool `hive_telemetry_report` returns the pointer as its text.
 
 ## 3.1
 
