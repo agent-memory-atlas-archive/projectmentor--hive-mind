@@ -24,6 +24,7 @@ import pytest
 PROJECT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT))
 import hivemind_ctl  # noqa: E402
+from _source import hv_text  # noqa: E402
 
 POSIX = os.name != "nt"
 PASS = os.environ.get("HIVE_OWNER_KEY_PASSPHRASE") or "test-owner-key-passphrase"
@@ -130,7 +131,7 @@ def test_the_data_plane_never_opens_a_sealed_key():
     """Static, over the code that executes (h:157bd5e469): nothing in `hv` calls the AEAD opener or the
     sealed-key reader. `_owner_unseal` is defined there (it is the escrow cipher) but only the control
     plane calls it."""
-    tree = ast.parse((PROJECT / "hv").read_text())
+    tree = ast.parse(hv_text())
     calls = {n.func.id if isinstance(n.func, ast.Name) else getattr(n.func, "attr", None)
              for n in ast.walk(tree) if isinstance(n, ast.Call)}
     assert not calls & {"_owner_unseal", "load_sealed"}, calls & {"_owner_unseal", "load_sealed"}

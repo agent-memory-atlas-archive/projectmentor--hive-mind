@@ -234,8 +234,31 @@ at once). Concretely:
   not this listener), and a POST that arrives on loopback must carry the `Hive-CSRF` token from
   `$HIVE_HOME/.csrf-token` (0600, never synced) or a valid signed envelope. A local process running as the
   same user can still read the token file; that boundary is the OS account, as before. The dashboard is
-  served with `Content-Security-Policy: default-src 'self'` and builds its page from text nodes, so a
-  journal value cannot run as script.
+  the `hdash` module's since 3.1 (below); it is served with `Content-Security-Policy: default-src 'self'` and
+  builds its page from text nodes, so a journal value cannot run as script.
+- **The dashboard is a module, `hdash` (3.1).** Moving it out of the sync daemon changes who serves the page, not what
+  an unadmitted or remote party can reach. The daemon serves no page now (`/` is 404) and keeps `/api/*` exactly as
+  it was: loopback or a signed peer, `Host`-checked. `hdash serve` is a second loopback listener (`127.0.0.1`, config
+  `port`, default 9896): GET and HEAD only, a request whose `Host` is not that loopback address is 403 (the
+  DNS-rebinding guard the daemon has), no `Origin`-based write because it has no write. It reads the hive two ways:
+  signed `/v1` calls as an admitted module device (`overview`, `tags`, `related`, `audit`, `peers`, `verify`, declared
+  in its `reads`, plus `search` and `item`), and the daemon's loopback `/api/*` for `status`, `telemetry`, `entities`
+  and a peer's `?node=` view (the daemon still resolves that address itself and signs the peer request). Residuals,
+  all needing a local process or an admitted device and so accepted for 3.x: any local process can `GET` the hdash
+  port and read what the page shows, as it could read the daemon's `/api/*` before (the OS account is the boundary;
+  `reads` is a declaration, not a sandbox here); hdash's `/v1` reads carry tailnet addresses (`peers`) and the local
+  integrity verdict (`verify`) to an admitted module device that declares them; and `search` and `item` through `/v1`
+  leave out owner-forgotten facts that the old page showed. Operator rule: remove hdash on a node where other local
+  OS accounts must not see the hive (`hive-mind module remove hdash`); the daemon's `/api/*` stays loopback-open
+  either way, as before.
+- **Session telemetry is a module, `hwatch` (3.1).** `hv telemetry` forwards to `hwatch telemetry` through
+  `hive-mind module run` (a subprocess; `hv` imports no module code and adds no control-plane edge). The forwarder passes
+  its arguments through unchanged and runs no shell. The store is the same local file as before, outside the journal,
+  and core now only opens it read-only for the loopback `/api/telemetry`. Residuals, all needing a local process or an
+  admitted device and so accepted for 3.x: `hwatch telemetry record` writes whatever its caller passes (no signature,
+  as before), so a local process can forge or hide a session's tokens and cost; and a module installed under the name
+  `hwatch` is run with the operator's own account when a hook fires (the module is signed under its pinned publisher,
+  as every module is). Operator rule: treat `hv telemetry report` as a report, not a control.
 - **Unsigned entries cannot fork a chain.** `_verify_entry` accepts an entry with no signature at all
   (historical entries predate device keys), so an unsigned entry could take an admitted device's future
   `(node_id, seq)`, become that device's chain tip, and make the device's own later entry drop as a
@@ -255,6 +278,76 @@ at once). Concretely:
   answer for exactly that device at exactly that address.
 
 ## Known limitations (in scope to document, NOT yet closed)
+
+- **A module's own doctor runs module code (3.1, #294 PR 4).** `hv doctor`, `module add`, `module update` and the 15-minute
+  `hive-doctor` timer run the `doctor` argv of a contract-1 module as the operator's user, in the module's directory,
+  with no shell, a 20 s kill timer on its process group, a 64 KiB output cap and an environment built from nothing
+  (`PATH`, `HOME`, `LANG`, `HIVE_MODULE_NAME/DIR/KEY_DIR`, `HIVE_DOCTOR_MODE`): the owner passphrase, the owner seed and
+  the identity stash are not passed. It runs only for a module whose installed tree verifies against a manifest signed
+  by the publisher key pinned at install, so an unadmitted or unauthenticated party cannot make the core run code that
+  the pinned publisher did not sign. Its answer is data: capped, control and bidi characters removed, shown as text,
+  cached in `$HIVE_HOME/.module-doctor/<name>.json` (0600, a 0700 directory of the operator's, never through a link or a
+  shared directory), and read back through the same cleaning. The fix step of `hv doctor --fix` never runs module code (its check pass does run the doctor, which is how the timer gets `timer` mode) and never reads
+  the answer as an action. Accepted residual (admitted device or the operator's own account): module code already runs
+  as the operator through its unit and `module run`, so the doctor adds no privilege; a process of the same user can read
+  the owner agent socket or the key files whether or not the environment is scrubbed. The operator rule is the existing
+  one: pin only publishers you trust, and treat a module's `doctor` as that module's code. A hung doctor delays
+  `hv doctor` by up to 20 s per module, one module after another (a wall-clock deadline on the read; a child that holds the pipe open or leaves the process group cannot extend it, though one that left the group may outlive the kill).
+- **The owner-unlock agent (3.1, #295).** `hive-mind owner unlock [--for D] [--module m]...` asks for the passphrase once and
+  hands the unsealed owner seed to a per-user agent process, which signs only these governance acts: `admit` of a
+  **module** device for a module named by `--module`, `revoke` of a module device that same agent session admitted, and
+  `set-config` under `x-<module>:`. Everything else (`transfer`, `rotate`, a voting device, forgets, owner-signed links,
+  an unknown action) is refused and the command falls back to its own passphrase prompt. The agent signs only bytes that
+  re-canonicalise to themselves and name its own key; it has no op that unlocks, returns the seed, or signs arbitrary
+  bytes. The socket is mode 0600 in a 0700 directory owned by the user, and a connection from any other uid is closed
+  unread. The seed lives only in the agent's memory (never a file, argv, env or log); `--for` is an idle timeout (1m
+  to 8h), 12h is a hard cap, and expiry, `owner lock`, a suspend/resume jump or a vanished socket end the process.
+  Residuals, none changing a journal, signature or sync byte: (1) *admitted-device class (accepted for 3.x):* while it
+  is unlocked, any process running as the operator can obtain signatures for the acts above, so it can set config under
+  an installed module's prefix or admit a module device for a module named at unlock; it can never get the seed or a
+  voting device. (2) *Swap and hibernation:* the agent is `PR_SET_DUMPABLE=0`, has no core dump and `mlock`s the seed
+  page, but the pure-Python signer builds big integers on the ordinary heap and keeps an immutable copy of the seed, which
+  CPython can neither zero nor lock; process exit clears them, swap or a hibernation image may not. (3) Root and a kernel
+  bug can read the agent. **Operator rule:** lock when you leave a machine you share with untrusted local code; use the
+  shortest `--for` that fits; unlock with `--module <name>` for an install; keep swap encrypted; lock before
+  hibernating; do not unlock on a machine that runs code you do not trust. `HIVE_OWNER_KEY_PASSPHRASE` is ignored by
+  `owner unlock`. Windows has no agent yet.
+
+- **`hv`'s code is in several files (3.1).** The body of `hv` runs from `hivemind/parts/*.py`, chosen by one list,
+  `PARTS`, in `hv` itself (no glob, no config, nothing under `HIVE_HOME`), read as bytes and run into `hv`'s own
+  namespace. A part has exactly the authority `hv` has, no more. Parts are tracked `.py` files, so the signed source
+  manifest hashes them as it hashes `hv`, and `hv verify` and the update gate see a changed or added part as they see a
+  changed `hv`. A file in `hivemind/parts/` that `PARTS` does not name never runs. Residual: whoever can write the
+  install directory can replace a part as they can replace `hv`, which is the same position as before the split (an
+  operator or admitted-device compromise, accepted in 3.x). Operator rule: the install directory is writable only by the
+  operator. The S2 guards that scan `hv` read the parts too (`tests/_source.py`).
+
+- **The S2 exec ban is a static name list, with documented limits (#382).** The guard in `tests/test_hv_parts.py`
+  (`file_runner_violations`) reads the source of `hv` and the parts and reports banned imports, names, attributes and
+  exact strings. It is a tripwire against an accidental or careless file-running call, not a sandbox. A name list
+  cannot be complete, because Python reaches the same effect through names the list does not hold. These are not
+  caught, and each stays out of the list for the reason given:
+  - *Process spawn through `os`* (`os.execv`, `os.posix_spawn` and kin). `hv` already imports `os` and
+    `subprocess` for its own work, so banning them would ban `hv`; the guard cannot tell a spawn of a fixed argv
+    from a spawn of a planted one.
+  - *`pickle` and `shelve` loads.* Loading runs code chosen by the data. The modules have legitimate uses and the
+    data is not visible in the source, so a name match says nothing about what is loaded.
+  - *`logging.config` factory lookup.* A config names a callable by a dotted string that the logging module
+    resolves at run time. The string is data, and any dotted name is a valid value.
+  - *A `sys.path` edit followed by a plain import.* The import names an ordinary module, and the file it loads
+    depends on a path the source builds. Nothing in the import statement is wrong.
+  - *Split or computed strings* (`"ex" + "ec"`, a join, a decode). A scan of literals sees the pieces, never the
+    result, and the names reach the call through `getattr` or `sys.modules` lookups on computed keys.
+  - *The string `code`.* It is exempt on purpose, because it is an ordinary word in `hv` (error codes, exit
+    codes). With `import code` banned, the one leftover is a `code` module that something else already loaded and
+    reached through `sys.modules`.
+
+  Residual: only someone who can write signed core (`hv` or a part) can plant any of these, which is the position of
+  the parts bullet above: an operator or admitted-device compromise, accepted in 3.x. A change to signed core is
+  seen by `hv verify` and the update gate as a changed file, whatever it calls, so the guard is a second line, not
+  the first. Operator rule: review every change to `hv` and `hivemind/parts/` as code, and do not read a green S2
+  guard as proof that a change runs no file. The guard is not extended to close these; widening a name list
+  closes one spelling and leaves the next.
 
 - **Outbound verification is opt-in.** The outbound mode defaults to `permissive`, which flags and never
   withholds a push, so a node is protected from an impostor at a peer's address only after it runs
@@ -370,6 +463,67 @@ at once). Concretely:
   An unrecognised source class weighs 1.0, like an absent one: a class can only claim a discount,
   so there is nothing to fail open into.
 
+- **Manifest contract 1 widens what a signed manifest can say (3.1).** The new fields (`cli`, `runtimes`, `status`,
+  `doctor`, `reads`, `config_schema`, `ui`) sit inside the signed `module.json`, so the publisher key and the file
+  digests cover them and `validate_manifest` refuses a field it does not know, a malformed one, or a contract-1 field
+  on a manifest without `contract`. They are declarations the operator reads, not a sandbox: a module is unconfined as
+  the operator (B9), so `reads` limits `/v1` and nothing else (any local process can GET the loopback `/api/*` routes),
+  `runtimes` names programs and never directories, and `status`/`doctor`/`cli.command` run as the operator like
+  `service.command`. The validator refuses what would put a person's data or a shell in the signed text: a default on
+  an `identifying` or `secret` key, a secret outside node scope, a `ui` action whose parameters are not drawn from an
+  enum or a data-source path, and a `ui` entity panel that names another module's prefix. `module check` lints shipped
+  files for identifying text and warns; it cannot prove absence, so a publisher still reads the diff. `module check
+  --run` runs the module's own `status` and `doctor` as the user who typed it, in a scrubbed environment and a
+  temporary directory, with a time and size limit; a module that spawns a detached child can outlive it. Operator rule:
+  run `--run` only on a module you would install. Only an admitted publisher key signs a manifest, so a remaining gap
+  that needs one is an admitted-device residual (accepted for 3.x).
+- **Module config secrets sit in a plaintext node file (3.1).** A `secret` key in a `config_schema` is node-scoped by
+  the validator, so it is never journaled or synced, and the CLI never takes it from the command line (shell history,
+  `ps`), masks it in `list`, `get`, `--json`, `validate` and the doctor, and refuses it from `--fleet`. It is stored in
+  `<module dir>/config` (0600, written through a 0600 temp file renamed in place), unencrypted: the operator, any
+  process running as the operator, and the module itself can read it, which is B9 (modules are unconfined as the
+  operator). `--set-env` and `--stdin` move a secret through the environment or a pipe, which other processes of the
+  same user can observe; the operator rule is to prefer the terminal prompt. An `identifying` fleet value is journaled
+  and visible to every admitted device for good, and the CLI says so when it is set; the validator refuses a shipped
+  default on such a key, but a publisher's *files* can still carry identifying text (`module check` only warns). A
+  `fleet` or `fleet-node` value is signed by the owner key; a `fleet-node` key names a device by a convention, so an
+  owner can set another device's key, and a module must treat the layers as the owner's word, never as input from the
+  device itself. Only an admitted device or the operator can reach any of these, so a gap here is an admitted-device
+  residual (accepted for 3.x).
+- **Runtimes, the unit PATH and the CLI launcher run as the operator (3.1).** A contract-1 module names programs
+  (`runtimes`), never directories; the core puts a directory on the unit's and the launcher's `PATH` only if it is
+  absolute, owned by the operator or root, and writable by neither group nor world, so another local user cannot plant a
+  program there and a module cannot add a directory of its own. The check is of the directory itself, not of its parents or
+  of the program, which the operator owns: a program that is a link into a directory someone else can write is the
+  operator's to avoid. The launcher is rendered by the core from the manifest's name and argv, every word single-quoted,
+  never from module text; it unsets the owner's passphrase, seed and key-directory variables before it runs the module.
+  Those are the variables core reads, not a sandbox: the module runs as the operator and can read anything the operator
+  can (B9). A launcher is written only into a bin directory only the operator (or root) can write, never over a file that
+  is not the module's own unedited launcher, and a `module run` or launcher invocation inherits the rest of the caller's
+  environment. `module status` runs the module's own code as the operator with a narrow environment, 20 seconds and 64 KiB,
+  and a module that spawns a detached child can outlive it. A module's `cli.name` is a command on the operator's PATH for
+  as long as it is installed, so the operator is trusting that name to the publisher: read it at install. Only an
+  admitted publisher key signs a manifest, so a gap that needs one is an admitted-device residual (accepted for 3.x).
+- **Read routes (3.1) hand an admitted module the hive's view of itself.** `GET /v1/overview`, `tags`, `related`,
+  `audit`, `peers`, `verify` and `node` are served only to a module whose signed manifest names the route in `reads`,
+  which the install summary (`module add` and `module update`) lists; they take no owner-key material, no capsule body and no governance state the feed
+  does not already carry, and `related` and `audit` leave owner-forgotten facts out (`tags` and the `overview` counts do not: a module that declares them, which only an admitted device with a publisher-signed manifest can, sees the names and counts of forgotten facts too, an accepted residual). Three carry node-local data
+  the feed does not: `overview` (this node's address and role), `peers` (a live probe of each peer, with tailnet
+  addresses and join-request labels) and `verify` (the local integrity verdict). `peers` and `node` therefore give a
+  declaring module the tailnet map. That is an admitted-device residual, accepted for 3.x: only a device the owner
+  admitted as that module's, running a manifest the publisher signed, can read them. `reads` gates `/v1` and nothing
+  else: any local process can still `GET` the loopback `/api/*` routes, which answer every loopback caller (B9), so
+  `reads` is a declaration the operator sees, not a sandbox. The read bucket (a burst of 60, then 5 a second, per
+  device, in memory) bounds how much work a module can ask of the node (`overview` and `audit` read the whole
+  journal); it resets when the daemon restarts, and it is not a defence against the operator's own processes.
+  Operator rule: install a module that declares `peers` or `node` only if you would give it the tailnet addresses.
+- **`module install` never prompts for the owner key under `--non-interactive` or `--json` (3.1).** It opens the key only when
+  it is already open, unsealed, its passphrase is in `HIVE_OWNER_KEY_PASSPHRASE`, or the unlock agent covers the acts it will
+  sign; otherwise it exits 5 before it fetches or writes anything. It adds no signing path: the acts are `module add`'s
+  (`admit`, `revoke` on a failed add, `set-config` for `--set-fleet`), made through the same gate, and a re-run of an installed
+  module signs a fleet value only if the journal does not already hold it. `--json` prints the messages the steps printed;
+  those name keys and never values, and a secret is never echoed. Anything that runs as the operator can set the passphrase
+  variable or reach the agent, as before: an admitted-device residual (accepted for 3.x).
 - **`hv doctor` `owner-copies` is a name-only check.** It looks one level deep in four directories
   (`$HIVE_HOME`, the current directory, the home directory, the identity stash) for `hive-owner-*.key` and
   the stash's `.owner-key`, and never opens a file. The default export and `--plaintext` share a basename,
@@ -394,6 +548,30 @@ at once). Concretely:
   Operator rules: never `eval` a credential, never place `$NAME` on argv, and keep `cell_writers` and
   `capsule_putters` at `owner` unless every admitted device is trusted. The same holds for a module's
   per-node config: a secret key is read from stdin, a file or a prompt, never argv.
+
+### Boot pass (`hv doctor --boot`, 3.1, #344)
+
+`hive-doctor-boot.service` runs the same `hv doctor --fix` code as the timer, once per boot, as the user, with no new
+privilege. Its fixes are the existing ones (restart the managed unit, re-render a module unit its verified manifest
+renders, re-wire hooks); it adds a bounded wait and a report, and writes no file outside the hive. The report is a
+fact tagged `boot`, source `doctor`; its text is built from check names and details this node computed, cut to 900
+characters. It runs `claude --version` and `grok --version` (the first of each on the user's `PATH`) with a 10-second
+bound, so a replaced binary on that `PATH` runs at boot as it would at any shell. That needs write access to the
+user's own `PATH`, so it is an admitted-device residual (accepted for 3.x; the operator rule is to keep `PATH`
+directories user-owned). The Windows logon task is written by the installer or `hive-mind update`, not by doctor; its
+distro and user names are refused unless they are plain `[A-Za-z0-9._-]`, so nothing reaches the Windows command
+line quoted. Doctor only checks that the task exists; it does not check what the task runs.
+
+### Module trust tier (3.1, B9)
+
+A signed manifest may carry `trust`: `trusted` or `confined`, absent meaning `trusted`. In this change the field is only
+validated, shown at `module add` / `update` / `list` and recorded; **no unit is hardened yet**, so a `confined` module
+runs exactly as a `trusted` one until the security pass adds the confined unit. Do not rely on `confined` for isolation
+before that lands. The tier can go down on a node (`module trust <name> confined`, node-local) and up only with the
+owner key (clearing that lowering, or an update that signs a higher tier than the node last held), never above what the
+publisher signed. Residual, needing an admitted device or local access and so accepted for 3.x: a process running as the
+operator's own user can edit `.modules.json` and so change the node-local tier; the OS account is the boundary. A
+publisher key holder can sign `trusted`; the pinned key and the operator's look at the printed tier are the control.
 
 ## Seat steering (agent seats driven by GitHub and the hive)
 
@@ -449,6 +627,14 @@ second login or collaborator admitted by the gate. Tracked in hive-mind-private 
   the fleet for good, since ingest keeps the first copy of a `(node_id, seq)` and `sig` is inside the entry
   hash. No forgery was possible. The cofactorless equation stays, since RFC 8032 permits it. A node that
   has not updated to v2.0.3 still accepts malleated copies, so update every node.
+- **Signer seam (3.1).** Every signature core makes (journal entries, owner governance, Hive-Auth envelopes,
+  hello proofs) goes through `hivemind/crypto/signer.py`, and `tests/test_signer_seam.py` fails on a call to
+  `ed25519.sign` anywhere else in core. Callers hold `sign(bytes)`, never the seed. With the one backend
+  (the key file) nothing changes: the same bytes are signed and the signatures are identical, and a process that
+  has unlocked a key still holds its seed in memory, as before. The seam is what lets a later backend sign with a
+  key held elsewhere (hardware, TPM, gateway); verification stays fixed in core, so a bad backend can fail to sign
+  but cannot make a forgery verify. Out of scope: module signing (the module's own key) and capsule decryption
+  (X25519 secret material).
 - **Verification memo (v1.20.1).** Each process remembers which signatures it has verified, keyed on
   the exact signed bytes, signature and key, so a changed byte is always checked afresh. Only the
   cryptographic result is cached, never authorization (admission, revocation, owner-as-of, writer
@@ -480,3 +666,4 @@ second login or collaborator admitted by the gate. Tracked in hive-mind-private 
   [#112](https://github.com/projectmentor/hive-mind/issues/112)); a foreign listener on the port never
   triggers that. Run
   `hv doctor --fix --dry-run` to preview every mutating action before letting it run.
+- **3.1: `hive-mind update` fetches and installs module code (#390).** Updating the core now also clones each installed module's recorded source and installs a newer version with no prompt, so a compromised source repository or a network path to it is in the update path. What bounds it: the same checks as `module update` (the manifest signature under the **publisher key pinned at the first install**, every file's digest, no unlisted file), so a source that cannot sign as that publisher gets nothing installed and the module is warned about or, if its installed copy no longer verifies, disabled; and an automatic update installs only a version strictly newer than the installed one (whole-string order over `major[.minor[.patch]]` integers; a suffix, leading non-digit or extra component is unorderable and refused) or a republish of the identical version string, so a source cannot roll a module back to an older signed release; a republish under the same version string is the one case kept, and it is whatever the publisher signed. Residual: the holder of the publisher key (or a source serving the publisher's own newest release) is trusted to run code as the operator on every node at the next `hive-mind update`, as at `module update`, but without the operator naming the module that time; `reads` a new version adds are printed but not confirmed. Operator rule: pin only publishers you trust to ship unattended, and run `hive-mind module refresh --check` first to see the plan. A disabled module's units, launcher and hooks are off, but its device stays admitted until `group revoke` (an admitted-device residual, accepted for 3.x).

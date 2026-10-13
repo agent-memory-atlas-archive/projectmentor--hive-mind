@@ -23,6 +23,7 @@ sys.path.insert(0, str(PROJECT))
 import commandmap  # noqa: E402
 import hivemind_ctl  # noqa: E402
 import _keys  # noqa: E402  (where a hive's keys are, 2.0 PR 3a)
+from _source import hv_text  # noqa: E402
 
 
 def _run_ctl(home, *argv):
@@ -207,7 +208,7 @@ def test_hv_does_not_import_the_control_plane():
     # distinction has mattered — a text scan conflates what the code does with what it says.)
     import ast
     imported = set()
-    for node in ast.walk(ast.parse((PROJECT / "hv").read_text())):
+    for node in ast.walk(ast.parse(hv_text())):
         if isinstance(node, ast.Import):
             imported.update(a.name.split(".")[0] for a in node.names)
         elif isinstance(node, ast.ImportFrom) and node.module:

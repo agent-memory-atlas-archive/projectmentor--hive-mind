@@ -19,6 +19,7 @@ import _keys  # noqa: E402
 import ed25519  # noqa: E402
 import hive_modules  # noqa: E402
 from test_succession import _run, _gov, _device_id  # noqa: E402
+from _source import hv_text  # noqa: E402
 
 LINUX_ONLY = pytest.mark.skipif(not sys.platform.startswith("linux"), reason="2.1 module management is Linux-only")
 
@@ -43,7 +44,7 @@ def _publish(repo, name="demo", version="1.0.0", seed=SEED, extra=None, files=No
     m = {"name": name, "version": version, "min_core": "2.0", "publisher": _b64(ed25519.pub_from_seed(seed)),
          "files": {rel: hashlib.sha256(text.encode()).hexdigest() for rel, text in body.items()},
          "hooks": ["stop"], "config": {"poll": "30"}, **manifest_extra}
-    raw = json.dumps(m, indent=1).encode()
+    raw = json.dumps({k: v for k, v in m.items() if v is not None}, indent=1).encode()     # None drops a field
     (repo / "module.json").write_bytes(raw)
     (repo / "module.json.sig").write_text(_b64(ed25519.sign(raw, sign_with or seed)))
     if tamper:
@@ -150,10 +151,11 @@ def test_a_module_that_needs_a_newer_core_is_refused(hive, tmp_path):
 
 
 @LINUX_ONLY
-def test_a_2_x_manifest_installs_on_a_3_0_core(hive, tmp_path):
-    """3.0 (plan 5.2): `min_core` is a `>=` compare, so a manifest written for 2.1 still installs on the 3.0 core."""
-    assert "3.0" in _run(hive, "version").stdout
-    pub = _publish(tmp_path / "repo", min_core="2.1")
+@pytest.mark.parametrize("min_core", ["2.1", "3.0"])
+def test_a_2_x_or_3_0_manifest_installs_on_a_3_1_core(hive, tmp_path, min_core):
+    """3.0 (plan 5.2), 3.1: `min_core` is a `>=` compare, so a manifest written for 2.1 or 3.0 still installs on the 3.1 core."""
+    assert "3.1" in _run(hive, "version").stdout
+    pub = _publish(tmp_path / "repo", min_core=min_core)
     r = _add(hive, tmp_path / "repo", pub, check=False)
     assert r.returncode == 0, r.stderr
     assert (tmp_path / "modules" / "demo").exists()
@@ -298,7 +300,8 @@ def test_the_data_plane_cannot_reach_module_management():
 
     def imports(path):
         got = set()
-        for n in ast.walk(ast.parse(Path(path).read_text())):
+        text = hv_text(Path(path).parent) if Path(path).name == "hv" else Path(path).read_text()
+        for n in ast.walk(ast.parse(text)):
             if isinstance(n, ast.Import):
                 got |= {a.name.split(".")[0] for a in n.names}
             elif isinstance(n, ast.ImportFrom) and n.module:
@@ -741,6 +744,23 @@ def test_a_module_service_is_ordered_after_hive_sync_without_requiring_it():
         text = hive_modules.render_units("demo", {"service": svc}, Path("/m"), Path("/k"))["hive-module-demo.service"]
         assert "After=network.target hive-sync.service\n" in text
         assert "Wants=" not in text and "Requires=" not in text
+
+
+@LINUX_ONLY
+def test_update_shows_records_and_replaces_the_declared_reads(hive, tmp_path):
+    pub = _publish(tmp_path / "repo")
+    _add(hive, tmp_path / "repo", pub)
+    assert "reads" not in _state(hive)["demo"]
+    _publish(tmp_path / "repo", version="1.1.0", contract=1, config=None, min_core="3.1", reads=["peers", "node"])
+    r = _run(hive, "module", "update", "demo")
+    assert "reads (/v1, read-only): " in r.stdout and "peers [tailnet addresses]" in r.stdout
+    assert _state(hive)["demo"]["reads"] == ["peers", "node"]
+    _publish(tmp_path / "repo", version="1.2.0", contract=1, config=None, min_core="3.1", reads=["tags"])
+    r = _run(hive, "module", "update", "demo")
+    assert _state(hive)["demo"]["reads"] == ["tags"]                 # replaced, not merged
+    _publish(tmp_path / "repo", version="1.3.0")
+    r = _run(hive, "module", "update", "demo")
+    assert "reads (/v1" not in r.stdout and "reads" not in _state(hive)["demo"]
 
 
 @LINUX_ONLY

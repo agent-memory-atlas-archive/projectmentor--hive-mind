@@ -27,6 +27,7 @@ import vocabulary  # noqa: E402
 import test_links as TL  # noqa: E402
 from test_module_api import Hive, hive  # noqa: E402,F401
 from test_module_write import post, fact, SRC  # noqa: E402
+from _fs import FileSigner  # noqa: E402
 
 TS = "2026-01-06T00:00:%02d.000+00:00"
 TARGET = "the backup runs at 02:00"          # the plain device's fact the fixture projects
@@ -42,7 +43,7 @@ def ingest(hive, monkeypatch):
     def push(entries, dev="mod"):
         """Signed by device `dev`'s key, as a peer's push is: loopback also wants the signed envelope or the CSRF token."""
         body = json.dumps({"entries": entries}).encode()
-        headers = dict(sync_common.signed_request_headers(getattr(hive, dev)["seed"], "POST", "/sync/ingest", "", body),
+        headers = dict(sync_common.signed_request_headers(FileSigner(getattr(hive, dev)["seed"]), "POST", "/sync/ingest", "", body),
                        **{"Content-Type": "application/json"})
         req = urllib.request.Request(f"http://127.0.0.1:{srv.server_address[1]}/sync/ingest", method="POST",
                                      data=body, headers=headers)

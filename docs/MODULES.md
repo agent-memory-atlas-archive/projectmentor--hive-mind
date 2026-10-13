@@ -15,7 +15,8 @@ device as a module under the operator's principal. The module reaches the hive o
 loopback `/v1` API, never through the owner key. It reads the hive, and writes `fact`, `decision`,
 `idea`, `entity` and `link` entries that it signs itself; the core verifies, gates and appends them.
 
-Install with `hive-mind module add`. There is no `hv module`.
+Install with `hive-mind module install <name> --from <repo>` (3.1; the idempotent form, with fixed exit codes and `--json`,
+see `docs/CLI_REFERENCE.md`) or its 3.0 form `hive-mind module add`. There is no `hv module`.
 
 ## Trust model
 
@@ -57,6 +58,154 @@ ignored.
 | `quota` | Optional `{per_hour, per_day, entry_bytes, lifetime}`. A manifest may ask for less than the defaults (60 / 500 / 16384 / 50000), never more. Only the owner raises a limit. |
 | `config` | Optional `{key: default string}`, per-node defaults. Keys follow the `x-<name>:<key>` rule; values are at most 4096 characters. |
 
+### Manifest contract 1 *(3.1)*
+
+A manifest that declares `"contract": 1` may use the fields below. A manifest **without** `contract` is a 2.1/3.0
+manifest: it installs exactly as before, and naming any of these fields without `contract` is refused. A node on 3.0 or
+earlier refuses a contract-1 manifest (it names fields that node does not know), so a module that must stay installable
+there keeps a separate tag. The core knows contract `1` and refuses any other value.
+
+| Field | |
+|---|---|
+| `contract` | `1`. Requires `min_core` of `3.1` or newer, and replaces `config` (a manifest with both is refused). |
+| `cli` | `{"name": "<cli>", "command": [argv…]}`. The name is 2 to 32 characters of `a-z`, `0-9`, `-`, starting with a letter, and is not one the core uses (`hv`, `hive-mind`, anything starting `hive-`). The command has `service.command`'s rules. |
+| `runtimes` | Up to 16 distinct program **names** (`claude`, `grok`), never paths: no slash. |
+| `config_schema` | `{key: entry}`, up to 128 keys. A key is a config key name where a whole dot-segment `{word}` stands for any one segment (`seat.{role}.runtime`). An entry has `type` (`string`, `int`, `bool`, `enum`), `description` (required), `scope` (`node` (default), `fleet`, `fleet-node`), and optionally `default` (a string that fits the type), `max` (string length, or int bound), `min` (int), `values` (enum), `required_at_install`, `secret`, `identifying`. A `secret` key is node-scoped. An `identifying` or `secret` key may not ship a `default`: a signed manifest carries no one's user, host, account or repository name. |
+| `status` | argv that prints the status envelope (below) as one JSON object. |
+| `doctor` | argv that prints the module's own doctor answer (below). |
+| `reads` | Distinct names from `overview`, `tags`, `related`, `audit`, `peers`, `verify`, `node`: the read routes the module declares it will use. `module add` and `update` list them (marking `peers`/`node`, which carry tailnet addresses, and `overview`/`peers`/`verify`, which are node-local) and record them in `.modules.json`; the module API serves `/v1/<name>` only for a recorded name and answers `403` otherwise. A manifest without `reads` is served none. |
+| `trust` | `trusted` or `confined`; absent means `trusted`, so every existing manifest keeps its meaning. It is the tier the publisher signs. `module add` and `update` print it (`trusted` loudly) before you confirm, and `.modules.json` records a `confined` tier. A node may **lower** a module's tier with `hive-mind module trust <name> confined` (node-local, no key needed); clearing that lowering, or an update whose manifest signs a higher tier than the node last held, is a raise and needs the owner key, and nothing raises a module above what its manifest signs. `module list` shows the effective tier. This field only declares and records the tier; the stricter unit for `confined` ships with the 3.1 security pass. |
+| `ui` | The module's page for the dashboard: an object of at most 64 KiB, defined by [`ui_block.schema.json`](ui_block.schema.json). Unknown top-level keys are refused; unknown widgets, slots and extra fields inside an item are ignored by the dashboard. |
+
+`status`, `doctor` and `cli.command` are argv lists run without a shell, with `service.command`'s rules: strings, no
+control characters, and a relative first word may not leave the module's directory.
+
+**The status envelope** is `{"schema": 1, "state": "ok"|"degraded"|"down"|"unknown", "version": string,
+"problems": [string], "units": [{"name", "state"}] (optional), "detail": {…} (optional, the module's own)}`, exit 0.
+
+**The doctor answer** is `{"schema": 1, "results": [{"level": "ok"|"warn"|"fail", "check", "message",
+"fix_hint"?}]}` with at most 100 results and 400 characters a string, exit 0 unless a result is `fail`.
+
+*In 3.1 the core validates and signs for all of these fields; the behaviour that acts on each lands one slot at a time,
+each documented here when it does. The config schema, the runtimes, the CLI launcher, the doctor and the read routes
+act now, below.*
+
+#### The doctor slot
+
+A contract-1 module that declares `doctor` has the core run it. It is an argv with no shell, run in the module's
+directory with the module's PATH and an environment built from nothing: `HIVE_MODULE_NAME`, `HIVE_MODULE_DIR`,
+`HIVE_MODULE_KEY_DIR`, `HIVE_DOCTOR_MODE` (`manual`, `install`, `update`, `boot` or `timer`, so a module can do a deeper
+check at install and a cheap one on a timer), `PATH`, `HOME` and `LANG`. The owner key, its passphrase, the identity stash
+and every other `HIVE_*` variable are not passed. Do not write into `HIVE_MODULE_DIR`: a file the manifest does not list
+makes the tree fail its check.
+
+The core reads the answer as text and caps it: 20 seconds, 64 KiB, 100 results, 400 characters a string, control
+and bidi characters removed. A module that times out, crashes, prints something else or exits non-zero without a `fail`
+result gets one **warn** naming the problem; the core's own checks never wait on it. A `fail` it reports is a `fail`.
+
+It runs in `hv doctor` (its results join the `modules:<name>` line; a `fail` makes that line fail), at the end of
+`module add` and `module update` (printed; the install is never rolled back, and `--require-healthy` makes a reported
+`fail` set exit 1), and from the 15-minute `hive-doctor` timer with `HIVE_DOCTOR_MODE=timer`. It runs only for a module
+whose manifest verifies and is signed by the pinned publisher. The latest results are cached in
+`$HIVE_HOME/.module-doctor/<name>.json` (0600, local, never journaled) with the time they were taken, so a dashboard
+shows them and their age without starting module code. The fix step of `hv doctor --fix` never runs module code (its check pass does run the doctor, which is how the timer gets `timer` mode) and never treats a
+module's output as an action; `fix_hint` is text. A runtime the manifest declares that is not on the module's PATH is
+a core **warn** (`hive-mind module runtime <name> <program> <dir>`).
+
+#### Runtimes, the unit PATH and the CLI launcher
+
+`runtimes` names programs; the core finds them, and the module never names a directory. At `add`, `update`,
+`reapply` (which `hive-mind update` runs) and `module runtime`, each program is looked for in the invoking `PATH`, then
+`~/.local/bin`, `~/.npm-global/bin`, `~/.cargo/bin`, `~/.bun/bin`, `/opt/homebrew/bin` and `/usr/local/bin`, then in the
+directory the operator gave with `hive-mind module runtime <name> <program> <dir>` (`--unset` forgets it; use it when the
+install ran under a narrower PATH than your login shell, as a dashboard-started one does). A directory counts only if it
+is absolute, exists, is owned by you or root, and is writable by neither group nor world; anything else is skipped. The
+resolved directories are recorded in `.modules.json` (`runtime_dirs`) and the unit's `PATH` becomes
+`<runtime dirs>:<bin dir>:/usr/local/bin:/usr/bin:/bin`, where the bin dir is the one that holds `hive-mind`
+(`$HIVE_BIN_DIR` overrides it). A program that is not found is a warning at install (the install completes) with the fix
+named: `claude not found; install it or run hive-mind module runtime hwatch claude <dir>`. A manifest without `contract`
+gets no `PATH` line in its unit, as before.
+
+`cli` gives the module a command on your PATH. `add` and `update` write one small `sh` file named `cli.name` into the
+bin dir, rendered by the core: it unsets the owner's secrets (`HIVE_OWNER_PASSPHRASE`, `HIVE_OWNER_KEY_PASSPHRASE`,
+`HIVE_OWNER_SEED`, `HIVE_KEY_DIR`), exports `HIVE_MODULE_NAME`, `HIVE_MODULE_DIR`, `HIVE_MODULE_KEY_DIR` and the same `PATH`
+as the unit, and `exec`s the module's `cli.command` with `"$@"`. The module supplies only a name and an argv; every word is
+single-quoted, so no module text is ever shell. The file's second line is a marker with the module name and a digest of
+the rest, which is how the core knows a file is its own. An install is refused, before anything is written, when the name
+is one the core uses, another module's, an existing file that is not this module's unedited launcher, or when the bin dir
+is writable by group or world. `remove` deletes the launcher (only if it is still the module's own and unedited); `update`
+renames or drops it with the manifest, and a failed update puts the old one back.
+
+`hive-mind module run <name> [--] <args…>` does the same without the launcher (flags after the name go to the module's
+command), and returns the command's exit status. `hive-mind module status <name> [--json]` runs the manifest's `status`
+argv (no shell, in the module's directory, with `PATH`, `HOME`, `LANG` and the three `HIVE_MODULE_*` variables only; 20 s and
+64 KiB at most) and prints the envelope. A status that does not run, parse or fit the envelope is reported as `unknown`
+with the reason, never as a crash. Exit 0 when the state is `ok`, 1 otherwise.
+
+#### Configuration under `config_schema`
+
+A module with a `config_schema` has typed, scoped keys. A value lives in one of three layers, and a key is read only
+from the layer its `scope` names, then its schema `default`:
+
+| Scope | Where it lives | Set by |
+|---|---|---|
+| `node` (default) | `<module dir>/config` on this node: 0600, never journaled | the node's operator, no owner key |
+| `fleet` | `x-<module>:<key>`: an owner-signed `set-config`, on every node | the owner, `--fleet` |
+| `fleet-node` | `x-<module>:node.<16 hex of the device>.<key>`: the same entry, keyed by device | the owner, `--fleet-node <device>` |
+
+`fleet-node` is a naming convention over the existing `set-config`: nothing in the journal, the entry or the
+projection differs. A template key (`seat.{role}.enabled`) matches any one segment; an exact name wins over a template.
+Defaults are not copied into the node file, so a changed default reaches every node that did not set the key. A
+module reads its own explicit values from the node file and the rest through `GET /v1/` (fleet) and its own shipped
+defaults; `config get` and `config list` show the merged answer and where each value came from (`node`, `fleet-node`,
+`fleet`, `default`).
+
+```
+hive-mind module config <name> list [--json] [--merged]
+hive-mind module config <name> get <key> [--json]
+hive-mind module config <name> set <key> [<value>] [--fleet | --fleet-node <device>] [--stdin]
+hive-mind module config <name> unset <key>
+hive-mind module config <name> validate [--json]
+```
+
+- `set` checks the key (an unknown key is refused when there is a schema), the type, the bounds and the enum, and that
+  the layer is the key's scope. `set` to the value the key already has changes and signs nothing, so a re-run prompts
+  for no passphrase. `unset` removes a node value; a fleet value cannot be removed, only set again.
+- `validate` checks the node file and the fleet values against the schema and reports a bad value, a missing
+  `required_at_install` key (an error, exit 1), and a key the schema does not know or whose scope says the layer is
+  ignored (a warning). `hv doctor` shows the same findings as warnings under `modules:<name>`. They name a key and a
+  rule, never a value.
+- A **`secret`** key is node-scoped, is shown as `********` in `list`, `get`, `--json`, `validate` and the doctor, and is
+  never accepted on a command line (shell history, `ps`): `set` asks on a terminal, reads one line with `--stdin`, and
+  install takes it with `--set-env key=VARIABLE`. A key the schema no longer names is masked too (it may have been a secret). It is written to the 0600 node file only. The node file is plaintext
+  at rest; anyone who is the operator can read it (B9).
+- An **`identifying`** fleet value is journaled and visible to every admitted device for good; the CLI says so when
+  it is set.
+- A module without `contract` keeps the free-form `set`/`unset`/`list` of 2.3, unchanged; `get`, `validate` and
+  `list --merged` also work on it.
+
+**At install.** `module add <name> --from <repo>` (and `update`) takes `--set key=value` (node scope),
+`--set-fleet key=value` (fleet scope; owner key needed, signed after the module is installed), `--set-env
+key=VARIABLE` (node scope, for a secret) and `--non-interactive`. Every `required_at_install` key that has no value and
+no `default` must be given: on a terminal the command asks (hidden for a secret), otherwise it refuses, naming the
+keys, **before anything is fetched into place, minted or signed**. `required_at_install` is asked for concrete `node`
+and `fleet` keys; a template key or a `fleet-node` key is set after the install. A device without the owner key is not
+asked for a fleet key (the owner sets it; `config validate` reports it). `update` asks only for keys the new schema
+added. The install of a module that has no `config_schema` takes none of these flags.
+
+#### `hive-mind module check <dir> [--run] [--deny TERM] [--json]`
+
+For publishers and CI. It validates the directory's `module.json` with the code `module add` uses, verifies the
+signature when there is one, checks the file set and digests (the git-tracked files, in a checkout), and lints the
+manifest and shipped files for text that looks like a person, host, account or repository (an email address, a
+`/home/<user>`, an `@handle` outside code files, a `github.com/<org>/<repo>`; `--deny` adds terms). Lint results are
+**warnings**: a publisher aid, not a gate and not a claim that nothing identifying is shipped. With `--run` it also
+runs the module's `status` and `doctor` in a throwaway directory, with a scrubbed environment (`PATH`, a temporary
+`HOME`, `HIVE_MODULE_NAME/DIR/KEY_DIR` and `HIVE_DOCTOR_MODE=manual`; no owner or identity variable), a 20-second
+limit and a 64 KiB output cap, and checks the shapes above. `--run` runs the module's own code as you, which is why it
+is a flag. Exit 0 when there is no error, 1 otherwise. `module add` does not require `check` to have been run: it
+re-validates everything itself.
+
 `module.json.sig` is Ed25519 over the exact bytes of `module.json`, verified under `publisher`.
 `hive-mind module add` copies the listed files into a staging directory and hashes them again
 there: what is installed is what was hashed.
@@ -89,6 +238,7 @@ device. Unsigned requests are never served.
 | `/v1/tip` | GET | The caller's own chain tip |
 | `/v1/entries` | POST | Append one entry the module signed |
 | `/v1/entity` | GET | An entity and the module entities a core `same-as` joins to it |
+| `/v1/overview`, `tags`, `related`, `audit`, `peers`, `verify`, `node` | GET | *(3.1)* The dashboard's reads; served only to a module whose manifest names the route in `reads` (below) |
 
 HiveMind ships a reference signer and client, [`hive_module_client.py`](../hive_module_client.py),
 readable top to bottom and importing nothing from `hv`. A module in another language reimplements
@@ -125,11 +275,13 @@ in the module's directory, with `HIVE_MODULE_NAME`, `HIVE_MODULE_DIR` and `HIVE_
 in its environment and **no owner-key path**.
 
 ```
+hive-mind module install <name> [--from <repo>] [--publisher KEY] [--principal P] [--json] [--require-healthy]   # (3.1)
 hive-mind module add <name> --from <repo> [--publisher KEY] [--principal P]
 hive-mind module add --abort <name>
 hive-mind module update <name> [--from <repo>]
 hive-mind module remove <name>
 hive-mind module list
+hive-mind module check <dir> [--run] [--deny TERM] [--json]       # (3.1)
 hive-mind module config <name> set <key> <value> | unset <key> | list
 hive-mind module quota <name> [--per-hour N] [--per-day N] [--entry-bytes N] [--lifetime N]
 ```
@@ -143,8 +295,29 @@ On a **member machine** (no owner key), `add` is the two-step above. `update` ne
 unit and deletes the tree and the key, then prints the owner's `hive-mind group revoke <device>`
 line: the device id stays admitted until the owner runs it. `quota` stays owner-only.
 
-`hive-mind update` then runs the internal `hive-mind module reapply`: it re-renders units that
-changed and never fails the core update.
+`hive-mind update` then runs the internal `hive-mind module refresh` *(3.1)* for every installed module, after the core
+files are in place and the daemon is restarted:
+
+1. It clones the module's **recorded source**, runs the same tree check as `update` (signature, digests, `min_core`,
+   known `contract`) and requires the **pinned publisher**. A different signer is refused. A version that is not strictly
+   newer than the installed one (compared as `major[.minor[.patch]]` integers) is refused too, and so is one the two
+   strings cannot be ordered by (a suffix, a leading `v`, a fourth component); the same version string republished is
+   kept. An automatic update only goes forward; `module update` by hand takes any tree the pinned publisher signed. The newest version is the source's default-branch head.
+   A manifest without `contract` is compatible with every 3.x core.
+2. A newer compatible version replaces the module in one step, its files and its units together, so the new core's
+   unit text never restarts a module that is still on old code (decision h:98d0d79694). Running seat sessions are not
+   killed: the core touches only the module's own units. One status line per module.
+3. If the update fails but the installed version still admits this core, it stays, its units are re-rendered as before,
+   and a loud warning names the module and the reason.
+4. If it fails and the installed version does not admit this core (it no longer verifies, or the core refuses it), the
+   module is **disabled**: units stopped and disabled (not deleted), launcher removed, `disabled` recorded in
+   `.modules.json`. A boxed message names the module, why, and the one command that brings it back. Its hooks do not
+   run, `module run` and `status` refuse, and `hv doctor` reports `modules:<name>` as `disabled-incompatible` (a fail).
+5. `hive-mind module update <name>`, or the next `hive-mind update`, installs a compatible version and re-enables it.
+
+The core update succeeds in every case, and a second run with nothing new changes nothing. `hive-mind module refresh
+--check` prints the plan and changes nothing. A new required config key with no default cannot be asked for here (no
+prompt): that update fails as in step 3, and `hive-mind module update <name> --set ...` finishes it.
 
 `hv doctor` reports each installed module as `modules:<name>`. A missing, tampered or wrongly
 signed manifest **fails**. An absent or stopped unit, a revoked device, missing config, a down
@@ -159,6 +332,23 @@ repository is private.
 Install it the same way as any other module, with `hive-mind module add hwatch --from <repo>`.
 Its fleet keys are `x-hwatch:…`, set by the owner. Its per-node keys are
 `hive-mind module config hwatch …`.
+
+## hwatch telemetry
+
+Session telemetry is **hwatch's** since 3.1 (`hwatch telemetry record|report|list`). The module declares `cli: hwatch`, so
+the core writes a `hwatch` launcher (§ the `cli` slot) and `hv telemetry` forwards to `hive-mind module run hwatch --
+telemetry …`. It keeps the store core wrote, `$HIVE_HOME/.telemetry/telemetry.db`, so nothing is copied or migrated. A
+node without hwatch records nothing and the hooks stay silent. hwatch's manifest is contract 1 from this release
+(`min_core` 3.1, a `config_schema` for the keys it already knew, no `config` block), so it needs a 3.1 core.
+
+## hdash
+
+**hdash** is the dashboard as a module ([`projectmentor/hive-mind-dash`](https://github.com/projectmentor/hive-mind-dash)),
+extracted unchanged from core in 3.1. It is a `service` module (a loopback listener, config key `port`, default 9896)
+with a `cli` (`hdash dash`), and `reads` `overview`, `tags`, `related`, `audit`, `peers` and `verify`. Its `/api/*`
+calls go to the core's signed `/v1` routes, or, for `status`, `telemetry`, `entities` and a peer's `?node=` view, to the
+sync daemon's loopback `/api/*`. `hv dash` forwards to it in 3.1 and is removed in 4.0; the sync daemon no longer
+serves the page. Install it with `hive-mind module install hdash --from https://github.com/projectmentor/hive-mind-dash`.
 
 ## Planned
 

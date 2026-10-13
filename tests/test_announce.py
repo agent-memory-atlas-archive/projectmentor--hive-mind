@@ -34,6 +34,7 @@ import merkle   # noqa: E402
 import ed25519  # noqa: E402
 import x25519   # noqa: E402
 import _planes  # noqa: E402  (which plane runs a command, 2.0)
+from _fs import FileSigner  # noqa: E402
 
 
 def _run(home, *args, check=True):
@@ -74,7 +75,7 @@ def _foreign_device(hv):
 def _signed(hv, seed, pub, nid, seq, payload):
     e = {"node_id": nid, "seq": seq, "type": "governance",
          "timestamp": f"2026-07-{seq:02d}T00:00:00Z", "payload": payload, "prev_hash": "sha256:genesis"}
-    return hv._sign_entry(e, seed, pub)
+    return hv._sign_entry(e, FileSigner(seed))
 
 
 def _announce_payload(nid, kind="key", label="silent"):

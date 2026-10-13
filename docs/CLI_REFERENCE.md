@@ -16,10 +16,10 @@ memory.
 |---|---|
 | `hv audit` | Surface redundant, obsolete, stale or missing facts (used by agent hooks) |
 | `hv config` | Device identity (`identity`); governed parameters are set with `hive-mind config set` (owner) |
-| `hv dash` | Open the read-only web dashboard (served by the sync daemon) |
+| `hv dash` | Open the web dashboard (forwards to the hdash module; removed in 4.0) |
 | `hv decide` | Record a decision |
 | `hv discover` | Find hives on your tailnet |
-| `hv doctor` | Check that your device is healthy; `--fix` self-heals (orphan daemons + Claude Code hooks/skill); subcommands `merkle`, `rebuild` |
+| `hv doctor` | Check that your device is healthy; `--fix` self-heals (orphan daemons + Claude Code hooks/skill); subcommands `merkle`, `rebuild`. *(3.1)* For a contract-1 module it also runs the module's own `doctor` (`HIVE_DOCTOR_MODE` in the environment names the caller: `manual` by default, `timer` from the 15-minute timer) |
 | `hv entity` | Track named things (people, projects, concepts); `join`/`unjoin` a module's entity to a shared one *(2.1)* |
 | `hv feed` | Read-only journal feed for modules and operators: entries past a per-node cursor, as JSON *(2.1)* |
 | `hv group` | The membership roster (`list`); the lifecycle (admit/revoke/deny/change/purge) is `hive-mind group …` (owner) |
@@ -37,7 +37,7 @@ memory.
 | `hive-mind unforget` | Owner only: reverse an owner forget (`hive-mind retract --owner`) |
 | `hive-mind migrate forget` | Owner only (3.0): re-issue, owner-signed, the forgets that only the pre-genesis grandfather keeps in effect; `--check` lists them |
 | `hv sync` | Sync with peer nodes; `auth` sets the read-auth mode, `auth --outbound` what a peer must prove before this node pushes to it |
-| `hv telemetry` | Local-only session observability (never synced) |
+| `hv telemetry` | Session observability (forwards to the hwatch module; removed in 4.0) |
 | `hv verify` | Check that this install is the official, signed release |
 | `hv version` | Print the agent contract version |
 | `hv whoami` | Show this device's identity and membership status (sterile/fertile/owner) |
@@ -356,6 +356,15 @@ twice), and relinks the skill — leaving your own hooks untouched and taking a
 `peer-address` check finds a peer's device verified at a new address, `--fix` updates
 that one URL in `.peers.json` (see [SYNC_API.md](SYNC_API.md#configuration-peersjson)); that includes a
 peer found by the signed `/hive/info` probe, which never contacted this node.
+**`hv doctor --boot`** *(3.1, #344)* is the boot pass: the `hive-doctor-boot.service` user unit runs it once per boot (after
+`hive-sync.service`, which it `Wants=`). It sets `HIVE_DOCTOR_MODE=boot` for each module's own `doctor`, waits for the
+sync daemon to answer (`HIVE_BOOT_SYNC_WAIT` seconds, default 90, at most 600; after half of it, it restarts the managed
+daemon once), adds the platform checks (**boot-linger**: linger is on; **boot-logon-task** on WSL: the Windows logon
+task `HiveMind-WSL-<distro>` that starts the distro; **boot-platform** on macOS: the launchd agent), runs `--fix`, rechecks,
+and records one fact tagged `boot` per node and boot (`node N booted T; sync ok; peers: …; modules ok; runtimes: …;
+fixed: …; needs operator: …`). Peers are reported, never a fault. The checks only verify linger and the logon task; the
+installer and `hive-mind update` write them. `--dry-run` prints the line and records nothing.
+
 Because the 15-minute `hive-doctor.timer` runs `hv doctor
 --fix`, a node that drifts heals itself with no one re-running the installer. Without
 `--fix`, doctor only reports — it never kills or writes anything, so it stays safe to
@@ -758,10 +767,22 @@ hive-mind owner pin [--set | --fingerprint FP] [--force]  # show, or pin, the ge
 hive-mind owner restore                              # recover the key from the hive's escrow
 hive-mind owner revoke <node_id:seq|all>             # tombstone an escrowed key so `restore` skips it
 hive-mind owner seal                                 # seal a plaintext owner key at rest under a passphrase
+hive-mind owner unlock [--for 15m] [--module m]...   # ask for the passphrase once; a per-user agent then signs a few module acts
+hive-mind owner lock                                 # end the agent now (it exits and clears its seed page)
+hive-mind owner status                               # whether the agent is unlocked, its expiry, the acts it signed or refused
 hive-mind owner standby <device_id> [--off]          # declare an advisory standby key holder
 hive-mind owner transfer <new_owner_pub>             # immediate handoff to a key the target already holds
 hive-mind owner unnominate <successor_pub>           # withdraw a pending nomination
 ```
+
+**Owner unlock (3.1).** `owner unlock` prompts on the terminal once (`--for` is the idle timeout, 1m to 8h, default 15m; a hard cap of
+12h) and starts an agent that holds the seed in memory only. While unlocked it signs `admit` of a module device for a module
+named with `--module`, `revoke` of a module device it admitted in that session, and `set-config` under `x-<module>:`; `module
+add|remove|quota` and `config set x-<module>:…` then run without a passphrase prompt. Every other owner act still prompts, so
+`transfer`, `rotate`, `group admit` of a voting device and owner-signed links are unchanged. A plain `owner unlock` (no `--module`)
+admits nothing, so `module add` then prompts once, up front. `HIVE_OWNER_KEY_PASSPHRASE` is ignored here. See THREAT_MODEL.md
+for what an unlocked agent exposes and the operator rule.
+
 
 You run `hive-mind owner init` once, on whichever machine you want to hold the owner key.
 It mints a **`hive_id`** (a public identifier that keeps your hive separate from
@@ -1127,22 +1148,19 @@ they remain its internal keys and join columns; they just stop leaking out as na
 
 ### `hv dash` — Open the web dashboard
 
-A read-only dashboard for browsing your hive in a browser. Four tabs: **Overview**
-(counts, convergence, contested, the live audit summary), **Corpus** (facts and
-decisions — search, filter by tag, sort by confidence, importance, utility or recency,
-filter by status: contested, forgotten by the owner, or volatile; paginated), **Hive**
-(peers + health, with live sync status), and **Telemetry** (this node's sessions,
-tokens, and cost over time). It's served by the **sync daemon** itself (no extra
-process) at `http://127.0.0.1:9876/`, and it answers only on the device it runs on:
-open it on any device that runs HiveMind, including an Android phone running it in
-Termux. A browser on a device without its own node, pointed at another node's tailnet
-address, is refused (403) since the July 2026 read-auth fix (PR #42). To see another device's data, pick it
-in the dashboard: your own daemon fetches it with a signed request. Nothing is
-exposed to the public internet.
+*(3.1)* The dashboard is the **hdash module** now ([`projectmentor/hive-mind-dash`](https://github.com/projectmentor/hive-mind-dash)),
+and `hv dash` forwards to it (`hive-mind module run hdash -- dash`). The forwarder is removed in 4.0: use `hdash dash`.
+When hdash is not installed, `hv dash` prints the install line (`hive-mind module install hdash --from …`) and exits 1.
 
-`hv dash` prints the URL and tries to open your browser. On a headless box (or
-Android/Termux, or WSL) where it can't, the printed URL is the point — open it
-yourself.
+The page is the one that shipped in core, unchanged: **Overview** (counts, convergence, contested, the live audit
+summary), **Corpus** (facts and decisions: search, filter by tag, sort, filter by status; paginated), **Hive**
+(peers and health) and **Telemetry**. The module serves it on `http://127.0.0.1:9896/` (config key `port`) and answers
+only on the device it runs on. To see another device's data, pick it in the dashboard: your own daemon fetches it with a
+signed request. The sync daemon no longer serves the page, only the `/api/*` JSON the module reads. Nothing is exposed
+to the public internet.
+
+`hv dash` prints the URL and tries to open your browser. On a headless box (or Android/Termux, or WSL) where it can't,
+the printed URL is the point: open it yourself.
 
 ```
 hv dash [--print]
@@ -1295,7 +1313,7 @@ checks, strongest last:
    `https://hivemind.projectmentor.org/.well-known/hivemind.pub`, a different origin from the code
    host. Catches a fork that ships its own key and a self-signed manifest.
 
-A healthy install prints `✓ Official HiveMind v3.0 from ProjectMentor — verified.` If you edited
+A healthy install prints `✓ Official HiveMind v3.1 from ProjectMentor — verified.` If you edited
 files yourself it says the install was modified locally.
 
 **Exit codes** (a script or CI step can rely on them):
@@ -1318,7 +1336,7 @@ rather than failed while it is pending (see `hv doctor` above).
 ### `hv version` — Agent contract version
 
 ```
-hv version        # → hv contract-version 3.0
+hv version        # → hv contract-version 3.1
 ```
 
 The version of the agent contract (`docs/AGENT_INTEGRATION.md`). Adapters compare it with the
@@ -1344,8 +1362,13 @@ hv telemetry record|report|list …
 - **`hv audit`** lists facts to reconcile: redundant, obsolete, due for a re-check (`volatile` facts
   past their freshness window), missing (with `--session`), and CONTRAVENED (a correction that names
   a still-live fact in prose but never resolved it).
-- **`hv telemetry`** records and reports session observability (duration, tokens, cost) in a
-  local-only store that never enters the journal and never syncs.
+- **`hv telemetry`** *(3.1)* forwards to the **hwatch module** (`hive-mind module run hwatch -- telemetry …`; the
+  command is `hwatch telemetry record|report|list`). The module records and reports session observability (duration,
+  tokens, cost) in the same local-only store as before (`$HIVE_HOME/.telemetry/telemetry.db`: never in the journal,
+  never synced), so history carries over. `record` runs from session hooks, so it prints nothing and exits 0 when
+  hwatch is not installed (a node without the module behaves as before and records nothing); `report` and `list`
+  print the install line (`hive-mind module install hwatch --from …`) and exit 1. The forwarder is removed in 4.0:
+  use `hwatch telemetry`.
 
 ---
 
@@ -1367,21 +1390,47 @@ hive-mind <subcommand> [options]
 | `reset` | Recover a **wedged** install in one command: force-align the code to `origin` (even after a rewrite, even with local edits), rebuild the DB from the journal, refresh the supervisor units + Claude Code hooks, restart the daemon, and verify authenticity. **Your Hive (journal, keys, device identity) is preserved** — this is not `uninstall`. Use it when `hv doctor`/`hv verify` is unhappy after a breaking change. `-y` skips the prompt. |
 | `status` | Show device health and peer sync state. |
 | `invite` | Print the one-line address to paste on a new device so it can join this hive. |
-| `module` | *(2.1, Linux)* Install and manage modules: `add <name> --from <repo>`, `remove`, `update`, `list`, `config` *(2.3)*, `quota` (see below). |
+| `module` | *(2.1, Linux)* Install and manage modules: `add <name> --from <repo>`, `remove`, `update`, `list`, `config` *(2.3)*, `check` *(3.1)*, `run`, `status`, `runtime` *(3.1)*, `quota` (see below). |
 | `uninstall` | Remove HiveMind from this device (see flags below). |
 
 ### `hive-mind module` — Install and manage modules *(2.1, Linux only)*
 
 ```
-hive-mind module add <name> --from <repo> [--publisher KEY] [--principal P]
+hive-mind module add <name> --from <repo> [--publisher KEY] [--principal P] [--require-healthy]   # --require-healthy: (3.1) exit 1 when the module's doctor reports a fail
+                     [--set KEY=VALUE]... [--set-fleet KEY=VALUE]... [--set-env KEY=VARIABLE]... [--non-interactive]   # (3.1)
 hive-mind module add --abort <name>          # (2.3)
+hive-mind module install <name> [--from <repo>] [--publisher KEY] [--principal P] [--set ...] [--set-fleet ...] [--set-env ...]
+                          [--non-interactive] [--json] [--require-healthy]       # (3.1) the idempotent form of add/update
 hive-mind module remove <name>
-hive-mind module update <name> [--from <repo>] [--publisher KEY]
+hive-mind module update <name> [--from <repo>] [--publisher KEY] [--require-healthy] [--set ...] [--set-fleet ...] [--set-env ...] [--non-interactive]
 hive-mind module list
-hive-mind module config <name> set <key> <value> | unset <key> | list
-hive-mind module config <name> set <secret-key> [--stdin | --file PATH]   # token, password, ... never on argv
+hive-mind module check <dir> [--run] [--deny TERM] [--json]       # (3.1)
+hive-mind module config <name> set <key> [<value>] [--fleet | --fleet-node DEVICE] [--stdin | --file PATH] | unset <key> | list [--merged] | get <key> | validate   # get, validate, --fleet*, --stdin: (3.1)
+                          # list, get, validate take --json
+                          # a secret key (token, password, ...) is never taken from argv: --stdin, --file PATH or a hidden prompt
 hive-mind module quota <name> [--per-hour N] [--per-day N] [--entry-bytes N] [--lifetime N]
+hive-mind module run <name> [--] <args>...             # (3.1) the module's cli command, without its launcher
+hive-mind module status <name> [--json]                # (3.1) the module's status envelope; exit 0 when `ok`
+hive-mind module runtime <name> <program> <dir> | --unset   # (3.1) where one of the module's runtimes lives
+hive-mind module trust <name> [confined|trusted]  # (3.1) show the trust tier; `confined` lowers it on this node, `trusted` clears that lowering and needs the owner key
 ```
+
+`install` converges: a new module is installed (as `add` does), an installed one at a different commit is updated, one
+already at the fetched commit is left alone (`nothing to do`; it signs nothing and writes nothing, bar the `--set` values it
+was given that differ and units or launcher whose text differs). `--from` defaults to where the module came from.
+Exit codes: **0** converged, **1** refused with nothing changed, **2** usage, **3** waiting for the owner's admit (a device
+without the owner key: the add is staged and the owner's `group admit` line is printed), **4** installed but the doctor
+reported `fail` (only with `--require-healthy`), **5** the owner key is locked (`hive-mind owner unlock`). With
+`--non-interactive` or `--json` it never prompts, for a setting or the owner key's passphrase; a key the unlock agent, the
+passphrase variable or an unsealed file does not open is exit 5. `--json` prints one object: `ok`, `exit`, `name`, `result`
+(`installed`, `updated`, `configured`, `unchanged`, `staged`, `waiting`, `refused`, `locked`, `unhealthy`), `version`,
+`commit`, `admit_line`, `error`, `doctor` (the `modules:<name>` row) and the `messages` and `warnings` the steps printed.
+`add` keeps its 3.0 behaviour and exit codes.
+
+`run` passes everything after the name to the module's `cli.command` and returns its exit status; `status` exits 0 when
+the module says `ok` and 1 for any other state, including `unknown` (it did not run or answer in the envelope shape);
+`runtime` records a directory (absolute, yours or root's, not group- or world-writable) and re-renders the unit's `PATH`.
+A contract-1 module with a `cli` also gets a command of that name next to `hive-mind` (see `docs/MODULES.md`).
 
 Owner and operator; there is no `hv module`. `quota` needs the owner key; the other verbs also run on a device without it (below) *(2.3)*. A module is a git repository whose `module.json` is signed by its
 publisher key. `add` shows the key and pins it once you confirm (or pass `--publisher` to pin it without a prompt), mints the module's
@@ -1389,7 +1438,9 @@ own device key, has the owner admit it under your principal, and installs its fi
 checkout. `remove` revokes the device and keeps the module's journal entries. `update` re-verifies and swaps
 atomically, and refuses a different publisher key. `quota` is the only way a limit goes above the default. Where the
 platform has no module backend, `add` says so and exits non-zero before it touches anything. The manifest, the unit and
-the limits are in [`MODULE_API.md`](MODULE_API.md). `hive-mind update` re-renders every module's unit afterwards.
+the limits are in [`MODULE_API.md`](MODULE_API.md). `hive-mind update` then runs the internal `module refresh` (below).
+*(3.1)* `hive-mind update` brings every installed module along: `hive-mind module refresh` (internal; `--check` prints the plan and changes nothing) takes each module to the newest signed version at its recorded source that the new core admits, with the same tree check and pinned publisher as `module update`, and never goes to a lower version. A module whose update fails but whose installed version still admits the core keeps running, with a loud warning. A module with no version that admits the core is **disabled**: units stopped and disabled, launcher removed, `.modules.json` marks it, `hv doctor` reports `modules:<name>` as `disabled-incompatible`, and `module run`/`status` and its hooks refuse. The core update still succeeds. `hive-mind module update <name>` (or the next `hive-mind update`) brings it back once a compatible version is published. A second run with nothing new changes nothing.
+*(3.1)* When the manifest declares `reads`, `add` and `update` print them with the publisher key, before you confirm, marking the routes that carry tailnet addresses (`peers`, `node`) or node-local state (`overview`, `peers`, `verify`).
 
 **On a device without the owner key** *(2.3)* (the owner key lives on another machine). `add` fetches, verifies, stages and mints
 the module's key, then prints the owner's line, `hive-mind group admit <device> --module <name> --principal <p>`, with
@@ -1404,6 +1455,14 @@ admitted until the owner runs it.** `quota` stays owner-only.
 `config` *(2.3)* edits the module's per-node config file: `set` and `unset` change one key, `list` prints `key=value`, sorted. It is local to this
 node and never journaled, and needs no owner key. An `update` keeps what you set. A manifest's `service.stop_grace` *(2.3)* gives a long
 one-shot that many seconds to drain on stop; a stop, disable or restart waits for it, and `remove` deletes nothing while the unit is still draining.
+
+*(3.1)* A module whose manifest has a `config_schema` (contract 1) gets typed, scoped config. `config get` and `list` print the
+merged value and its source (`node`, `fleet-node`, `fleet`, `default`); `set` checks the key, type, bounds and enum and that the
+flag matches the key's scope (none for `node`, `--fleet`, `--fleet-node <device>`), and the two fleet layers are owner-signed
+(`x-<module>:<key>` and `x-<module>:node.<16 hex>.<key>`). `set` to the current value signs nothing. `validate` exits 1 on a bad value or a
+missing required key. A `secret` key is masked everywhere and never read from the command line: `set` asks on a terminal or reads
+`--stdin`, and `add` takes `--set-env KEY=VARIABLE`. `add` and `update` refuse a missing `required_at_install` key (asking on a terminal unless
+`--non-interactive`) before anything is fetched into place, minted or signed. Rules and layers: [`MODULES.md`](MODULES.md).
 
 `hv doctor` reports each installed module as `modules:<name>` (a missing, tampered or wrongly signed manifest **fails**;
 an absent or stopped unit, a revoked device, missing config, a down listener and quota past 80% **warn**) and
@@ -1447,6 +1506,8 @@ hive-mind uninstall [--keep-hive] [--keep-identity] [--yes]
 | `--keep-identity` | Delete the Hive data but preserve only this device's **identity** (its keys) to `~/.config/hive-mind/identity/` — a stable location that survives uninstall. A reinstall then offers to resume the same `device_id`, so the owner's prior **admission still applies (no re-admit)**. Lighter than `--keep-hive`. |
 | `-y`, `--yes` | Skip the `Continue? [y/N]` confirmation prompt and proceed — for unattended or scripted removal. |
 | `-h`, `--help` | Print usage and exit. |
+
+Uninstall also removes the boot-pass unit (`hive-doctor-boot.service`) and, on WSL2, the Windows logon task `HiveMind-WSL-<distro>`.
 
 On the next `hive-mind install`, if a preserved identity is found it offers to **resume** it (so a sterile/fertile device keeps its standing); decline to mint a fresh one. A plain `uninstall` (no flag) is a clean slate — identity is gone and a reinstall mints a new `device_id`.
 

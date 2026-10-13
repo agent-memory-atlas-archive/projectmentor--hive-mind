@@ -198,8 +198,6 @@ def test_mcp_hive_entity_is_the_cli():
 def test_the_dashboard_entities_route_is_loopback_only_and_served(hive):
     daemon = (PROJECT / "hive_sync_daemon.py").read_text()
     assert '"/api/entities"' in daemon.split("_LOOPBACK_ONLY = frozenset({")[1].split("})")[0]
-    js = (PROJECT / "dashboard" / "app.js").read_text()
-    assert "/api/entities" in js and "e.label" in js
 
 
 def test_the_update_reports_entity_identity_after_the_rebuild(tmp_path):

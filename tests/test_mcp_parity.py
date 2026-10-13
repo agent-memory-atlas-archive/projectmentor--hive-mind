@@ -8,8 +8,10 @@ server (CI has no `mcp` dependency), so it parses both files statically.
 import re
 from pathlib import Path
 
+from _source import hv_text
+
 ROOT = Path(__file__).resolve().parent.parent
-HV_SRC = (ROOT / "hv").read_text()
+HV_SRC = hv_text(ROOT)   # hv and its parts: the parser lives in a part after the split (3.1)
 MCP_SRC = (ROOT / "integrations" / "mcp" / "hive_mcp.py").read_text()
 
 # Top-level hv subcommands only — the main parser's var is exactly `subparsers` (a \b before it

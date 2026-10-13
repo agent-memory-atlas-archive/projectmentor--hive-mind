@@ -519,6 +519,22 @@ def _major_upstream(sb, version="4.0"):
     return sb.upstream_commit()
 
 
+def test_update_reads_the_contract_major_of_hv_as_text():
+    """Permanent check (3.1 plan §2.1): `_update.sh` reads the contract major from `hv` as TEXT, with `sed`, from the
+    installed `hv` and from the fetched commit's. If the `CONTRACT_VERSION` line ever left `hv`, both would come
+    back empty and every update would run the forget gate. The majors the script reads (`_MAJ_OLD`, `_MAJ_NEW`) and
+    the version `_VER_NEW` takes are non-empty and equal `hv.CONTRACT_VERSION`."""
+    script = (REPO / "scripts" / "installer" / "_update.sh").read_text()
+    fn = re.search(r"^_contract_major\(\) \{\n.*?^\}\n", script, re.M | re.S).group(0)
+    ver = re.search(r"_VER_NEW=\"\$\(.*?\| (sed -n '[^']*') \| head -n 1\)\"", script).group(1)
+    hv_text = (REPO / "hv").read_bytes()
+    want = _load_hv().CONTRACT_VERSION
+    maj = subprocess.run(["bash", "-c", fn + "\n_contract_major"], input=hv_text, capture_output=True, check=True).stdout
+    assert maj.decode().strip() == want.split(".")[0]
+    ver_out = subprocess.run(["bash", "-c", ver], input=hv_text, capture_output=True, check=True).stdout
+    assert ver_out.decode().strip() == want
+
+
 @pytest.mark.parametrize("state", ["open", "closed", "no owner"])
 def test_a_higher_major_is_refused_before_the_switch_only_while_forget_authz_is_open(sandbox, state):
     sb = sandbox()
@@ -564,7 +580,8 @@ def test_the_update_re_applies_module_units_and_a_broken_module_only_warns(sandb
     (sb.hive / ".modules.json").write_text(json.dumps({"ghost": {"version": "1", "publisher": "x"}}))
     r = sb.update(HIVE_MODULES_DIR=mods)
     assert r.returncode == 0, r.stdout + r.stderr
-    assert "ghost: units not re-applied" in r.stdout and "Update complete" in r.stdout
+    assert "module ghost is DISABLED" in r.stdout and "no source is recorded" in r.stdout    # named, and said
+    assert "Update complete" in r.stdout
 
 
 # --- the signed `sequence` (a monotonic counter inside verify.json): an old signed tree re-wrapped as a

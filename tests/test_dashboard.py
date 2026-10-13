@@ -1,7 +1,7 @@
-"""Dashboard read-API + static-serving guard.
+"""Dashboard read-API guard, and the `hv dash` forwarder.
 
-The sync daemon serves a read-only `/api/*` (overview / search / peers) and the committed dashboard
-SPA on the sync port. These are pure read projections that reuse hv's search/confidence/governance,
+The sync daemon serves a read-only `/api/*` (overview / search / peers) on the sync port; the page itself is the hdash
+module's since 3.1 (its tests live in projectmentor/hive-mind-dash). These are pure read projections that reuse hv's search/confidence/governance,
 so they must stay in step with the CLI and never mutate the corpus. We drive the REAL daemon over
 HTTP against an isolated HIVE_HOME (same pattern as test_sync).
 """
@@ -16,6 +16,7 @@ import urllib.request
 from pathlib import Path
 
 import pytest
+from _fs import FileSigner  # noqa: E402
 
 PROJECT = Path(__file__).resolve().parent.parent
 HV = PROJECT / "hv"
@@ -202,12 +203,13 @@ def test_node_proxy_unknown_node_is_graceful(daemon):
     assert o.get("reachable") is False
 
 
-def test_serves_spa_and_assets(daemon):
-    st, body, ct = _get(daemon, "/")
-    assert st == 200 and "text/html" in ct
-    assert b"<title>HiveMind</title>" in body and b'src="logo.svg"' in body
-    assert _get(daemon, "/logo.svg")[0] == 200
-    assert _get(daemon, "/favicon.svg")[0] == 200
+def test_the_daemon_no_longer_serves_the_page(daemon):
+    for path in ("/", "/index.html", "/dashboard", "/dashboard/", "/app.js", "/app.css", "/logo.svg", "/favicon.svg"):
+        with pytest.raises(urllib.error.HTTPError) as ei:
+            _get(daemon, path)
+        assert ei.value.code == 404, path
+    assert not (PROJECT / "dashboard").exists()
+    assert _get(daemon, "/api/overview")[0] == 200            # the data layer the module reads is unchanged
 
 
 def test_unknown_path_is_404(daemon):
@@ -302,7 +304,7 @@ def test_a_loopback_post_without_the_token_needs_a_valid_signed_envelope(daemon)
     path = "/sync/ingest"
 
     def env(b=body):
-        return sync_common.signed_request_headers(seed, "POST", path, "", b)
+        return sync_common.signed_request_headers(FileSigner(seed), "POST", path, "", b)
 
     # an unsigned claim of a device, and an envelope signed over a different body, do not stand in for the token
     assert _raw(daemon, "POST", path, {"Hive-Auth-Device": "k1:0000000000000000"}, body)[0] == 403
@@ -313,29 +315,41 @@ def test_a_loopback_post_without_the_token_needs_a_valid_signed_envelope(daemon)
     assert _raw(daemon, "POST", path, good, body)[0] == 403          # replayed nonce
 
 
-def test_the_dashboard_is_served_with_a_content_security_policy(daemon):
-    st, body, h = _raw(daemon, "GET", "/")
-    assert st == 200 and h.get("Content-Security-Policy") == "default-src 'self'"
-    assert h.get("X-Content-Type-Options") == "nosniff"
-    st, js, h = _raw(daemon, "GET", "/app.js")
-    assert st == 200 and "javascript" in h["Content-Type"] and b"function html(" in js
-    assert _raw(daemon, "GET", "/app.css")[0] == 200
+def _forwarder_env(tmp_path, monkeypatch, installed):
+    home = tmp_path / "home"
+    home.mkdir()
+    if installed:
+        (home / ".modules.json").write_text(json.dumps({"hdash": {}}))
+    log = tmp_path / "argv.json"
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    stub = bindir / "hive-mind"
+    stub.write_text(f"#!/bin/sh\nprintf '%s\\n' \"$@\" > {log}\nexit 7\n")
+    stub.chmod(0o755)
+    env = dict(os.environ, HIVE_HOME=str(home), PATH=f"{bindir}:{os.environ['PATH']}")
+    return env, log
 
 
-def test_the_dashboard_builds_its_dom_without_executing_data():
-    """A tag, fact or peer string is only ever a text node or an attribute value: no markup is built from data, and
-    no script runs from an attribute (`new Function` over `data-onclick` was the sink for a tag with a quote)."""
-    import re
-    d = PROJECT / "dashboard"
-    page, js = (d / "index.html").read_text(), (d / "app.js").read_text()
-    assert "<script src=\"app.js\"></script>" in page
-    assert not re.search(r"<script(?![^>]*\bsrc=)", page) and "<style" not in page      # nothing inline for the CSP to block
-    assert not re.search(r"\son[a-z]+\s*=|\sstyle\s*=", page)
-    for sink in ("new Function", "eval(", "data-onclick", "javascript:", "document.write", "insertAdjacentHTML", "outerHTML", "esc("):
-        assert sink not in js, sink
-    assert re.findall(r"\.innerHTML\s*=", js) == [".innerHTML="]                         # only html()'s own static template
-    assert "t.innerHTML=s;" in js
-    # the quote that broke out of the old data-onclick string now lands in a text node and a closure
-    assert "onclick=${e=>{e.stopPropagation();filterTag(t);}}" in js and ">${t}</span>" in js
-    css = (d / "app.css").read_text()
-    assert "url(http" not in css and "@import" not in css
+def test_hv_dash_forwards_to_the_module_when_it_is_installed(tmp_path, monkeypatch):
+    env, log = _forwarder_env(tmp_path, monkeypatch, installed=True)
+    r = subprocess.run([sys.executable, str(HV), "dash", "--print"], env=env, capture_output=True, text=True)
+    assert r.returncode == 7                                   # the module's own exit status
+    assert log.read_text().split() == ["module", "run", "hdash", "--", "dash", "--print"]
+    subprocess.run([sys.executable, str(HV), "dash"], env=env, capture_output=True, text=True)
+    assert log.read_text().split() == ["module", "run", "hdash", "--", "dash"]
+
+
+def test_hv_dash_without_the_module_prints_the_install_line_and_runs_nothing(tmp_path, monkeypatch):
+    env, log = _forwarder_env(tmp_path, monkeypatch, installed=False)
+    r = subprocess.run([sys.executable, str(HV), "dash"], env=env, capture_output=True, text=True)
+    assert r.returncode == 1 and not log.exists()
+    assert "hive-mind module install hdash --from https://github.com/projectmentor/hive-mind-dash" in r.stdout
+
+
+def test_hv_dash_installed_but_no_launcher_on_path_says_so(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".modules.json").write_text(json.dumps({"hdash": {}}))
+    env = dict(os.environ, HIVE_HOME=str(home), PATH=str(Path(sys.executable).parent))
+    r = subprocess.run([sys.executable, str(HV), "dash"], env=env, capture_output=True, text=True)
+    assert r.returncode == 1 and "hive-mind module run hdash -- dash" in r.stdout

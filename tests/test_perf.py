@@ -21,6 +21,7 @@ PROJECT = Path(__file__).resolve().parent.parent
 HV = PROJECT / "hv"
 sys.path.insert(0, str(PROJECT))
 import _planes  # noqa: E402  (which plane runs a command, 2.0)
+from _fs import FileSigner  # noqa: E402
 
 N_ENTRIES = 1000
 
@@ -69,13 +70,13 @@ class _Hive:
 
     def gov(self, payload, ts):
         self.gseq += 1
-        p = self.hv._sign_governance_payload(payload, self.oseed, self.opub)
+        p = self.hv._sign_governance_payload(payload, FileSigner(self.oseed))
         return {"node_id": "ownerdev", "seq": self.gseq, "type": "governance", "timestamp": ts, "payload": p}
 
     def entry(self, dev, typ, payload, ts):
         dev["seq"] += 1
         e = {"node_id": dev["id"], "seq": dev["seq"], "type": typ, "timestamp": ts, "payload": payload}
-        return self.hv._sign_entry(e, dev["seed"], dev["pub"])
+        return self.hv._sign_entry(e, FileSigner(dev["seed"]))
 
 
 def _synthetic(hv, n=N_ENTRIES):
@@ -239,7 +240,7 @@ def test_node_id_binding_is_checked_even_when_the_signature_is_memoized(tmp_path
     victim, attacker = h.devs
     e = {"node_id": victim["id"], "seq": 1, "type": "fact", "timestamp": _ts(5),
          "payload": {"content": "planted", "tags": [], "source": "manual"}}
-    e = hv._sign_entry(e, attacker["seed"], attacker["pub"])      # attacker's key, victim's node_id
+    e = hv._sign_entry(e, FileSigner(attacker["seed"]))      # attacker's key, victim's node_id
     import base64
     assert hv._verify_sig(hv._entry_signing_bytes(e), base64.b64decode(e["sig"]), base64.b64decode(e["pub"]))
     assert not hv._verify_entry(e)                                # the binding still fails

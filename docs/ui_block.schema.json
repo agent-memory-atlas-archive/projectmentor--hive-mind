@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ui_block.schema.json",
+  "title": "A module's `ui` block, schema 1 (manifest contract 1)",
+  "description": "The single definition of the `ui` block in a signed module.json. The core validates and stores it and never renders it; the dashboard (hdash) renders it. Unknown top-level keys are refused so a typo cannot drop a panel; unknown widget names, slot names and extra fields inside a metric, panel or action are accepted and ignored by the dashboard, so an old dashboard keeps working with a new module. Data sources are exactly status (the manifest's `status` command), doctor, config and entities (the module's own x-<name>: entities); there is no free-form HTTP source. Paths are a JSONPath subset (a.b, a[*].b) with no expressions. Actions are argv templates whose parameters come from an enum or from a path in a data source, never free text; in 3.1 the dashboard shows an action as the exact CLI line to copy. This file uses only the JSON Schema keywords hive_modules.SCHEMA_KEYWORDS implements.",
+  "type": "object",
+  "required": ["schema"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {"const": 1},
+    "title": {"type": "string", "minLength": 1, "maxLength": 80},
+    "summary": {"type": "string", "maxLength": 200},
+    "metrics": {
+      "type": "array", "maxItems": 32,
+      "items": {
+        "type": "object", "required": ["id", "label", "from", "path"],
+        "properties": {
+          "id": {"type": "string", "pattern": "[a-z][a-z0-9_-]{0,31}"},
+          "label": {"type": "string", "minLength": 1, "maxLength": 80},
+          "unit": {"type": "string", "maxLength": 16},
+          "from": {"enum": ["status", "doctor", "config", "entities"]},
+          "path": {"type": "string", "pattern": "[A-Za-z0-9_]+(\\[\\*\\])?(\\.[A-Za-z0-9_]+(\\[\\*\\])?)*", "maxLength": 200},
+          "prefix": {"type": "string", "maxLength": 100}
+        }
+      }
+    },
+    "panels": {
+      "type": "array", "maxItems": 32,
+      "items": {
+        "type": "object", "required": ["id", "widget", "title", "from"],
+        "properties": {
+          "id": {"type": "string", "pattern": "[a-z][a-z0-9_-]{0,31}"},
+          "widget": {"type": "string", "minLength": 1, "maxLength": 32},
+          "title": {"type": "string", "minLength": 1, "maxLength": 80},
+          "from": {"enum": ["status", "doctor", "config", "entities"]},
+          "path": {"type": "string", "pattern": "[A-Za-z0-9_]+(\\[\\*\\])?(\\.[A-Za-z0-9_]+(\\[\\*\\])?)*", "maxLength": 200},
+          "prefix": {"type": "string", "maxLength": 100},
+          "group_by": {"type": "string", "maxLength": 64},
+          "columns": {"type": "array", "maxItems": 32, "items": {"type": "string", "minLength": 1, "maxLength": 64}}
+        }
+      }
+    },
+    "slots": {
+      "type": "object", "maxProperties": 16,
+      "additionalProperties": {"type": "array", "maxItems": 32, "items": {"type": "string", "minLength": 1, "maxLength": 32}}
+    },
+    "dimensions": {"type": "array", "maxItems": 16, "items": {"type": "string", "minLength": 1, "maxLength": 32}},
+    "actions": {
+      "type": "array", "maxItems": 16,
+      "items": {
+        "type": "object", "required": ["id", "label", "command"],
+        "properties": {
+          "id": {"type": "string", "pattern": "[a-z][a-z0-9_-]{0,31}"},
+          "label": {"type": "string", "minLength": 1, "maxLength": 80},
+          "command": {"type": "array", "minItems": 1, "maxItems": 64, "items": {"type": "string", "minLength": 1, "maxLength": 1024}},
+          "params": {
+            "type": "object", "maxProperties": 8,
+            "additionalProperties": {
+              "type": "object", "minProperties": 1, "additionalProperties": false,
+              "properties": {
+                "enum": {"type": "array", "minItems": 1, "maxItems": 64, "items": {"type": "string", "minLength": 1, "maxLength": 80}},
+                "enum_from": {"type": "string", "pattern": "(status|doctor|config|entities):[A-Za-z0-9_]+(\\[\\*\\])?(\\.[A-Za-z0-9_]+(\\[\\*\\])?)*", "maxLength": 220}
+              }
+            }
+          },
+          "confirm": {"type": "string", "maxLength": 200},
+          "owner": {"type": "boolean"}
+        }
+      }
+    }
+  }
+}

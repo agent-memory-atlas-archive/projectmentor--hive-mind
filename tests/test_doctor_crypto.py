@@ -15,6 +15,7 @@ PROJECT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT))
 import crypto_selftest   # noqa: E402
 import x25519            # noqa: E402
+from _source import copy_hv  # noqa: E402
 
 
 def test_selftest_all_pass():
@@ -48,7 +49,7 @@ def test_doctor_exit_nonzero_when_crypto_breaks(tmp_path):
         "c3da55379de9c6908e94ea4df28d084f32eccf03491c71f754b4075577a28552",
         "00" * 32)
     (bad / "crypto_selftest.py").write_text(src)
-    shutil.copy(PROJECT / "hv", bad / "hv")        # a COPY, so hv's __file__ resolves into `bad`
+    copy_hv(bad)                                   # a COPY (and its parts), so hv's __file__ resolves into `bad`
     for f in [q.name for q in sorted(PROJECT.glob("*.py")) if q.name != "crypto_selftest.py"]:
         (bad / f).symlink_to(PROJECT / f)
     r = subprocess.run([sys.executable, str(bad / "hv"), "doctor", "--format", "json"],

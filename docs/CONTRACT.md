@@ -1,9 +1,9 @@
-# The module contract (3.0)
+# The module contract (3.1)
 
 What the module API promises, and what it does not. A module author reads this file to know what may be relied on
 across releases; [`MODULE_API.md`](MODULE_API.md) is the route reference and
 [`AGENT_INTEGRATION.md`](AGENT_INTEGRATION.md) §7 the adapter-facing version policy. Contract **2.1** was the first to
-publish this; 2.2 changed guarantees 4 and 5 and added guarantee 10; 2.3 adds guarantee 11 and the `/v1/` fields below.
+publish this; 2.2 changed guarantees 4 and 5 and added guarantee 10; 2.3 adds guarantee 11 and the `/v1/` fields below; 3.1 adds manifest contract 1.
 
 ## Stability tiers
 
@@ -21,6 +21,8 @@ Everything a module can reach is marked with one of three tiers.
   `api`. An unserved version is `404` naming the ones that are.
 - **The routes and their verbs**: `GET /v1/`, `/v1/feed`, `/v1/search`, `/v1/item`, `/v1/entity`, `/v1/tip` and
   `POST /v1/entries`, with the parameters, the status codes and the fields [`MODULE_API.md`](MODULE_API.md) lists.
+  *(provisional, 3.1)* `GET /v1/overview`, `/v1/tags`, `/v1/related`, `/v1/audit`, `/v1/peers`, `/v1/verify` and
+  `/v1/node` are served only to a module whose manifest declares them in `reads`; their fields may change in a MINOR.
   `GET /v1/` includes, since 2.3, `node_id` (this node's own device id, a string) and `node_devices` (the count of node devices
   in the hive, an integer: the admitted devices and the genesis device, with revoked, purged and module devices left out); the route carries no device list, address or principal.
 - **The authentication**: the Hive-Auth envelope, its signing bytes and the module-device requirement; an unsigned
@@ -44,9 +46,19 @@ Everything a module can reach is marked with one of three tiers.
   discarded, the 3-second per-hook cap and 6-second event budget, and the gates a hook must pass (`MODULE_API.md`).
 - **The `x-<module>:` rule** and the **manifest format** (the fields in `MODULE_API.md`; an unknown field is
   refused, so adding one is a MINOR and raises `min_core`).
+- **Manifest contract 1 (3.1)**: the optional fields `contract`, `cli`, `runtimes`, `config_schema`, `status`,
+  `doctor`, `reads`, `ui` and `trust`, and the rules `validate_manifest` applies to them ([`MODULES.md`](MODULES.md)). A manifest
+  is signed, so its shape cannot be amended in place: a new field, or a stricter or looser rule, is contract `2`, which
+  a 3.1 node refuses by name. A manifest without `contract` is a 2.1/3.0 manifest and keeps its meaning; a contract-1
+  manifest needs `min_core` 3.1, so a 3.0 node refuses it (as unknown fields). `ui_block.schema.json` is the one
+  definition of the `ui` block, schema `1`.
+- **The `status` envelope and the `doctor` answer**: the JSON shapes in [`MODULES.md`](MODULES.md), and `hive-mind
+  module check` as the way to test them.
 
 ### What is provisional
 
+- **The `ui` widget set and the lint text of `module check`.** The dashboard ignores a widget it does not know; the
+  warnings `module check` prints are a publisher aid and may change.
 - **`GET /v1/` `quota` object's exact keys** beyond `limits`, `used` and `remaining`.
 - **The text of `detail` and `error` strings.** The status code and the machine-readable keys (`limit`,
   `retry_after`, `tip`, `supported`, `field`) are stable; the English is not.

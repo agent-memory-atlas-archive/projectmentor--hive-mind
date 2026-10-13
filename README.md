@@ -9,7 +9,7 @@ agent on every machine can use it too. Local-first, no cloud, no central server.
 
 Website: **[hivemind.projectmentor.org](https://hivemind.projectmentor.org)** ·
 Docs: [`docs/`](docs/) · For developers: [hivemind.projectmentor.org/dev](https://hivemind.projectmentor.org/dev/) ·
-Security: [`SECURITY.md`](SECURITY.md) · Changes: [`CHANGELOG.md`](CHANGELOG.md) · Best practices: [`docs/WORKING_TOGETHER.md`](docs/WORKING_TOGETHER.md) · Current agent contract: **3.0** (`hv version`)
+Security: [`SECURITY.md`](SECURITY.md) · Changes: [`CHANGELOG.md`](CHANGELOG.md) · Best practices: [`docs/WORKING_TOGETHER.md`](docs/WORKING_TOGETHER.md) · Current agent contract: **3.1** (`hv version`)
 
 <p align="center">
   <a href="https://hivemind.projectmentor.org/dev/#dashboard">
@@ -176,15 +176,16 @@ wsl --shutdown
 ./hv decide --revoke h:7c01d2e9aa --rationale "The Friday ship slipped"
 hive-mind unforget h:9a2b3c4d5e --reason "That forget was a mistake" # owner only
 ./hv stats
-./hv dash            # open the read-only web dashboard (facts, decisions, peers) in your browser
+./hv dash            # open the read-only web dashboard (the hdash module: facts, decisions, peers) in your browser
 ./hv doctor          # health check: integrity, crypto, sync, authorization, trust drift, agent hooks, sync-bind, daemon-code, peer-address, forget-authz (--fix self-heals)
 ./hv sync now        # manual sync to all peers
 ```
 
 The **dashboard** (`hv dash`) is a read-only web view of your hive: an overview, the corpus (facts
 and decisions, searchable, filterable by tag, sortable by confidence, importance, utility, or
-recency), your devices and their health, and telemetry. It's served by the sync daemon at
-`http://127.0.0.1:9876/`, so open it on a device that runs HiveMind — including an Android phone
+recency), your devices and their health, and telemetry. Since 3.1 it is the
+[`hdash` module](https://github.com/projectmentor/hive-mind-dash), served at
+`http://127.0.0.1:9896/`, so open it on a device that runs HiveMind — including an Android phone
 running it in Termux. To look at another device, pick it in the dashboard: your own daemon fetches
 that device's data with a signed request. Nothing is exposed to the public internet.
 

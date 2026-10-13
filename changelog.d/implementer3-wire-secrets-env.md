@@ -1,1 +1,0 @@
-- `hv wire` no longer passes a credential to a shell command line, and credential names are validated; `hive-mind module config` takes a secret value from stdin, a file or a prompt instead of argv, and masks it in `list`.

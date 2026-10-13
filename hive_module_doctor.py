@@ -15,6 +15,10 @@ degraded, not hostile. A record in `.modules.json` that is not an object is repo
 was stopped on purpose: it is reported and left alone, and a running unit that is only not enabled is enabled,
 never restarted. With no user systemd manager `fix` touches no unit and says so. `fix` acts only on a module whose
 manifest verifies, never re-admits a device, and never touches governance.
+
+The module's own `doctor` (3.1, contract 1) runs here, once per `hv doctor`, for a module whose manifest verifies and
+is signed by the pinned publisher: its results join the `modules:<name>` line and are cached. `fix` never runs it, and
+never reads its output as an action (`fix_hint` is text).
 """
 
 import json
@@ -164,7 +168,7 @@ def _hooks(moddir, manifest):
     return out
 
 
-def _config(moddir, manifest):
+def _config(moddir, manifest, gov=None, node_id=None):
     try:
         cfg = json.loads((moddir / "config").read_text())
     except (OSError, ValueError):
@@ -178,7 +182,40 @@ def _config(moddir, manifest):
     bad = sorted(k for k, v in cfg.items() if not isinstance(v, str) or len(v) > vocabulary.MODULE_VALUE_MAX)
     if bad:
         out.append(("warn", f"config values must be strings of at most {vocabulary.MODULE_VALUE_MAX}: {', '.join(bad)}"))
+    schema = manifest.get("config_schema")
+    if schema is not None and gov is not None:      # 3.1: values against the schema (key and rule only: never a value)
+        fleet, mine = hive_modules.fleet_layers(gov, manifest["name"], node_id)
+        errors, warnings = hive_modules.config_problems(schema, cfg, fleet, mine)
+        out += [("warn", f"config: {m}") for m in errors + warnings]
     return out
+
+
+def _runtimes(rec, manifest):
+    """Each runtime the manifest declares must resolve on the PATH the module's unit and launcher get."""
+    names = manifest.get("runtimes") or []
+    if not names:
+        return []
+    path = hive_modules.recorded_path(rec)
+    if path is None:
+        return []
+    dirs = [d for d in path.split(":") if d]
+    return [("warn", f"runtime {n} is not on the module's PATH (`hive-mind module runtime {manifest['name']} {n} <dir>` "
+                     f"tells the core where it lives)")
+            for n in names if not any(hive_modules.safe_dir(d) and hive_modules._program_in(d, n) for d in dirs)]
+
+
+def doctor_mode():
+    """`HIVE_DOCTOR_MODE` for a module's doctor: what the caller of `hv doctor` set (the timer sets `timer`), else manual."""
+    mode = os.environ.get("HIVE_DOCTOR_MODE")
+    return mode if mode in hive_modules.DOCTOR_MODES else "manual"
+
+
+def _own_doctor(hv, name, rec, manifest, key_dir):
+    """Run the module's own doctor and cache what it said. Its results are all warns or worse when it misbehaves."""
+    mode = doctor_mode()
+    results = hive_modules.run_doctor(name, rec, manifest, key_dir, mode)
+    hive_modules.write_doctor_cache(hv.HIVE_HOME, name, mode, manifest["version"], results)
+    return results
 
 
 def _quota(hv, rec, dev, lifetime, now):
@@ -195,6 +232,10 @@ def _module(hv, gov, name, rec, entries, listener, now):
         return {"name": f"modules:{name}", "status": "fail",
                 "detail": f"its {hive_modules.STATE_FILE} record is not an object; `hive-mind module remove {name}` "
                           f"cannot reach it: remove the record and re-add the module"}
+    if hive_modules.is_disabled(rec):
+        return {"name": f"modules:{name}", "status": "fail",
+                "detail": f"disabled-incompatible: {rec['disabled'].get('reason')}. Its units, hooks and command are off. "
+                          f"Once a version that admits this core is published: `hive-mind module update {name}`"}
     problems, moddir, dev = [], hive_modules.modules_dir() / name, rec.get("device_id")
     key_dir = Path(hv.KEY_DIR) / "modules" / name
     manifest = None
@@ -215,7 +256,15 @@ def _module(hv, gov, name, rec, entries, listener, now):
     if manifest is not None and manifest["name"] == name:
         problems += _units(name, manifest, key_dir)
         problems += _hooks(moddir, manifest)
-        problems += _config(moddir, manifest)
+        problems += _config(moddir, manifest, gov, hv.NODE_ID)
+    if manifest is not None and manifest["name"] == name:
+        problems += _runtimes(rec, manifest)
+    ran = None
+    if (manifest is not None and manifest["name"] == name and manifest["publisher"] == rec.get("publisher")
+            and manifest.get("doctor")):                    # module code runs only for a manifest the pinned publisher signed
+        ran = _own_doctor(hv, name, rec, manifest, key_dir)
+        problems += [(r["level"], f"{r['check']}: {r['message']}" + (f" ({r['fix_hint']})" if r.get("fix_hint") else ""))
+                     for r in ran if r["level"] != "ok"]
     if not listener[0]:
         problems.append(("warn", f"the module API is not listening on 127.0.0.1:{listener[1]} (the sync daemon serves it)"))
     used = None
@@ -227,7 +276,8 @@ def _module(hv, gov, name, rec, entries, listener, now):
         detail = "; ".join(msg for _s, msg in problems)
     else:
         detail = (f"{rec.get('version')} signed by the pinned publisher, device admitted, "
-                  + (f"quota {used['per_hour']}/h {used['per_day']}/d {used['lifetime']} total" if used else ""))
+                  + (f"quota {used['per_hour']}/h {used['per_day']}/d {used['lifetime']} total" if used else "")
+                  + (f"; its doctor: {len(ran)} ok" if ran else ""))
     return {"name": f"modules:{name}", "status": status, "detail": detail}
 
 
@@ -287,7 +337,7 @@ def fix(hv, dry=False, now=None):
     lines, plan, no_manager = [], [], False
     manager = None                                              # detected once, on the first module with units
     for name, rec in sorted(state.items()):
-        if not isinstance(rec, dict) or _device(gov, name, rec.get("device_id")):
+        if not isinstance(rec, dict) or hive_modules.is_disabled(rec) or _device(gov, name, rec.get("device_id")):
             continue
         try:
             manifest = hive_modules.check_tree(hive_modules.modules_dir() / name, hv.CONTRACT_VERSION,

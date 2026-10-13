@@ -19,6 +19,7 @@ import base64          # noqa: F401  (the moved bodies use the library's names; 
 import os              # noqa: F401
 
 import ownerkey        # the one place the seed is read and an owner signature is produced
+from hivemind.crypto import signer as _sigseam   # the seam: every signature below is `signer.sign(bytes)`
 
 
 # ---- owner-key material: seed, passphrase, stash, signature ------------------------------------------
@@ -174,7 +175,64 @@ def _stash_owner_key(seed):
         return ownerkey.stash_sealed(OWNER_SEALED_PATH, stash_dir)
     return ownerkey.stash(seed, stash_dir)
 
-def _sign_governance_payload(payload, owner_seed, owner_pub):
+def _agent_status():
+    """The unlock agent's `status` if one is running for this hive home AND holds the governance owner's key, else
+    None. A public-key check: it prompts for nothing. Never raises."""
+    try:
+        import owner_agent
+        st = owner_agent.Client(owner_agent.socket_path(HIVE_HOME)).status()
+        owner = _governance_state(merkle.read_all_entries(JOURNAL_DIR)).get("owner_pub")
+        return st if owner and st.get("public_key") == owner else None
+    except Exception:
+        return None
+
+
+def _owner_signer():
+    """The owner's signer if this device holds the owner key, else None. With the seed already unlocked in this
+    process it signs with that. Otherwise, if the unlock agent (`hive-mind owner unlock`) holds the governance owner's
+    key, a `ChainSigner`: the agent first, and on a refusal or an unreachable agent one passphrase prompt and a
+    `FileSigner`, saying why. Else unlocks like `_owner_seed` (which it wraps); the seed goes no further than the
+    signer, so a caller holds `sign(bytes)` and never the seed."""
+    if _UNLOCKED_SEED is None and _owner_key_exists():
+        st = _agent_status()
+        if st is not None:
+            import owner_agent
+            return owner_agent.ChainSigner(owner_agent.Client(owner_agent.socket_path(HIVE_HOME)),
+                                           base64.b64decode(st["public_key"]),
+                                           lambda: _sigseam.from_seed(_owner_seed()))
+    return _sigseam.from_seed(_owner_seed())
+
+
+def _owner_gate(acts=()):
+    """The gate of a command that makes only acts the agent can sign (`module add|remove|quota`). Passes WITHOUT a
+    prompt only when the agent is reachable, holds the governance owner's key, and would sign every act in `acts`
+    ((action, arg) pairs, see `owner_agent.gate_ok`) with margin; otherwise it is `_owner_seed()` exactly as before,
+    so the command is either covered by the agent for its whole run or unlocks up front, before it fetches or writes.
+    Returns whether the owner key is usable."""
+    if _UNLOCKED_SEED is None:
+        st = _agent_status()
+        if st is not None:
+            import owner_agent
+            if owner_agent.gate_ok(st, list(acts)):
+                return True
+    return _owner_seed() is not None
+
+
+def _owner_usable_quietly(acts=()):
+    """Whether `_owner_gate(acts)` would pass without asking anything: the key is already open in this process, is not
+    sealed, has its passphrase in the environment, or the unlock agent covers every act in `acts`. Opens nothing."""
+    if _UNLOCKED_SEED is not None or not _is_file(OWNER_SEALED_PATH):
+        return True
+    if os.environ.get(_KEY_PASSPHRASE_ENV) is not None:
+        return True
+    st = _agent_status()
+    if st is None:
+        return False
+    import owner_agent
+    return owner_agent.gate_ok(st, list(acts))
+
+
+def _sign_governance_payload(payload, owner_signer):
     """Attach `owner_pub` then `owner_sig` (the owner's signature over the payload sans owner_sig).
     This authorizes the governance ACTION independently of which device appends the entry.
 
@@ -182,7 +240,7 @@ def _sign_governance_payload(payload, owner_seed, owner_pub):
     function the split makes unreachable from `hv`. `_verify_governance` below deliberately does NOT
     move: the projection must keep verifying owner signatures on every node, including agent nodes that
     can never produce one."""
-    return ownerkey.sign_governance(payload, owner_seed, owner_pub)
+    return ownerkey.sign_governance(payload, owner_signer)
 
 
 # ---- the owner steps of data-plane commands -------------------------------------------------------------
@@ -226,9 +284,9 @@ def _link_payload(kind, from_ref, to_ref, source, data=None, channel=None):
     `hv` the same verbs are device-signed only — using owner authority is an explicit act, typing
     `hive-mind`."""
     lp = _data_plane_link_payload(kind, from_ref, to_ref, source, data=data, channel=channel)
-    seed = _owner_seed() if source == "manual" else None
-    if seed is not None and _ed25519 is not None:
-        lp = _sign_governance_payload(lp, seed, _ed25519.pub_from_seed(seed))
+    sg = _owner_signer() if source == "manual" else None
+    if sg is not None:
+        lp = _sign_governance_payload(lp, sg)
     return lp
 
 
@@ -240,14 +298,14 @@ def _owner_forget(ref, reason):
     # require the owner key and sign the retract, so a bare `--owner` source tag can no longer
     # forge governance. Before any owner exists, the legacy unsigned forget still works.
     gov0 = _governance_state(merkle.read_all_entries(JOURNAL_DIR))
-    owner_seed = _owner_seed()
-    if gov0["owner_id"] and owner_seed is None:
+    sg = _owner_signer()
+    if gov0["owner_id"] and sg is None:
         print("Owner-forget now requires the owner key (an owner is established). "
               "Run this on the owner machine.")
         return None
     payload = {"retracts_ref": ref, "reason": reason or "", "source": "owner:owner/owner"}
-    if owner_seed is not None:
-        payload = _sign_governance_payload(payload, owner_seed, _ed25519.pub_from_seed(owner_seed))
+    if sg is not None:
+        payload = _sign_governance_payload(payload, sg)
     return append_journal("retract", payload)
 
 
@@ -280,12 +338,12 @@ def unforget(args):
     content = row["content"]
     entries0 = merkle.read_all_entries(JOURNAL_DIR)
     gov0 = _governance_state(entries0)
-    owner_seed = _owner_seed()
-    if not gov0["owner_id"] or owner_seed is None or _ed25519 is None:
+    sg = _owner_signer()
+    if not gov0["owner_id"] or sg is None:
         print("unforget: needs the owner key of an established owner. Run it on the owner machine.",
               file=sys.stderr)
         sys.exit(1)
-    if _owner_id_for_pub(_ed25519.pub_from_seed(owner_seed)) != gov0["owner_id"]:
+    if _owner_id_for_pub(sg.public_key()) != gov0["owner_id"]:
         print("unforget: the owner key on this device is not the hive's current owner; the projection "
               "would ignore its signature.", file=sys.stderr)
         sys.exit(1)
@@ -296,7 +354,7 @@ def unforget(args):
         print(f"unforget: fact {sid} is not forgotten; nothing written.", file=sys.stderr)
         sys.exit(1)
     payload = {"unretracts_ref": ref, "reason": args.reason, "source": "owner:owner/owner"}
-    payload = _sign_governance_payload(payload, owner_seed, _ed25519.pub_from_seed(owner_seed))
+    payload = _sign_governance_payload(payload, sg)
     uentry = append_journal("retract", payload)
     try:
         conn = get_conn()
@@ -321,9 +379,9 @@ def _authorize_content_payload(payload):
     no-op without the owner key: a fertile-policy write is authorized by device admission and needs no
     owner_sig. For capsules the owner_sig is NOT part of the AAD (`alg|hive_id|name|version`), so it
     never affects sealing/opening. Mutates and returns `payload`."""
-    seed = _owner_seed()
-    if seed is not None and _ed25519 is not None:
-        return _sign_governance_payload(payload, seed, _ed25519.pub_from_seed(seed))
+    sg = _owner_signer()
+    if sg is not None:
+        return _sign_governance_payload(payload, sg)
     return payload
 
 
@@ -353,14 +411,13 @@ def _heal_genesis_pin(entries, dry):
 def _append_governance(action_payload):
     """Owner-sign and append a governance entry, then rebuild so confidence reflects it. Requires
     the owner key on this device. Returns the entry, or None if this device isn't the owner."""
-    seed = _owner_seed()
-    if seed is None:
+    sg = _owner_signer()
+    if sg is None:
         print("This device does not hold the owner key — run governance commands on the owner machine.")
         return None
-    pub = _ed25519.pub_from_seed(seed)
     # $HIVE_NOW (when set) dates the entry, so owner-liveness vs. an election basis_ts is drivable
     # deterministically in tests; in production it is unset and the wall clock is used.
-    entry = append_journal("governance", _sign_governance_payload(action_payload, seed, pub),
+    entry = append_journal("governance", _sign_governance_payload(action_payload, sg),
                            timestamp=os.environ.get("HIVE_NOW") or None)
     rebuild_db()
     _es = merkle.read_all_entries(JOURNAL_DIR)
@@ -373,7 +430,7 @@ def _append_governance(action_payload):
 _GENESIS_REISSUE_REASON = "re-issued owner-signed at genesis (#135): it was honoured only by the pre-genesis grandfather"
 
 
-def _close_grandfather_at_genesis(owner_seed, owner_pub, reason=_GENESIS_REISSUE_REASON, hides=None):
+def _close_grandfather_at_genesis(owner_signer, reason=_GENESIS_REISSUE_REASON, hides=None):
     """#135 part (1), contract 1.28: a hive born by `hive-mind owner init` starts CLOSED, so it never depends on
     the pre-genesis grandfather. Called at the end of `owner init` with the genesis `owner` act already
     appended and pinned: re-issue every forget that is in effect ONLY because it precedes genesis as an
@@ -422,7 +479,7 @@ def _close_grandfather_at_genesis(owner_seed, owner_pub, reason=_GENESIS_REISSUE
         for sid, ref in resolved:
             prepared.append((sid, _sign_governance_payload(
                 {"retracts_ref": ref, "source": "owner:owner/owner", "reason": reason},
-                owner_seed, owner_pub)))
+                owner_signer)))
     except Exception as e:
         print(f"  COULD NOT re-issue {len(hides)} pre-genesis forget(s): {e}")
         print("    NOTHING was written and forget_writers is not recorded. 3.0 does not honour an unsigned")
@@ -502,11 +559,11 @@ def _heal_forget_authz(entries, dry):
         print("  Nothing was written. To let a fact back instead, or to decide them one by one:")
         _grandfather_remedy([f["sid"] for f in facts])
         return
-    seed = _owner_seed()                           # unlocked once, after the answer, for the whole routine
-    if seed is None:
+    sg = _owner_signer()                           # unlocked once, after the answer, for the whole routine
+    if sg is None:
         print("  This device does not hold the owner key: nothing was written.")
         return
-    _close_grandfather_at_genesis(seed, _ed25519.pub_from_seed(seed), reason=_FIX_REISSUE_REASON,
+    _close_grandfather_at_genesis(sg, reason=_FIX_REISSUE_REASON,
                                   hides=_forget_migration(entries, gov)["hides"])
 
 
@@ -570,11 +627,11 @@ def migrate_cmd(args):
         print("  Nothing was written. To let a fact back instead, or to decide them one by one:")
         _grandfather_remedy([f["sid"] for f in facts])
         return 1
-    seed = _owner_seed()                           # unlocked once, after the answer, for the whole routine
-    if seed is None:
+    sg = _owner_signer()                           # unlocked once, after the answer, for the whole routine
+    if sg is None:
         print("  This device does not hold the owner key: nothing was written.")
         return 1
-    _close_grandfather_at_genesis(seed, _ed25519.pub_from_seed(seed), reason=_MIGRATE_REISSUE_REASON,
+    _close_grandfather_at_genesis(sg, reason=_MIGRATE_REISSUE_REASON,
                                   hides=m["hides"])
     entries = merkle.read_all_entries(JOURNAL_DIR)
     after = _forget_migration(entries, _governance_state(entries))
@@ -985,7 +1042,7 @@ def owner_cmd(args):
         # that scopes sync, so two hives on one tailnet never merge their journals. Random (no key).
         hive_id = "h1:" + os.urandom(8).hex()
         genesis = append_journal("governance", _sign_governance_payload(
-            {"action": "owner", "owner_id": oid, "hive_id": hive_id}, seed, pub),
+            {"action": "owner", "owner_id": oid, "hive_id": hive_id}, _sigseam.FileSigner(seed)),
             timestamp=os.environ.get("HIVE_NOW") or None)
         # Pin the declaration we just made. Without this the node would accept a rival `owner` act
         # with an earlier timestamp and project IT as the owner (hive-mind-private #14). --force is a
@@ -1008,7 +1065,7 @@ def owner_cmd(args):
         # #135 part (1), 1.28: leave this hive closed. Re-issue every forget kept in effect only by the
         # pre-genesis grandfather as an owner-signed one, THEN set forget_writers=owner. --force (a
         # deliberate re-genesis) gets the same treatment: skipping it would silently reopen those facts.
-        _close_grandfather_at_genesis(seed, pub)
+        _close_grandfather_at_genesis(_sigseam.FileSigner(seed))
         print("  Admit your devices next: `hive-mind group admit <device_id> --principal <name>`")
 
 
@@ -1175,6 +1232,9 @@ def _config_set(key, value):
     if vocabulary.split_module_name(key):      # 2.1 M3: a module's fleet-wide config, `x-<module>:<key>`, a string
         if not isinstance(value, str) or len(value) > vocabulary.MODULE_VALUE_MAX:
             print(f"bad value for {key}: a string of at most {vocabulary.MODULE_VALUE_MAX} characters")
+            return
+        if _governance_state(merkle.read_all_entries(JOURNAL_DIR)).get("module_config", {}).get(key) == value:
+            print(f"{key} is already {value!r}: nothing to sign")
             return
         if _append_governance({"action": "set-config", "key": key, "value": value}):
             print(f"set {key} = {value}")

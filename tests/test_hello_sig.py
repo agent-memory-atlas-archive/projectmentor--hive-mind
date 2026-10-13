@@ -48,6 +48,7 @@ import sync_common  # noqa: E402
 import hive_sync_daemon as d  # noqa: E402
 import sync_client as sc  # noqa: E402
 import _planes  # noqa: E402  (which plane runs a command, 2.0)
+from _fs import FileSigner  # noqa: E402
 
 URL = "http://100.64.0.2:9876"
 ADDR = "100.64.0.2:9876"
@@ -79,7 +80,7 @@ def _body(dev, addr=ADDR, hive="h1:aaaa", **extra):
 
 def _signed(seed, body, nonce, path="/sync/hello"):
     body = dict(body)
-    body["hello_sig"] = sync_common.sign_hello(body, nonce, path, seed, body["node_id"])
+    body["hello_sig"] = sync_common.sign_hello(body, nonce, path, FileSigner(seed), body["node_id"])
     assert body["hello_sig"]
     return json.loads(json.dumps(body))            # what a caller parses off the wire
 
@@ -292,7 +293,7 @@ def test_unsigned_and_malformed_answers():
 def test_the_responder_signs_only_for_a_well_formed_nonce_and_a_device_identity():
     seed = os.urandom(32)
     dev = _did(seed)
-    sign = lambda nonce, s=seed, node=dev: sync_common.sign_hello(_body(dev), nonce, "/sync/hello", s, node)  # noqa: E731
+    sign = lambda nonce, s=seed, node=dev: sync_common.sign_hello(_body(dev), nonce, "/sync/hello", FileSigner(s) if s else None, node)  # noqa: E731
     assert sign(_nonce()) and sign("A" * 32) and sign("a" * 64)
     for nonce in (None, "", "a" * 31, "a" * 65, "g" * 32, "fixed-nonce-" + "a" * 20, 123):
         assert sign(nonce) is None, nonce
@@ -468,7 +469,7 @@ def _stand_in_body(seed, port, addr=None, protocol=3):
 
 
 def _sign_into(body, seed, nonce, path):
-    sig = sync_common.sign_hello(body, nonce, path, seed, _did(seed))
+    sig = sync_common.sign_hello(body, nonce, path, FileSigner(seed), _did(seed))
     if sig:
         body["hello_sig"] = sig
     return body

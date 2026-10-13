@@ -22,6 +22,7 @@ PROJECT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT))
 import merkle  # noqa: E402
 import _planes  # noqa: E402  (which plane runs a command, 2.0)
+from _fs import FileSigner  # noqa: E402
 
 
 def _run(home, *args):
@@ -60,7 +61,7 @@ def _foreign_device(hv):
 def _signed(hv, seed, pub, nid, seq, etype, payload):
     e = {"node_id": nid, "seq": seq, "type": etype,
          "timestamp": f"2026-05-{seq:02d}T00:00:00Z", "payload": payload, "prev_hash": "sha256:genesis"}
-    return hv._sign_entry(e, seed, pub)
+    return hv._sign_entry(e, FileSigner(seed))
 
 
 def test_join_request_accepted_but_grants_no_authority(tmp_path, monkeypatch):

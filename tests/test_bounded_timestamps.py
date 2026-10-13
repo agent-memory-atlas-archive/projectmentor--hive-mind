@@ -25,6 +25,7 @@ import pytest
 PROJECT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT / "tests"))
 from test_links import _loadhv, _owner_key, _device, _gov, _entry, _fact, _project  # noqa: E402
+from _source import copy_hv, hv_sources  # noqa: E402
 from test_links import _planes  # noqa: E402
 
 DAY = "2026-01-01T"
@@ -691,13 +692,23 @@ def test_an_unadmitted_device_still_cannot_land_content(tmp_path, monkeypatch):
 
 
 def _mutated_hv(tmp_path, monkeypatch, old, new):
-    src = (PROJECT / "hv").read_text()
-    assert src.count(old) == 1, old
+    # `old` is in `hv` or in one of its parts (3.1): the mutated file goes into a copy of the tree, and the copy's
+    # `hv` runs, so its loader runs the mutated part. A mutation in `hv` itself keeps `__file__` at the real one.
+    hits = [(p, b) for p, b in hv_sources() if b.decode().count(old)]
+    assert len(hits) == 1 and hits[0][1].decode().count(old) == 1, old
+    path, text = hits[0][0], hits[0][1].decode()
     monkeypatch.setenv("HIVE_HOME", str(tmp_path))
     monkeypatch.setenv("HIVE_NOW", "2026-01-10T00:00:00Z")
     m = types.ModuleType("hvmod_mutant")
-    m.__file__ = str(PROJECT / "hv")
-    exec(compile(src.replace(old, new), str(PROJECT / "hv"), "exec"), m.__dict__)
+    if path.name == "hv":
+        m.__file__ = str(PROJECT / "hv")
+        exec(compile(text.replace(old, new), str(PROJECT / "hv"), "exec"), m.__dict__)
+    else:
+        root = tmp_path / "hv-mutant"
+        copy_hv(root)
+        (root / path.relative_to(PROJECT)).write_text(text.replace(old, new))
+        m.__file__ = str(root / "hv")
+        exec(compile(hv_sources(root)[0][1], m.__file__, "exec"), m.__dict__)
     _planes.install_control_plane(m)
     return m
 

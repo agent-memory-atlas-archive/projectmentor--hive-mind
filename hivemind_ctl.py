@@ -93,6 +93,8 @@ def _is_control_plane(argv):
     head = argv[0]
     if head == "module":                         # 2.1 M1: the module lifecycle, which has its own parser
         return True
+    if argv[:1] == ["owner"] and argv[1:2] in (["unlock"], ["lock"], ["status"]):   # 3.1 #295: the unlock agent
+        return True
     if tuple(argv[:1]) in {("unforget",), ("admit",)}:
         return True
     # The owner-signed form of the link verbs (decision h:34cc1dbcd3): through `hv` their links are
@@ -123,6 +125,13 @@ def main(argv=None):
         print(f"hive-mind: `{' '.join(argv)}` is not a control-plane command.\n"
               f"  The agent data plane is `hv`; try `hv {' '.join(argv)}`.", file=sys.stderr)
         return 2
+    if argv[:1] == ["owner"] and argv[1:2] in (["unlock"], ["lock"], ["status"]):
+        import owner_agent
+        try:
+            return owner_agent.COMMANDS[argv[1]](hv(), argv[2:])
+        except owner_agent.AgentError as e:
+            print(f"hive-mind: {e}", file=sys.stderr)
+            return 1
     if argv[0] == "module":
         import hive_modules
         try:

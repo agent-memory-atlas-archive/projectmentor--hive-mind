@@ -78,6 +78,7 @@ RUN
 #!$sh
 # hive-mind self-heal — runit has no timers, so loop hv doctor --fix every 15 min.
 export HIVE_HOME="$hive_dir"
+export HIVE_DOCTOR_MODE=timer
 cd "$hive_dir" || exit 1
 while :; do
   "$py" "$hive_dir/hv" doctor --fix >> "$_RUNIT_LOG_DIR/hive-doctor.log" 2>&1

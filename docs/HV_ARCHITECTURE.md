@@ -27,6 +27,7 @@ an explicit act: typing `hive-mind`.
 | `hivemind_ctl.py` | control | The `hive-mind` entry point. Loads `hv` as a library, installs the owner steps, routes only control-plane commands, and refuses the rest with the `hv` form to type. |
 | `hivemind_owner.py` | control | Every owner step: reading the seed, producing an `owner_sig`, writing owner-key material, and the commands that exist only to do those things (`owner init`, `group admit`, `config set`, `unforget`, …). |
 | `ownerkey.py` | control | The one module that reads the owner seed and produces a governance signature. It holds no path constants: every caller passes paths in. |
+| `hivemind/crypto/signer.py` | both (library) | The signer seam (3.1): the one place a private key becomes a signature. Entry, owner-governance, Hive-Auth and hello signing all call `Signer.sign(bytes)`; today's one backend, `FileSigner`, signs with the seed read from the key file. Imports only `ed25519`, so `hv` uses it without reaching `ownerkey`. Signing only: verification stays fixed in core, and capsule decryption and module signing do not go through it. |
 | `commandmap.py` | both (table) | Which commands `hive-mind` routes (`CONTROL_PLANE`), what stays on `hv` (`STAYS`), and the policy-refusal text (`FLAG_CONDITIONAL`). No secrets, no imports. |
 | `vocabulary.py` | both (table) | The reserved core names; `docs/NAMESPACES.md` is generated from it. No imports. |
 | `hive_sync_daemon.py`, `sync_client.py`, `sync_common.py` | data | The sync daemon and client. They load `hv` as a library (`sync_common.load_hv`) and never load the control plane. |
@@ -122,9 +123,42 @@ other checks were run by hand when each landed, and are recorded on its pull req
 - **Extensions talk to the core from outside.** This is the internal layout of the core, not a plugin
   design: a module never imports the core's internals.
 
-## Still one file
+## The parts (3.1)
 
-`hv` stays monolithic for the reasons it always did: it is a signed artifact that runs on the Python 3
+`hv` is split into ordered **part files**, `hivemind/parts/NN_<name>.py`, that `hv` executes into its own single
+namespace (3.1 PRs 1 and 2; plan in the private design notes, "3.1 plan" section 2). Nothing a user or a node can observe
+changes: one runtime namespace, the same names, the same `__file__`. A part is not a module and cannot be imported.
+
+- **`PARTS` in `hv` is the whole list**: a tuple of package-relative paths. The loader (a `for` over it, marked
+  `# --- part loader (3.1)` in `hv`) reads each file as bytes, compiles it under its own path (so a traceback names
+  the part) and executes it into `hv`'s globals. There is no glob, no configuration path and nothing under
+  `HIVE_HOME`; paths resolve through the real path of `hv`, so an installed `hv` runs the installed parts and a symlinked
+  `hv` works. It is the only `exec` in the tree, and a test says so.
+- **Guards read what runs.** The tests that scan `hv` for a property (S2's import graph, `owner_sig` writes, the seed
+  reader, the sealed-key opener, the control-plane and module-management imports) read `hv` plus each part named in
+  `PARTS`, through `tests/_source.py`; none reads `hv` alone. `tests/test_hv_parts.py` plants a violation in a part and
+  shows each of those guards failing.
+- **The parts, in load order** (the order in `PARTS`; each is under 1,500 lines):
+  `01_identity` (key directories, device and node ids, owner seal/unseal), `02_store_journal` (schema, FTS, journal
+  signing and append, timestamp bounds, quarantine, arrivals, feed), `03_ingest` (`append_foreign_entries`, the
+  first-pull door), `04_projection` (persistence, confidence, governance state, genesis pin, content evidence),
+  `05_trust_validation` (trust velocity, salience, entity verdicts, module policy, payload validators),
+  `06_links_forget` (links, refs, supersede and resolve, forget authorisation), `07_data_commands` (`remember`,
+  `retract`, `search`, `propose`, `decide`), `08_read_api` (`api_*`, `dash`, the probe and fleet-contract block),
+  `09_entity_store_ops` (`entity`, `rebuild`, `stats`, `merkle`, `sync`), `10_agent_loop` (nudge, audit, whoami,
+  digest), `11_release_node` (`version`, `verify`, identity commands, daemon management, `wire`), `12_capsules_keys`
+  (`capsule`, key-file hygiene), `13_doctor_status` (`_doctor_status` and helpers), `14_peers` (peer candidates,
+  address proving), `15_doctor_control_join` (`doctor`, `owner`, `group`, `admit`, `migrate`, `config`, `peers`,
+  `discover`, `join`), `17_cli` (`build_parser`, dispatch). `hv` keeps the header, the loader and the
+  `if __name__ == "__main__":` footer.
+- **What guards the split**: the move PRs were checked against their base byte for byte; that gate is retired, since
+  there is no old `hv` left to compare with. What stays are the structural checks (list equals directory, size cap, the
+  namespace is the old one plus `PARTS`, every code object comes from `hv` or a listed part, undefined names via
+  pyflakes).
+
+## Still one namespace
+
+`hv` stays one runtime namespace for the reasons it always did: it is a signed artifact that runs on the Python 3
 standard library alone, is updated by `git pull`, and has one dispatch surface. The split removed the
 largest reason to break it up, owner authority, by moving that out. The seams that remain, in order of
 safety, if the navigation cost ever outweighs that simplicity:

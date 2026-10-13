@@ -28,6 +28,7 @@ BIN_DIR="${BIN_DIR:-$HOME/.local/bin}"
 UNIT_FILE="${UNIT_FILE:-$HOME/.config/systemd/user/$SERVICE_NAME.service}"
 DOCTOR_TIMER="${DOCTOR_TIMER:-$HOME/.config/systemd/user/hive-doctor.timer}"
 DOCTOR_SVC="${DOCTOR_SVC:-$HOME/.config/systemd/user/hive-doctor.service}"
+DOCTOR_BOOT="${DOCTOR_BOOT:-$HOME/.config/systemd/user/hive-doctor-boot.service}"
 SETTINGS="${SETTINGS:-$HOME/.claude/settings.json}"
 
 # Reusable identity-preservation primitive (lives in the repo — source before we delete it).
@@ -95,13 +96,22 @@ else
   done
   systemctl --user disable --now hive-doctor.timer 2>/dev/null || true
   systemctl --user stop hive-doctor.service        2>/dev/null || true
-  rm -f "$DOCTOR_TIMER" "$DOCTOR_SVC"
+  systemctl --user disable --now hive-doctor-boot.service 2>/dev/null || true
+  rm -f "$DOCTOR_TIMER" "$DOCTOR_SVC" "$DOCTOR_BOOT"
+  # WSL2: the Windows logon task the installer created (same plain-name rule as when it was created)
+  if grep -qi microsoft "${HIVE_PROC_VERSION:-/proc/version}" 2>/dev/null && command -v schtasks.exe >/dev/null 2>&1; then
+    case "${WSL_DISTRO_NAME:-}" in
+      ""|*[!A-Za-z0-9._-]*) ;;
+      *) schtasks.exe /Delete /F /TN "HiveMind-WSL-$WSL_DISTRO_NAME" >/dev/null 2>&1 || true ;;
+    esac
+  fi
   systemctl --user stop "$SERVICE_NAME"        2>/dev/null || true
   systemctl --user disable "$SERVICE_NAME"     2>/dev/null || true
   rm -f "$UNIT_FILE"
   systemctl --user daemon-reload               2>/dev/null || true
   systemctl --user reset-failed "$SERVICE_NAME" 2>/dev/null || true
   systemctl --user reset-failed hive-doctor.service 2>/dev/null || true
+  systemctl --user reset-failed hive-doctor-boot.service 2>/dev/null || true
   if [ -z "${HIVE_UNINSTALL_TEST:-}" ]; then
     pkill -f "hive_sync_daemon.py" 2>/dev/null || true    # any stray/non-systemd daemon
     if crontab -l 2>/dev/null | grep -q "hive_sync_daemon.py"; then
@@ -141,6 +151,9 @@ if not hooks:
 json.dump(d, open(path, "w"), indent=2)
 PY
 fi
+# auto-mode operator profile: remove only our marked lines (user autoMode entries stay)
+[ -f "$HIVE_DIR/integrations/claude-code/automode.py" ] && \
+  python3 "$HIVE_DIR/integrations/claude-code/automode.py" uninstall --claude-dir "$(dirname "$SETTINGS")" >/dev/null 2>&1 || true
 rm -rf "$HOME/.claude/skills/hive-memory" 2>/dev/null || true
 rm -f /tmp/hive-sync.log 2>/dev/null || true
 rm -rf "$HOME/.hive-mind/logs" 2>/dev/null || true   # Android/Termux daemon logs

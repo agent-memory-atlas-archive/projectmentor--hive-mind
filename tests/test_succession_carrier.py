@@ -18,6 +18,7 @@ PROJECT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT / "tests"))
 from test_links import _loadhv, _owner_key, _device, _gov, _entry, _fact  # noqa: E402
 from test_unforget import _act  # noqa: E402
+from _fs import FileSigner  # noqa: E402
 
 DAY = "2026-01-01T"
 
@@ -134,9 +135,9 @@ def test_a_capsule_put_from_a_fresh_device_is_not_honoured(tmp_path, monkeypatch
     p = {"name": "secret", "version": 1, "alg": "x", "recipients": {}}
     gov = _state(hv, base + [real])
     pos = (ts(5), f["id"], 1)
-    assert hv._is_authorized_writer(f["id"], pos, hv._sign_governance_payload(p, o1[0], o1[1]), gov, "owner") is False
+    assert hv._is_authorized_writer(f["id"], pos, hv._sign_governance_payload(p, FileSigner(o1[0])), gov, "owner") is False
     pos = (ts(5), d0["id"], 1)
-    assert hv._is_authorized_writer(d0["id"], pos, hv._sign_governance_payload(p, o1[0], o1[1]), gov, "owner") is True
+    assert hv._is_authorized_writer(d0["id"], pos, hv._sign_governance_payload(p, FileSigner(o1[0])), gov, "owner") is True
 
 
 # --- membership is positional ------------------------------------------------------------------------------------
@@ -218,14 +219,14 @@ def _claim_world(hv, preadmit_c=True):
     if preadmit_c:
         base.append(_gov(hv, {"action": "admit", "device_id": c["id"], "principal": "p1"}, o1[0], o1[1], ts(1, 30), 3))
     nom = _entry(hv, d0, "governance", {"action": "nominate-successor", "successor_owner_pub": _b64(o2)}, ts(8), owner=o1)
-    claim = hv._sign_governance_payload({"action": "claim-succession", "owner_id": o2[2], "owner_pub": _b64(o2)}, o2[0], o2[1])
+    claim = hv._sign_governance_payload({"action": "claim-succession", "owner_id": o2[2], "owner_pub": _b64(o2)}, FileSigner(o2[0]))
     return o1, o2, d0, c, x, base, nom, claim
 
 
 def _carry(hv, dev, payload, at):
     dev["seq"] += 1
     e = {"node_id": dev["id"], "seq": dev["seq"], "type": "governance", "timestamp": at, "payload": payload}
-    return hv._sign_entry(e, dev["seed"], dev["pub"])
+    return hv._sign_entry(e, FileSigner(dev["seed"]))
 
 
 def test_a_claim_from_an_admitted_device_succeeds_and_the_new_owner_acts_from_it(tmp_path, monkeypatch):
@@ -315,7 +316,7 @@ def test_a_capsule_carried_after_the_carriers_revoke_is_not_honoured(tmp_path, m
     o1, d0, d1, f, base, real = _revoked_member(hv)
     p = {"name": "secret", "version": 1, "alg": "x", "recipients": {}}
     gov = _state(hv, base + [real])
-    signed = hv._sign_governance_payload(p, o1[0], o1[1])
+    signed = hv._sign_governance_payload(p, FileSigner(o1[0]))
     assert hv._is_authorized_writer(d1["id"], (ts(3, 30), d1["id"], 1), signed, gov, "owner") is True
     assert hv._is_authorized_writer(d1["id"], (ts(6), d1["id"], 1), signed, gov, "owner") is False
 

@@ -51,20 +51,9 @@ def _loaded_code():
 
 _LOADED = _loaded_code()
 
-# Read-only dashboard SPA, served from the committed dashboard/ dir next to this file. An explicit
-# allowlist (name -> content-type) — NOT arbitrary file serving — so there is no path-traversal
-# surface. The /api/* JSON below is the data layer; both are read-only and reachable wherever the
-# sync port is (the daemon already serves the corpus via /sync/chunk, so this adds no new exposure).
-_DASH_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard")
-_STATIC = {
-    "index.html": "text/html; charset=utf-8",
-    "app.js": "text/javascript; charset=utf-8",
-    "app.css": "text/css; charset=utf-8",
-    "logo.svg": "image/svg+xml",
-    "favicon.svg": "image/svg+xml",
-}
-
-DASHBOARD_CSP = "default-src 'self'"
+# The dashboard page is not served here (3.1): it is the `hdash` module's, which reads the `/api/*` JSON below on
+# loopback or the module API's `/v1`. `/api/*` is the data layer; it is read-only and, as before, loopback-only
+# or signed-peer. `hv dash` forwards to the module and goes in 4.0.
 
 # Sync wire-protocol version. Advertised in /sync/hello and /hive/info so additive handshake
 # changes can be negotiated without a journal-schema break. Bumped to 2 with read-authentication
@@ -89,7 +78,6 @@ _REMOTE_AUTH = frozenset({"/sync/hello", "/sync/chunk"})
 _LOOPBACK_ONLY = frozenset({
     "/api/overview", "/api/search", "/api/tags", "/api/related", "/api/item", "/api/audit", "/api/entities",
     "/api/status", "/api/telemetry", "/api/peers", "/api/daemon",
-    "/", "/index.html", "/dashboard", "/dashboard/", "/logo.svg", "/favicon.svg", "/app.js", "/app.css",
 })
 
 # Serialize journal-mutating ingests so an inbound POST and the periodic
@@ -456,30 +444,10 @@ class Handler(BaseHTTPRequestHandler):
         identity (sync_common.sign_hello), whether or not the caller's own envelope verified. Called only
         from inside do_GET, after _enter took a request slot, so a flood of nonced requests signs at most
         MAX_CONCURRENT_REQUESTS at a time and is rate-limited per address like any other request."""
-        sig = sync_common.sign_hello(body, self.headers.get("Hive-Auth-Nonce"), path, hv._device_seed(), hv.NODE_ID)
+        sig = sync_common.sign_hello(body, self.headers.get("Hive-Auth-Nonce"), path, hv._device_signer(), hv.NODE_ID)
         if sig:
             body["hello_sig"] = sig
         self._send(200, body)
-
-    def _serve_static(self, name):
-        """Serve one allowlisted dashboard asset (no traversal: name must be a literal key)."""
-        ctype = _STATIC.get(name)
-        if not ctype:
-            return self._send(404, {"error": "not found"})
-        try:
-            with open(os.path.join(_DASH_DIR, name), "rb") as f:
-                body = f.read()
-        except OSError:
-            return self._send(404, {"error": "dashboard asset missing"})
-        self.send_response(200)
-        self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("X-Content-Type-Options", "nosniff")
-        if name == "index.html":
-            # The dashboard loads only its own script and stylesheet and runs no inline code.
-            self.send_header("Content-Security-Policy", DASHBOARD_CSP)
-        self.end_headers()
-        self.wfile.write(body)
 
     def _enter(self):
         """Rate-limit + concurrency gate. Returns True if the request may proceed (caller MUST then
@@ -773,10 +741,6 @@ class Handler(BaseHTTPRequestHandler):
             elif u.path == "/api/peers":
                 probe = q.get("probe", ["1"])[0] not in ("0", "false", "no")
                 self._send(200, {"peers": hv.api_peers(probe=probe)})
-            elif u.path in ("/", "/index.html", "/dashboard", "/dashboard/"):
-                self._serve_static("index.html")
-            elif u.path in ("/logo.svg", "/favicon.svg", "/app.js", "/app.css"):
-                self._serve_static(u.path.lstrip("/"))
             else:
                 self._send(404, {"error": "not found"})
         except Exception as e:  # never crash the handler thread

@@ -268,10 +268,10 @@ def test_a_signing_failure_appends_nothing_and_leaves_the_hive_legacy(tmp_path, 
     refs = _preowner(hv, forgotten=["the backup runs at 02:00"])
     real = hv._sign_governance_payload
 
-    def boom(payload, seed, pub):
+    def boom(payload, owner_signer):
         if "retracts_ref" in payload:                                     # the genesis act still signs
             raise RuntimeError("the owner key went away")
-        return real(payload, seed, pub)
+        return real(payload, owner_signer)
 
     monkeypatch.setattr(hv, "_sign_governance_payload", boom)
     before = _journal_bytes(tmp_path)

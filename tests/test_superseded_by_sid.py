@@ -111,8 +111,3 @@ def test_chain_refuses_a_fact(tmp_path):
     assert r.returncode == 1 and "not a decision" in r.stderr
 
 
-def test_dashboard_pill_links_to_the_superseding_entry():
-    html = (PROJECT / "dashboard" / "app.js").read_text()
-    assert "href=${'#'+d.superseded_by_sid}" in html and "SUPERSEDED by ${d.superseded_by_sid}" in html
-    assert "supPill(d)" in html and "supPill(x)" in html and "supEvidence(" in html
-    assert "evidence only, not in effect" in html

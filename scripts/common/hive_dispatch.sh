@@ -89,6 +89,9 @@ if [ -d "$MODULES_DIR" ] && [ ! -L "$MODULES_DIR" ] && [ -f "$STATE" ]; then
     [ -e "$hook" ] || [ -L "$hook" ] || continue
     [ ! -L "$MODULES_DIR/$name" ] && [ ! -L "$MODULES_DIR/$name/hooks" ] || { bus_log hook-skipped "$name"; continue; }
     grep -q "^ \"$name\": {" "$STATE" 2>/dev/null || { bus_log hook-skipped "$name"; continue; }
+    # `hive-mind update` disabled this module (no version admits the core): its hooks do not run
+    awk -v n="\"$name\":" '/^ "/ { cur = ($1 == n) } cur && /^  "disabled":/ { f = 1 } END { exit !f }' "$STATE" 2>/dev/null \
+      && { bus_log hook-skipped "$name"; continue; }
     hook_ok "$hook" || { bus_log hook-skipped "$name"; continue; }
     left=$(( (end_ms - $(now_ms)) / 1000 - 1 ))   # whole seconds, less the 1s kill grace
     [ "$left" -ge 1 ] || { bus_log hook-skipped "$name"; continue; }

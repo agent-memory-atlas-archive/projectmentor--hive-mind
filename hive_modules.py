@@ -31,15 +31,24 @@ stopped and removed on `remove`. Hooks (M4, PR 8) and the doctor checks (M7, PR 
 
 import argparse
 import base64
+import contextlib
+import getpass
 import hashlib
+import io
 import json
 import os
 import re
+import shlex
+import select
 import shutil
+import signal
+import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import time
+import unicodedata
 from pathlib import Path
 
 import ed25519
@@ -49,7 +58,13 @@ MANIFEST, SIGNATURE = "module.json", "module.json.sig"
 STATE_FILE = ".modules.json"
 NOT_SUPPORTED = "module management is not supported on this platform yet (2.1 ships on Linux only)"
 HOOK_EVENTS = ("session-start", "user-prompt", "precompact", "sessionend", "notification", "stop")
-MANIFEST_KEYS = {"name", "version", "min_core", "publisher", "files", "service", "hooks", "config", "quota"}
+BASE_KEYS = {"name", "version", "min_core", "publisher", "files", "service", "hooks", "config", "quota"}
+# Manifest contract 1 (3.1): optional, and only under `contract`. A manifest without `contract` is a 2.1/3.0 manifest.
+CONTRACT_KEYS = ("cli", "runtimes", "config_schema", "status", "doctor", "reads", "ui", "trust")
+MANIFEST_KEYS = BASE_KEYS | {"contract", *CONTRACT_KEYS}
+CONTRACTS = (1,)                                    # the manifest contracts this core knows
+TRUST_TIERS = ("confined", "trusted")                # lowest first; a manifest without `trust` is `trusted`
+CONTRACT_MIN_CORE = {1: (3, 1)}                     # the oldest core a manifest of that contract may name in `min_core`
 QUOTA_KEYS = ("per_hour", "per_day", "entry_bytes", "lifetime")
 QUOTA_DEFAULTS = {"per_hour": 60, "per_day": 500, "entry_bytes": 16 * 1024, "lifetime": 50000}
 MAX_FILES, MAX_FILE_BYTES, MAX_MANIFEST_BYTES = 500, 8 * 1024 * 1024, 256 * 1024
@@ -58,6 +73,14 @@ _HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 
 class ModuleError(Exception):
     """A refusal the operator reads: nothing was installed, minted or signed for it."""
+
+
+class OwnerWait(ModuleError):
+    """The install waits for the owner's admit to reach this node (`module install` exits 3)."""
+
+
+class OwnerLocked(ModuleError):
+    """The owner key is sealed and could not be used without asking (`module install` exits 5)."""
 
 
 # ── places ──────────────────────────────────────────────────────────────────────────────────────────
@@ -135,7 +158,7 @@ def validate_manifest(raw, core_version):
         raise ModuleError("manifest is too large")
     try:
         m = json.loads(raw)
-    except ValueError as e:
+    except (ValueError, RecursionError) as e:
         raise ModuleError(f"manifest is not JSON: {e}")
     if not isinstance(m, dict):
         raise ModuleError("manifest is not an object")
@@ -196,7 +219,321 @@ def validate_manifest(raw, core_version):
         if not isinstance(v, int) or isinstance(v, bool) or v < 0 or v > QUOTA_DEFAULTS[k]:
             raise ModuleError(f"manifest quota {k}={v!r}: a manifest may ask for less than the default "
                               f"({QUOTA_DEFAULTS[k]}), never more; only the owner raises a limit")
+    _validate_contract(m)
     return m
+
+
+# ── manifest contract 1 (3.1) ───────────────────────────────────────────────────────────────────────
+
+MAX_ARGV, MAX_ARG = 64, 1024
+CLI_NAME = re.compile(r"[a-z][a-z0-9-]{1,31}\Z")
+CLI_RESERVED = frozenset({"hv", "hive-mind", "hive-dispatch", "hive-sync", "hive-doctor", "hive-module", "hive-installer",
+                          "hivemind", "module", "modules"})
+RUNTIME_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
+MAX_RUNTIMES = 16
+READ_ROUTES = ("overview", "tags", "related", "audit", "peers", "verify", "node")
+TAILNET_READS = ("peers", "node")                   # carry tailnet addresses
+NODE_LOCAL_READS = ("overview", "peers", "verify")  # carry this node's own state, not only the feed's
+
+
+def _reads_record(manifest):
+    """{"reads": [...]} for the `.modules.json` row of a manifest that declares read routes, else {}: the row of a
+    manifest without `contract` is byte-for-byte what it was. `hive_module_api` serves a route only if it is here."""
+    return {"reads": list(manifest["reads"])} if manifest.get("reads") else {}
+
+
+def signed_trust(manifest):
+    """The tier the publisher signed: `trusted` when the manifest does not say."""
+    return manifest.get("trust", "trusted")
+
+
+def effective_trust(rec):
+    """The tier this node holds a module to: the lower of what the publisher signed and what the operator set locally.
+    A row from before the field existed reads as `trusted`, as a manifest without it does."""
+    signed, local = rec.get("trust", "trusted"), rec.get("trust_local")
+    return local if local in TRUST_TIERS and TRUST_TIERS.index(local) < TRUST_TIERS.index(signed) else signed
+
+
+def _trust_record(manifest):
+    """{"trust": "confined"} for a module signed `confined`, else {}: a `trusted` row is byte-for-byte what it was."""
+    return {"trust": "confined"} if signed_trust(manifest) == "confined" else {}
+
+
+def trust_summary(manifest):
+    """The install-summary line for a manifest's tier. `trusted` is stated loudly: it is the tier of a manifest that
+    says nothing, and it runs with this user's access."""
+    if signed_trust(manifest) == "confined":
+        return "trust: confined (the publisher signed it to run with reduced access)"
+    return "trust: TRUSTED (runs as your user, with your user's access; the publisher did not sign it as confined)"
+
+
+def reads_summary(manifest):
+    """The install-summary line for a manifest's `reads`, or "" when it declares none. Marks what carries tailnet
+    addresses and what is node-local, so the operator sees what the module is being given before it is admitted."""
+    reads = manifest.get("reads") or []
+    if not reads:
+        return ""
+    marks = [r + (" [tailnet addresses]" if r in TAILNET_READS else "") + (" [node-local]" if r in NODE_LOCAL_READS else "")
+             for r in reads]
+    return "reads (/v1, read-only): " + ", ".join(marks)
+CONFIG_TYPES, CONFIG_SCOPES = ("string", "int", "bool", "enum"), ("node", "fleet", "fleet-node")
+CONFIG_SPEC_KEYS = {"type", "default", "scope", "description", "max", "min", "values", "required_at_install",
+                    "secret", "identifying"}
+MAX_SCHEMA_KEYS, MAX_DESCRIPTION, MAX_ENUM_VALUES, MAX_ENUM_VALUE = 128, 400, 64, 80
+_SEGMENT_WORD = re.compile(r"\{[a-z][a-z0-9_]{0,31}\}\Z")
+_INT_TEXT = re.compile(r"-?[0-9]{1,18}\Z")
+UI_SCHEMA_FILE = "ui_block.schema.json"
+UI_SCHEMAS = (1,)                                   # the `ui.schema` versions this core knows
+MAX_UI_BYTES = 64 * 1024
+_PLACEHOLDER = re.compile(r"\{([a-z][a-z0-9_]*)\}")
+
+
+def _is_int(v):
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
+def _has_control(text):
+    return any(ord(c) < 0x20 or ord(c) == 0x7f for c in text)
+
+
+def _check_argv(label, cmd):
+    """An argv list with `service.command`'s rules: strings, no control characters, and a relative first word may not
+    leave the module's directory. It is run without a shell."""
+    if (not isinstance(cmd, list) or not cmd or len(cmd) > MAX_ARGV
+            or not all(isinstance(a, str) and a and len(a) <= MAX_ARG for a in cmd)):
+        raise ModuleError(f"manifest {label} needs a list of 1 to {MAX_ARGV} non-empty strings of at most {MAX_ARG} characters")
+    if not cmd[0].startswith("/") and ".." in Path(cmd[0]).parts:
+        raise ModuleError(f"manifest {label} may not leave the module's directory")
+    if any(_has_control(a) for a in cmd):
+        raise ModuleError(f"manifest {label} arguments may not hold control characters")
+    _check_bare_word(label, cmd[0])
+
+
+def _check_bare_word(label, first):
+    """A first word with no slash is looked up on PATH through `env`, which would take `-x` for an option and
+    `A=b` for an assignment: neither is a program name."""
+    if "/" not in first and (first.startswith("-") or "=" in first):
+        raise ModuleError(f"manifest {label} starts with {first!r}, which is not a program name")
+
+
+def _config_key_ok(module, key):
+    """A `config_schema` key: a `x-<module>:` local name, where a whole dot-segment `{word}` stands for any one
+    segment (`seat.{role}.runtime`)."""
+    if not isinstance(key, str):
+        return False
+    probe = ".".join("w" if _SEGMENT_WORD.match(seg) else seg for seg in key.split("."))
+    return vocabulary.split_module_name(f"x-{module}:{probe}") is not None
+
+
+def config_value_problem(spec, value):
+    """None when `value` (a string, as the journal and the node file hold it) fits the schema entry `spec`, else why."""
+    if not isinstance(value, str) or len(value) > vocabulary.MODULE_VALUE_MAX or _has_control(value):
+        return "not a string of printable characters within the value limit"
+    kind = spec["type"]
+    if kind == "string":
+        return None if len(value) <= spec.get("max", vocabulary.MODULE_VALUE_MAX) else f"longer than {spec['max']}"
+    if kind == "bool":
+        return None if value in ("true", "false") else "not true or false"
+    if kind == "enum":
+        return None if value in spec["values"] else f"not one of {', '.join(spec['values'])}"
+    if not _INT_TEXT.match(value):
+        return "not an integer"
+    n = int(value)
+    if "min" in spec and n < spec["min"] or "max" in spec and n > spec["max"]:
+        return f"outside {spec.get('min', '-inf')}..{spec.get('max', 'inf')}"
+    return None
+
+
+def _check_config_entry(module, key, spec):
+    where = f"manifest config_schema {key!r}"
+    if not _config_key_ok(module, key):
+        raise ModuleError(f"{where}: not a valid config key name")
+    if not isinstance(spec, dict) or set(spec) - CONFIG_SPEC_KEYS:
+        raise ModuleError(f"{where} is an object that may only name: {', '.join(sorted(CONFIG_SPEC_KEYS))}")
+    kind = spec.get("type")
+    if kind not in CONFIG_TYPES:
+        raise ModuleError(f"{where}: type must be one of {', '.join(CONFIG_TYPES)}")
+    scope = spec.get("scope", "node")
+    if scope not in CONFIG_SCOPES:
+        raise ModuleError(f"{where}: scope must be one of {', '.join(CONFIG_SCOPES)}")
+    desc = spec.get("description")
+    if not isinstance(desc, str) or not desc.strip() or len(desc) > MAX_DESCRIPTION or _has_control(desc):
+        raise ModuleError(f"{where}: description is required (a string of at most {MAX_DESCRIPTION} characters)")
+    for flag in ("required_at_install", "secret", "identifying"):
+        if flag in spec and not isinstance(spec[flag], bool):
+            raise ModuleError(f"{where}: {flag} must be true or false")
+    allowed = {"string": {"max"}, "int": {"min", "max"}, "bool": set(), "enum": {"values"}}[kind]
+    for bound in ("min", "max", "values"):
+        if bound in spec and bound not in allowed:
+            raise ModuleError(f"{where}: {bound} does not apply to type {kind}")
+    if kind == "string" and "max" in spec and not (_is_int(spec["max"]) and 1 <= spec["max"] <= vocabulary.MODULE_VALUE_MAX):
+        raise ModuleError(f"{where}: max must be 1 to {vocabulary.MODULE_VALUE_MAX}")
+    if kind == "int":
+        for bound in ("min", "max"):
+            if bound in spec and not (_is_int(spec[bound]) and abs(spec[bound]) < 10 ** 18):
+                raise ModuleError(f"{where}: {bound} must be an integer")
+        if "min" in spec and "max" in spec and spec["min"] > spec["max"]:
+            raise ModuleError(f"{where}: min is above max")
+    if kind == "enum":
+        vals = spec.get("values")
+        if (not isinstance(vals, list) or not 1 <= len(vals) <= MAX_ENUM_VALUES or len(set(map(str, vals))) != len(vals)
+                or not all(isinstance(v, str) and v and len(v) <= MAX_ENUM_VALUE and not _has_control(v) for v in vals)):
+            raise ModuleError(f"{where}: an enum needs 1 to {MAX_ENUM_VALUES} distinct strings in `values`")
+    if spec.get("secret") and scope != "node":
+        raise ModuleError(f"{where}: a secret key is node-scoped (a fleet value is journaled for every device)")
+    if "default" in spec:
+        if spec.get("identifying") or spec.get("secret"):
+            raise ModuleError(f"{where}: a key marked identifying or secret may not ship a default")
+        problem = config_value_problem(spec, spec["default"])
+        if problem:
+            raise ModuleError(f"{where}: default is {problem}")
+
+
+def _check_ui(m):
+    ui = m["ui"]
+    if not isinstance(ui, dict) or len(json.dumps(ui, ensure_ascii=False).encode()) > MAX_UI_BYTES:
+        raise ModuleError(f"manifest ui must be an object of at most {MAX_UI_BYTES // 1024} KiB")
+    if ui.get("schema") not in UI_SCHEMAS or not _is_int(ui.get("schema")):
+        raise ModuleError(f"manifest ui schema must be one this node knows ({', '.join(map(str, UI_SCHEMAS))})")
+    todo = [ui]
+    while todo:                                             # text is shown as text, but never carries control characters
+        node = todo.pop()
+        for k, v in (node.items() if isinstance(node, dict) else enumerate(node)):
+            if isinstance(k, str) and _has_control(k) or isinstance(v, str) and _has_control(v):
+                raise ModuleError("manifest ui holds a string with control characters")
+            if isinstance(v, (dict, list)):
+                todo.append(v)
+    _schema_check(ui, load_ui_schema(), "manifest ui")
+    for group in ("metrics", "panels", "actions"):
+        ids = [x["id"] for x in ui.get(group, [])]
+        if len(set(ids)) != len(ids):
+            raise ModuleError(f"manifest ui {group} repeat an id")
+    own = f"x-{m['name']}:"
+    for item in (*ui.get("metrics", []), *ui.get("panels", [])):
+        if item.get("from") == "entities" and not str(item.get("prefix", "")).startswith(own):
+            raise ModuleError(f"manifest ui {item['id']!r} reads entities, so it needs a `prefix` starting {own!r}: "
+                              "a module's page shows its own entities")
+    for act in ui.get("actions", []):
+        _check_argv(f"ui action {act['id']!r} command", act["command"])
+        used = {n for a in act["command"] for n in _PLACEHOLDER.findall(a)}
+        params = set(act.get("params", {}))
+        if _PLACEHOLDER.search(act["command"][0]):
+            raise ModuleError(f"manifest ui action {act['id']!r}: the command itself may not be a parameter")
+        if used != params:
+            raise ModuleError(f"manifest ui action {act['id']!r}: the parameters {sorted(params)} and the placeholders "
+                              f"{sorted(used)} in its command must match")
+
+
+def _validate_contract(m):
+    """The contract-1 fields (3.1). A manifest without `contract` is a 2.1/3.0 manifest and may name none of them."""
+    new = [k for k in CONTRACT_KEYS if k in m]
+    if "contract" not in m:
+        if new:
+            raise ModuleError(f"manifest names {', '.join(new)} without `contract`: declare `\"contract\": 1`")
+        return
+    contract = m["contract"]
+    if not _is_int(contract) or contract not in CONTRACTS:
+        raise ModuleError(f"manifest contract {contract!r} is not one this node knows (it knows: {', '.join(map(str, CONTRACTS))})")
+    if "config" in m:
+        raise ModuleError("manifest names both `contract` and `config`: under a contract, `config_schema` replaces `config`")
+    if "min_core" not in m or _core_tuple(m["min_core"]) < CONTRACT_MIN_CORE[contract]:
+        need = ".".join(map(str, CONTRACT_MIN_CORE[contract]))
+        raise ModuleError(f"a contract {contract} manifest needs min_core {need} or newer")
+    cli = m.get("cli")
+    if "cli" in m:
+        if (not isinstance(cli, dict) or set(cli) != {"name", "command"} or not isinstance(cli["name"], str)
+                or not CLI_NAME.match(cli["name"])):
+            raise ModuleError("manifest cli needs exactly a name (a-z, 0-9, -; 2 to 32 characters, starting with a letter) and a command")
+        if cli["name"] in CLI_RESERVED or cli["name"].startswith("hive-"):
+            raise ModuleError(f"manifest cli name {cli['name']!r} is a name the core uses")
+        _check_argv("cli command", cli["command"])
+    for field in ("status", "doctor"):
+        if field in m:
+            _check_argv(field, m[field])
+    if m.get("service"):
+        _check_bare_word("service command", m["service"]["command"][0])
+    if "runtimes" in m:
+        rt = m["runtimes"]
+        if (not isinstance(rt, list) or len(rt) > MAX_RUNTIMES or len(set(map(str, rt))) != len(rt)
+                or not all(isinstance(r, str) and RUNTIME_NAME.match(r) and r not in (".", "..") for r in rt)):
+            raise ModuleError(f"manifest runtimes must be at most {MAX_RUNTIMES} distinct program names (letters, digits, . _ -; "
+                              "no slash: a module names programs, never directories)")
+    if "trust" in m and m["trust"] not in TRUST_TIERS:
+        raise ModuleError(f"manifest trust must be one of: {', '.join(TRUST_TIERS)} (absent means trusted)")
+    if "reads" in m:
+        rd = m["reads"]
+        if not isinstance(rd, list) or len(set(map(str, rd))) != len(rd) or not all(r in READ_ROUTES for r in rd):
+            raise ModuleError(f"manifest reads must be distinct names from: {', '.join(READ_ROUTES)}")
+    if "config_schema" in m:
+        cs = m["config_schema"]
+        if not isinstance(cs, dict) or len(cs) > MAX_SCHEMA_KEYS:
+            raise ModuleError(f"manifest config_schema must be an object of at most {MAX_SCHEMA_KEYS} keys")
+        for key, spec in cs.items():
+            _check_config_entry(m["name"], key, spec)
+    if "ui" in m:
+        _check_ui(m)
+
+
+# A deliberately small JSON Schema subset, enough for docs/ui_block.schema.json (the one definition of the `ui` block)
+# without a dependency. `tests/test_manifest_contract.py` fails if that file uses a keyword this does not implement.
+SCHEMA_KEYWORDS = frozenset({"$schema", "$id", "title", "description", "type", "const", "enum", "properties", "required",
+                             "additionalProperties", "items", "minItems", "maxItems", "minLength", "maxLength", "pattern",
+                             "minimum", "maximum", "minProperties", "maxProperties"})
+_SCHEMA_TYPES = {"object": lambda v: isinstance(v, dict), "array": lambda v: isinstance(v, list),
+                 "string": lambda v: isinstance(v, str), "integer": _is_int, "boolean": lambda v: isinstance(v, bool)}
+_ui_schema_cache = []
+
+
+def ui_schema_path():
+    return Path(__file__).resolve().parent / "docs" / UI_SCHEMA_FILE
+
+
+def load_ui_schema():
+    """The `ui` block's JSON Schema, shipped in the core's own tree. Fails closed if it is not there."""
+    if not _ui_schema_cache:
+        try:
+            _ui_schema_cache.append(json.loads(ui_schema_path().read_text()))
+        except (OSError, ValueError):
+            raise ModuleError(f"this core is missing docs/{UI_SCHEMA_FILE}: cannot check a manifest's ui block")
+    return _ui_schema_cache[0]
+
+
+
+def _schema_check(value, schema, path):
+    t = schema.get("type")
+    if t is not None and not _SCHEMA_TYPES[t](value):
+        raise ModuleError(f"{path} must be of type {t}")
+    if "const" in schema and (value != schema["const"] or type(value) is not type(schema["const"])):
+        raise ModuleError(f"{path} must be {schema['const']!r}")
+    if "enum" in schema and value not in schema["enum"]:
+        raise ModuleError(f"{path} must be one of {', '.join(map(str, schema['enum']))}")
+    if isinstance(value, str):
+        if len(value) < schema.get("minLength", 0) or len(value) > schema.get("maxLength", len(value)):
+            raise ModuleError(f"{path} must be {schema.get('minLength', 0)} to {schema.get('maxLength', 'any')} characters")
+        if "pattern" in schema and not re.fullmatch(schema["pattern"], value):
+            raise ModuleError(f"{path} is not in the form {schema['pattern']}")
+    if _is_int(value) and ("minimum" in schema and value < schema["minimum"] or "maximum" in schema and value > schema["maximum"]):
+        raise ModuleError(f"{path} is out of range")
+    if isinstance(value, list):
+        if len(value) < schema.get("minItems", 0) or len(value) > schema.get("maxItems", len(value)):
+            raise ModuleError(f"{path} must hold {schema.get('minItems', 0)} to {schema.get('maxItems', 'any number of')} items")
+        for i, item in enumerate(value):
+            if "items" in schema:
+                _schema_check(item, schema["items"], f"{path}[{i}]")
+    if isinstance(value, dict):
+        if len(value) < schema.get("minProperties", 0) or len(value) > schema.get("maxProperties", len(value)):
+            raise ModuleError(f"{path} must hold {schema.get('minProperties', 0)} to {schema.get('maxProperties', 'any number of')} fields")
+        for req in schema.get("required", ()):
+            if req not in value:
+                raise ModuleError(f"{path} needs {req!r}")
+        props, extra = schema.get("properties", {}), schema.get("additionalProperties", True)
+        for k, v in value.items():
+            if k in props:
+                _schema_check(v, props[k], f"{path}.{k}")
+            elif extra is False:
+                raise ModuleError(f"{path} names {k!r}, which this node does not know")
+            elif isinstance(extra, dict):
+                _schema_check(v, extra, f"{path}.{k}")
 
 
 def _sha256_file(path):
@@ -224,6 +561,13 @@ def check_tree(root, core_version, tracked=None, ignore=()):
     m = validate_manifest(raw, core_version)
     if not ed25519.verify(raw, sig, base64.b64decode(m["publisher"])):
         raise ModuleError("the manifest signature is not valid under its publisher key: refusing")
+    _verify_files(root, m, tracked, ignore)
+    return m
+
+
+def _verify_files(root, m, tracked=None, ignore=()):
+    """The tree at `root` holds exactly the manifest's files (plus the manifest, its signature and `ignore`), each a
+    regular file under the size cap with the listed digest. Raises ModuleError."""
     present = set(tracked) if tracked is not None else {
         str(p.relative_to(root)) for p in root.rglob("*") if p.is_file() or p.is_symlink()}
     extra = {p for p in present if p not in m["files"] and p not in (MANIFEST, SIGNATURE, *ignore)}
@@ -240,7 +584,6 @@ def check_tree(root, core_version, tracked=None, ignore=()):
             raise ModuleError(f"{rel!r} is over {MAX_FILE_BYTES} bytes")
         if _sha256_file(p) != digest:
             raise ModuleError(f"{rel!r} does not match its manifest digest: refusing")
-    return m
 
 
 def _fetch(repo, dest):
@@ -252,7 +595,7 @@ def _fetch(repo, dest):
     try:
         subprocess.run(["git", "clone", "--quiet", "--depth", "1", "--", repo, str(dest)], env=env,
                        check=True, capture_output=True, text=True, timeout=300)
-        ls = subprocess.run(["git", "-C", str(dest), "ls-files", "-z"], check=True, capture_output=True, timeout=30)
+        ls = subprocess.run(["git", "-c", "core.fsmonitor=false", "-C", str(dest), "ls-files", "-z"], check=True, capture_output=True, timeout=30)
         head = subprocess.run(["git", "-C", str(dest), "rev-parse", "HEAD"], check=True, capture_output=True,
                               text=True, timeout=30).stdout.strip()
     except subprocess.CalledProcessError as e:
@@ -287,6 +630,9 @@ def _confirm_publisher(manifest, expected, pinned=None):
                               f"{fingerprint(pinned)}: refusing. Remove and re-add it to change publishers.")
         return
     print(f"module {manifest['name']} {manifest['version']} is signed by publisher key {pub} (fingerprint {fingerprint(pub)})")
+    print("  " + trust_summary(manifest))
+    if reads_summary(manifest):
+        print("  " + reads_summary(manifest))
     if expected is not None:
         if expected != pub:
             raise ModuleError(f"--publisher does not match the manifest's publisher key ({fingerprint(pub)}): refusing")
@@ -304,13 +650,21 @@ def _gov(lib):
     return lib._governance_state(merkle.read_all_entries(lib.JOURNAL_DIR))
 
 
-def _require_owner(lib):
+def _require_owner(lib, acts=(), prompt=True):
     """Unlock the owner key before anything is fetched into place, so a locked key or a non-owner device
-    refuses with nothing written."""
+    refuses with nothing written. `acts` are the acts the command will make: with the unlock agent covering all of
+    them (`owner_agent.gate_ok`) the gate passes without a prompt (#295); otherwise it unlocks, as ever. With
+    `prompt=False` (`module install --non-interactive|--json`) a key that would need a prompt is `OwnerLocked`."""
     if not lib._owner_key_exists():
         raise ModuleError("this device does not hold the owner key: run module commands on the owner machine")
-    if lib._owner_seed() is None:
+    if not prompt and not lib._owner_usable_quietly(acts):
+        raise OwnerLocked("the owner key is locked: run `hive-mind owner unlock`, then install again")
+    if not lib._owner_gate(acts):
         raise ModuleError("the owner key could not be unlocked")
+
+
+def _may_prompt(args):
+    return not getattr(args, "no_owner_prompt", False)
 
 
 def _operator_principal(lib, given):
@@ -376,6 +730,8 @@ def _stage_for_owner(lib, args, name, root):
         if manifest["name"] != name:
             raise ModuleError(f"the repository holds module {manifest['name']!r}, not {name!r}")
         _confirm_publisher(manifest, args.publisher)
+        contract_plan(name, manifest, load_state(lib))                      # a launcher collision refuses before staging
+        install_config(lib, args, manifest, owner=False, enforce=False)     # values are asked for at the install run
         root.mkdir(parents=True, exist_ok=True)
         os.chmod(root, 0o700)
         staging = root / f".{name}.staging"
@@ -412,7 +768,7 @@ def _complete_add(lib, args, name, root, rec):
     gov = _gov(lib)
     dev = rec["device_id"]
     if gov["modules"].get(dev) != name or dev not in gov["admitted"] or dev in gov["purged"]:
-        raise ModuleError(f"the owner has not admitted {dev} as module {name} on this node yet (it may not have synced). "
+        raise OwnerWait(f"the owner has not admitted {dev} as module {name} on this node yet (it may not have synced). "
                           f"On the owner machine: {_admit_line(rec, name)}")
     staging = root / f".{name}.staging"
     key = Path(lib._ensure_key_dir()) / "modules" / name / "device-key"
@@ -432,17 +788,24 @@ def _complete_add(lib, args, name, root, rec):
     if (root / name).exists():
         raise ModuleError(f"module {name!r} is already installed: use `hive-mind module update {name}`")
     state = load_state(lib)
+    plan = contract_plan(name, manifest, state)
+    node_vals, _fleet = install_config(lib, args, manifest, owner=False)
     renamed = False
     try:
-        _write_config(staging, manifest.get("config", {}))
+        _write_config(staging, {**manifest.get("config", {}), **node_vals})
         os.rename(staging, root / name)
         renamed = True
-        note = install_units(lib, name, manifest)
+        note = install_units(lib, name, manifest, plan and plan["path"])
+        apply_launcher(lib, name, manifest, plan)
         state[name] = {"version": manifest["version"], "publisher": manifest["publisher"], "device_id": dev,
                        "source": rec["source"], "commit": rec["commit"], "installed_at": int(time.time()),
-                       "quota": dict(manifest.get("quota") or {}), "owner_quota": {}}
+                       "quota": dict(manifest.get("quota") or {}), "owner_quota": {},
+                       **_reads_record(manifest), **_trust_record(manifest)}
+        record_plan(state[name], plan)
         save_state(lib, state)
     except BaseException:
+        if plan and plan.get("launcher"):
+            remove_launcher(plan["bin_dir"], plan["launcher"], name)
         try:
             remove_units(name)
         except ModuleError:                          # still draining: the add's own error is the one to show
@@ -452,10 +815,12 @@ def _complete_add(lib, args, name, root, rec):
             (staging / "config").unlink(missing_ok=True)       # staging is again exactly the tree that was verified
         raise
     _pending_path(name).unlink(missing_ok=True)
+    warn_missing(name, plan)
     print(f"installed module {name} {manifest['version']} (device {dev}, principal {gov['principals'].get(dev)}); "
           + (f"service {unit_names(name)[0]}" + (" with a timer" if manifest["service"].get("interval") else "")
              if manifest.get("service") else "no service")
           + (f" ({note})" if note else "") + "; hooks: " + (", ".join(manifest.get("hooks") or []) or "none"))
+    return _healthy_rc(args, doctor_after(lib, name, "install"))
 
 
 # ── the unit (M2) ───────────────────────────────────────────────────────────────────────────────────
@@ -530,14 +895,17 @@ def _env(key, value):
     return f'Environment="{esc}"'
 
 
-def render_units(name, manifest, module_dir, key_dir):
+def render_units(name, manifest, module_dir, key_dir, path=None):
     """{filename: text} for a module's unit(s), or {} when its manifest has no `service` block.
 
     It runs as the operator's user (a user unit), in the module's own directory, with the module's own key
     directory and nothing of the owner's in its environment. The command's first word is made absolute: a path
     inside the module (one it ships, or any relative path) is anchored to its directory and any other bare name is
     looked up by `env`. Unlike the sync unit it
-    has no `ExecStartPre` that kills by command line (such a pattern could match another module)."""
+    has no `ExecStartPre` that kills by command line (such a pattern could match another module).
+
+    `path` (a contract-1 module's recorded PATH, see `unit_path`) becomes the unit's `PATH`; without it the unit has
+    none, as in 2.1."""
     svc = manifest.get("service")
     if not svc:
         return {}
@@ -551,7 +919,7 @@ def render_units(name, manifest, module_dir, key_dir):
     lines += ["[Service]", f"Type={'oneshot' if interval else 'simple'}", f"WorkingDirectory={str(module_dir).replace('%', '%%')}",
               "ExecStart=" + " ".join(_quote(a) for a in cmd),
               _env("HIVE_MODULE_NAME", name), _env("HIVE_MODULE_DIR", module_dir),
-              _env("HIVE_MODULE_KEY_DIR", key_dir), "NoNewPrivileges=yes",
+              _env("HIVE_MODULE_KEY_DIR", key_dir), *([_env("PATH", path)] if path else []), "NoNewPrivileges=yes",
               "StandardOutput=journal", "StandardError=journal"]
     grace = svc.get("stop_grace")
     if grace:                           # SIGTERM the main process only, let it drain, SIGKILL the group after `grace`
@@ -567,11 +935,11 @@ def render_units(name, manifest, module_dir, key_dir):
     return out
 
 
-def _write_units(lib, name, manifest, only_changed=False):
+def _write_units(lib, name, manifest, only_changed=False, path=None):
     """Stop whatever is installed, then write the module's unit files (and drop a timer it no longer declares).
     Returns the unit to enable and start (the timer when there is one), or None when there is nothing to start:
     no service block, or `only_changed` and the files are already what the manifest renders."""
-    keep = render_units(name, manifest, modules_dir() / name, Path(lib._ensure_key_dir()) / "modules" / name)
+    keep = render_units(name, manifest, modules_dir() / name, Path(lib._ensure_key_dir()) / "modules" / name, path)
     if not keep:
         remove_units(name)
         return None
@@ -604,10 +972,10 @@ def _start_unit(unit):
     return ""
 
 
-def install_units(lib, name, manifest):
+def install_units(lib, name, manifest, path=None):
     """Write the module's unit files and, where a user systemd manager is reachable, enable and (re)start them.
     Without one the files are still written; returns a note for the operator."""
-    unit = _write_units(lib, name, manifest)
+    unit = _write_units(lib, name, manifest, path=path)
     if unit is None:
         return ""
     if not _systemctl("show-environment"):
@@ -661,6 +1029,322 @@ def service_state(name):
     return word if word in ("active", "inactive", "failed", "activating") else "installed"
 
 
+# ── runtimes, the unit PATH and the CLI launcher (3.1, #294 PR 3) ───────────────────────────────────
+# A contract-1 module names the programs it needs (`runtimes`), never directories. The core finds each in a directory
+# only the operator (or root) can write, records those directories in `.modules.json`, and gives the unit and the
+# launcher one PATH built from them. A manifest without `contract` gets none of this: no PATH in its unit, no launcher.
+
+RUNTIME_SEARCH = ("~/.local/bin", "~/.npm-global/bin", "~/.cargo/bin", "~/.bun/bin", "/opt/homebrew/bin", "/usr/local/bin")
+SYSTEM_PATH = ("/usr/local/bin", "/usr/bin", "/bin")
+LAUNCHER_MARK = "# hive-mind module launcher v1"
+SCRUBBED_ENV = ("HIVE_OWNER_PASSPHRASE", "HIVE_OWNER_KEY_PASSPHRASE", "HIVE_OWNER_SEED", "HIVE_KEY_DIR")
+_LAUNCHER_HEAD = re.compile(re.escape(LAUNCHER_MARK) + r" module=([a-z0-9_-]+) sha256=([0-9a-f]{64})\Z")
+
+
+def safe_dir(d):
+    """Whether `d` may sit on a service PATH: absolute, no `:` or control character in it, a directory, owned by the
+    operator or root, and writable by neither group nor world (a writable directory on a PATH is a hijack)."""
+    d = str(d)
+    if not d.startswith("/") or ":" in d or _has_control(d):
+        return False
+    try:
+        st = os.stat(d)
+    except OSError:
+        return False
+    return stat.S_ISDIR(st.st_mode) and st.st_uid in (os.getuid(), 0) and not st.st_mode & 0o022
+
+
+def _program_in(d, program):
+    p = Path(d) / program
+    return p.is_file() and os.access(p, os.X_OK)
+
+
+def resolve_runtimes(names, overrides=None):
+    """({program: directory}, [programs not found]). Each program is looked for in the invoking PATH, then the fixed
+    operator directories, then the operator's per-module override; only a `safe_dir` counts."""
+    overrides = overrides or {}
+    search = [d for d in os.environ.get("PATH", "").split(":") if d] + [os.path.expanduser(d) for d in RUNTIME_SEARCH]
+    found, missing = {}, []
+    for program in names:
+        order = search + ([overrides[program]] if program in overrides else [])
+        hit = next((d for d in order if safe_dir(d) and _program_in(d, program)), None)
+        if hit:
+            found[program] = hit
+        else:
+            missing.append(program)
+    return found, missing
+
+
+def bin_dir():
+    """Where `hive-mind` and `hv` live, so a launcher sits beside them: $HIVE_BIN_DIR, else the directory `hive-mind`
+    is found in, else ~/.local/bin."""
+    env = os.environ.get("HIVE_BIN_DIR")
+    if env:
+        return Path(env)
+    found = shutil.which("hive-mind")
+    return Path(found).parent if found and found.startswith("/") else Path.home() / ".local" / "bin"
+
+
+def _bin_ok(bdir):
+    """A bin directory a launcher may go in: a `safe_dir`, or one that does not exist yet under a `safe_dir`."""
+    return safe_dir(bdir) or (not os.path.lexists(bdir) and safe_dir(Path(bdir).parent))
+
+
+def unit_path(runtime_dirs, bdir):
+    """The PATH a contract-1 module's unit, launcher and `module run` get: the directories its runtimes resolved to,
+    the bin directory, then the system's."""
+    out = []
+    for d in [*(runtime_dirs or []), bdir, *SYSTEM_PATH]:
+        if d and d not in out:
+            out.append(d)
+    return ":".join(out)
+
+
+def recorded_path(rec):
+    """The PATH recorded for an installed module, or None for one installed without a contract."""
+    if "runtime_dirs" not in rec and "bin_dir" not in rec:
+        return None
+    return unit_path(rec.get("runtime_dirs"), rec.get("bin_dir"))
+
+
+def module_argv(manifest, cmd, module_dir):
+    """The argv to run for one of a manifest's commands: a path inside the module is anchored to its directory, an
+    absolute one stays, and a bare name is looked up on PATH by `env` (as the unit does)."""
+    first = cmd[0]
+    if first.startswith("/"):
+        return list(cmd)
+    if "/" in first or first in manifest.get("files", {}):
+        return [str(module_dir / first), *cmd[1:]]
+    return ["/usr/bin/env", *cmd]
+
+
+def module_env(lib, name, path):
+    """The environment of a module process started by the operator: theirs, without the owner's secrets, plus the
+    module's own name, directory, key directory and PATH."""
+    env = {k: v for k, v in os.environ.items() if k not in SCRUBBED_ENV}
+    env.update(HIVE_MODULE_NAME=name, HIVE_MODULE_DIR=str(modules_dir() / name),
+               HIVE_MODULE_KEY_DIR=str(Path(lib._ensure_key_dir()) / "modules" / name))
+    if path:
+        env["PATH"] = path
+    return env
+
+
+def launcher_text(lib, name, manifest, path):
+    """The launcher file the core renders: the module supplies a name and an argv, never shell text. Every word is
+    single-quoted; the environment is the module's own, and the owner's secrets are unset."""
+    body = "\n".join([
+        "unset " + " ".join(SCRUBBED_ENV),
+        f"HIVE_MODULE_NAME={shlex.quote(name)}",
+        f"HIVE_MODULE_DIR={shlex.quote(str(modules_dir() / name))}",
+        f"HIVE_MODULE_KEY_DIR={shlex.quote(str(Path(lib._ensure_key_dir()) / 'modules' / name))}",
+        f"PATH={shlex.quote(path)}",
+        "export HIVE_MODULE_NAME HIVE_MODULE_DIR HIVE_MODULE_KEY_DIR PATH",
+        "exec " + " ".join(shlex.quote(a) for a in module_argv(manifest, manifest["cli"]["command"], modules_dir() / name)) + ' "$@"',
+        ""])
+    digest = hashlib.sha256(body.encode()).hexdigest()
+    return f"#!/bin/sh\n{LAUNCHER_MARK} module={name} sha256={digest}\n{body}"
+
+
+def _own_launcher(path, name):
+    """Whether `path` is a launcher this core wrote for module `name`, unedited: a regular file, the marker line
+    naming the module, and the digest of the rest matching."""
+    try:
+        if not stat.S_ISREG(os.lstat(path).st_mode) or os.lstat(path).st_size > 64 * 1024:
+            return False
+        lines = Path(path).read_text().split("\n", 2)
+    except (OSError, UnicodeDecodeError):
+        return False
+    m = _LAUNCHER_HEAD.match(lines[1]) if len(lines) == 3 and lines[0] == "#!/bin/sh" else None
+    return bool(m and m.group(1) == name and m.group(2) == hashlib.sha256(lines[2].encode()).hexdigest())
+
+
+def check_launcher_free(bdir, name, cli_name, state):
+    """Refuse, before anything is written, a launcher name another module claims, a file that is not this module's
+    own launcher, or a bin directory others can write to."""
+    for other, rec in state.items():
+        if other != name and rec.get("launcher") == cli_name:
+            raise ModuleError(f"cli name {cli_name!r} is already taken by module {other!r}")
+    if not _bin_ok(bdir):
+        raise ModuleError(f"{bdir} cannot hold a launcher: it must be an absolute directory only you (or root) can write")
+    target = Path(bdir) / cli_name
+    if os.path.lexists(target) and not _own_launcher(target, name):
+        raise ModuleError(f"{target} exists and is not this module's launcher: move it, or pick another cli name")
+
+
+def write_launcher(lib, name, manifest, path, bdir):
+    """Write (or refresh) the module's launcher. Nothing is touched when it already holds the rendered text."""
+    target = Path(bdir) / manifest["cli"]["name"]
+    text = launcher_text(lib, name, manifest, path)
+    try:
+        if target.read_text() == text and not target.is_symlink() and os.access(target, os.X_OK):
+            return
+    except (OSError, UnicodeDecodeError):
+        pass
+    fd, tmp = tempfile.mkstemp(dir=bdir, prefix=f".{target.name}.")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(text)
+        os.chmod(tmp, 0o755)
+        os.replace(tmp, target)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+
+
+def remove_launcher(bdir, cli_name, name):
+    """Delete the launcher if it is still this module's own; anything else at that name is left alone."""
+    if bdir and cli_name and _own_launcher(Path(bdir) / cli_name, name):
+        try:
+            (Path(bdir) / cli_name).unlink()
+        except OSError:
+            pass
+
+
+def contract_plan(name, manifest, state, overrides=None):
+    """What a contract-1 manifest adds to an install, or None for any other manifest: the resolved runtime
+    directories, the bin directory and the launcher name, plus the runtimes not found. Refuses a launcher
+    collision, so call it before anything is written."""
+    if "contract" not in manifest:
+        return None
+    found, missing = resolve_runtimes(manifest.get("runtimes", []), overrides)
+    bdir = bin_dir()
+    plan = {"runtime_dirs": sorted(set(found.values())), "bin_dir": str(bdir) if _bin_ok(bdir) else "", "missing": missing}
+    if manifest.get("cli"):
+        check_launcher_free(bdir, name, manifest["cli"]["name"], state)
+        plan["launcher"] = manifest["cli"]["name"]
+    plan["path"] = unit_path(plan["runtime_dirs"], plan["bin_dir"])
+    return plan
+
+
+def apply_launcher(lib, name, manifest, plan):
+    if plan and plan.get("launcher"):
+        Path(plan["bin_dir"]).mkdir(mode=0o755, exist_ok=True)
+        write_launcher(lib, name, manifest, plan["path"], plan["bin_dir"])
+
+
+def record_plan(rec, plan):
+    """Put a plan's durable part into a module's `.modules.json` row (a no-op for a manifest without `contract`)."""
+    if plan is None:
+        for k in ("runtime_dirs", "bin_dir", "launcher", "runtime_overrides"):
+            rec.pop(k, None)
+        return
+    rec.update(runtime_dirs=plan["runtime_dirs"], bin_dir=plan["bin_dir"])
+    if plan.get("launcher"):
+        rec["launcher"] = plan["launcher"]
+    else:
+        rec.pop("launcher", None)
+
+
+def warn_missing(name, plan):
+    for program in (plan or {}).get("missing", []):
+        print(f"hive-mind module: warning: {name}: runtime {program!r} not found; install it, or run "
+              f"`hive-mind module runtime {name} {program} <dir>`", file=sys.stderr)
+
+
+def _restore_launcher(lib, name, rec, old_manifest):
+    """After a failed update: put the previous launcher back and drop a new one under another name."""
+    try:
+        if rec.get("launcher") and old_manifest.get("cli"):
+            write_launcher(lib, name, old_manifest, recorded_path(rec), rec["bin_dir"])
+    except (OSError, KeyError, ValueError):
+        pass
+
+
+def refuse_disabled(name, rec):
+    if is_disabled(rec):
+        raise ModuleError(f"module {name!r} is disabled: {rec['disabled'].get('reason')}. "
+                          f"Fix it, then run: hive-mind module update {name}")
+
+
+def cmd_run(lib, args):
+    """`module run <name> [--] args…`: the launcher's job without the launcher."""
+    rec = load_state(lib).get(args.name)
+    if rec is None:
+        raise ModuleError(f"module {args.name!r} is not installed")
+    refuse_disabled(args.name, rec)
+    manifest = installed_manifest(lib, args.name)
+    if not manifest.get("cli"):
+        raise ModuleError(f"module {args.name!r} declares no cli")
+    argv = module_argv(manifest, manifest["cli"]["command"], modules_dir() / args.name) + list(args.args)
+    try:
+        rc = subprocess.run(argv, env=module_env(lib, args.name, recorded_path(rec))).returncode
+    except OSError as e:
+        raise ModuleError(f"could not run {argv[0]}: {e}")
+    return rc if rc >= 0 else 128 - rc
+
+
+def narrow_env(name, rec, key_dir, **extra):
+    """The environment `status` and `doctor` run in: built from nothing, so no owner secret, identity stash or other
+    `HIVE_*` variable of the caller's reaches module code. The module's PATH, its name, directory and key directory."""
+    return {"PATH": recorded_path(rec) or unit_path([], ""), "HOME": os.environ.get("HOME", str(Path.home())), "LANG": "C.UTF-8",
+            "HIVE_MODULE_NAME": name, "HIVE_MODULE_DIR": str(modules_dir() / name), "HIVE_MODULE_KEY_DIR": str(key_dir), **extra}
+
+
+def module_status(lib, name, rec, manifest):
+    """The module's `status` envelope, or an `unknown` one saying why not. Runs the manifest's argv without a shell,
+    in the module's directory, with a narrow environment, 20 s and 64 KiB at most."""
+    mod_dir = modules_dir() / name
+    env = narrow_env(name, rec, Path(lib._ensure_key_dir()) / "modules" / name)
+    rc, obj, why = _run_json(manifest["status"], manifest["files"], mod_dir, env)
+    problems = [why] if why else ([] if rc == 0 else [f"status exited {rc}, not 0"]) + status_problems(obj)
+    if problems:
+        return {"schema": 1, "state": "unknown", "version": "", "problems": problems, "units": [], "detail": {}}
+    return obj
+
+
+def cmd_status(lib, args):
+    """`module status <name> [--json]`: proxies the module's `status`. Exit 0 when it says `ok`, else 1."""
+    rec = load_state(lib).get(args.name)
+    if rec is None:
+        raise ModuleError(f"module {args.name!r} is not installed")
+    refuse_disabled(args.name, rec)
+    manifest = installed_manifest(lib, args.name)
+    if not manifest.get("status"):
+        raise ModuleError(f"module {args.name!r} declares no status command")
+    env = module_status(lib, args.name, rec, manifest)
+    if args.json:
+        print(json.dumps(env, indent=1, sort_keys=True))
+    else:
+        print(f"{args.name}: {env['state']}" + (f" ({env['version']})" if env["version"] else ""))
+        for u in env.get("units", []):
+            print(f"  unit {u['name']}: {u['state']}")
+        for p in env["problems"]:
+            print(f"  ! {p}")
+    return 0 if env["state"] == "ok" else 1
+
+
+def cmd_runtime(lib, args):
+    """`module runtime <name> <program> <dir>`: the operator tells the core where a runtime lives when the core cannot
+    see it (a dashboard-spawned install has the unit's narrow PATH, not the login PATH). `--unset` forgets it."""
+    state = load_state(lib)
+    rec = state.get(args.name)
+    if rec is None:
+        raise ModuleError(f"module {args.name!r} is not installed")
+    manifest = installed_manifest(lib, args.name)
+    if args.program not in manifest.get("runtimes", []):
+        raise ModuleError(f"module {args.name!r} does not declare the runtime {args.program!r}")
+    mine = dict(rec.get("runtime_overrides") or {})
+    if args.unset:
+        mine.pop(args.program, None)
+    else:
+        if not args.dir:
+            raise ModuleError("module runtime needs a directory (or --unset)")
+        d = os.path.abspath(os.path.expanduser(args.dir))
+        if not safe_dir(d):
+            raise ModuleError(f"{d} cannot go on a service PATH: it must be an absolute directory only you (or root) can write")
+        if not _program_in(d, args.program):
+            raise ModuleError(f"{args.program!r} is not an executable file in {d}")
+        mine[args.program] = d
+    if mine:
+        rec["runtime_overrides"] = mine
+    else:
+        rec.pop("runtime_overrides", None)
+    save_state(lib, state)
+    _reapply_names(lib, [args.name])
+    now = load_state(lib).get(args.name, {})
+    print(f"{args.name}: PATH is now {recorded_path(now)}")
+
+
 # ── verbs ───────────────────────────────────────────────────────────────────────────────────────────
 
 def _write_config(dest_dir, defaults):
@@ -673,9 +1357,7 @@ def _write_config(dest_dir, defaults):
     except (OSError, ValueError):
         pass
     have = have if isinstance(have, dict) else {}
-    merged = {**defaults, **have}
-    path.write_text(json.dumps(merged, indent=1, sort_keys=True) + "\n")
-    os.chmod(path, 0o600)
+    _save_config(path, {**defaults, **have})                 # a 0600 temp file renamed in: never readable by others
 
 
 def _config_path(lib, name):
@@ -707,6 +1389,14 @@ def _save_config(path, have):
         raise
 
 
+# ── per-module configuration (3.1, #294 PR 2) ───────────────────────────────────────────────────────
+# A module with a `config_schema` has typed, scoped keys. Values live in three layers: this node's own file
+# (`node`: local, 0600, never journaled, no owner key), the owner-signed `x-<module>:<key>` (`fleet`) and the same
+# under `x-<module>:node.<16hex>.<key>` (`fleet-node`, one device). A key is read from the one layer its scope names,
+# else its schema default. A module without a schema keeps the 2.1/3.0 behaviour: free-form keys in the node file.
+
+MASK = "********"
+
 _SECRET_KEY_RE = re.compile(r"token|secret|passw|passphrase|credential|api[._-]?key|private|(^|[._-])key$", re.I)
 
 
@@ -715,60 +1405,388 @@ def _is_secret_key(key):
     return bool(_SECRET_KEY_RE.search(key or ""))
 
 
-def _config_secret_value(args):
-    """The value for a secret key, read from --stdin, --file or a hidden prompt, never from argv."""
-    if getattr(args, "stdin", False):
-        data = sys.stdin.read()
-        return data.rstrip("\n") if data else None
-    if getattr(args, "file", None):
-        try:
-            return Path(args.file).expanduser().read_text().rstrip("\n")
-        except (OSError, ValueError) as e:
-            raise ModuleError(f"could not read {args.file}: {e}")
-    import getpass
+def _read_secret_file(path):
     try:
-        return getpass.getpass(f"Enter value for {args.key} (hidden): ") or None
-    except (EOFError, KeyboardInterrupt):
+        value = Path(path).expanduser().read_text().rstrip("\n")
+    except (OSError, ValueError) as e:
+        raise ModuleError(f"could not read {path}: {e}")
+    if len(value) > vocabulary.MODULE_VALUE_MAX:
+        raise ModuleError(f"the value is longer than {vocabulary.MODULE_VALUE_MAX} characters")
+    return value
+
+
+_DEVICE_TAG = re.compile(r"(?:k1:)?([0-9a-f]{16})\Z")
+_SEGMENT = re.compile(r"[a-z0-9_-]+\Z")
+_NODE_KEY = re.compile(r"node\.([0-9a-f]{16})\.(.+)\Z")
+SCOPE_FLAG = {"node": "(no flag)", "fleet": "--fleet", "fleet-node": "--fleet-node <device>"}
+PROMPT_TRIES = 3
+
+
+def installed_manifest(lib, name):
+    try:
+        return validate_manifest((modules_dir() / name / MANIFEST).read_bytes(), lib.CONTRACT_VERSION)
+    except (OSError, ModuleError) as e:
+        raise ModuleError(f"{name}'s installed manifest is not usable ({e}): `hive-mind module update {name}`")
+
+
+def schema_entry(schema, key):
+    """(schema key, entry) for a concrete config key, or None: an exact name first, then a `{word}` template whose
+    segments each match one `[a-z0-9_-]+` segment."""
+    if key in schema:
+        return key, schema[key]
+    parts = key.split(".")
+    for pattern in sorted(schema):
+        want = pattern.split(".")
+        if len(want) == len(parts) and all(a == b or (_SEGMENT_WORD.match(a) and _SEGMENT.match(b))
+                                           for a, b in zip(want, parts)):
+            return pattern, schema[pattern]
+    return None
+
+
+def _node_tag(device_id):
+    m = _DEVICE_TAG.match(device_id or "")
+    return m.group(1) if m else None
+
+
+def _device_tag(text):
+    tag = _node_tag(text)
+    if tag is None:
+        raise ModuleError(f"{text!r} is not a device id (k1:<16 hex>, or the 16 hex digits)")
+    return tag
+
+
+def fleet_layers(gov, name, node_id):
+    """(fleet, fleet-node) values for this node: the module's journaled `x-<name>:` keys, split by the
+    `node.<16hex>.` convention (a naming convention over `set-config`; nothing in the journal differs)."""
+    prefix, tag = f"x-{name}:", _node_tag(node_id)
+    fleet, mine = {}, {}
+    for full, value in sorted((gov.get("module_config") or {}).items()):
+        if not full.startswith(prefix):
+            continue
+        local = full[len(prefix):]
+        m = _NODE_KEY.match(local)
+        if m:
+            if m.group(1) == tag:
+                mine[m.group(2)] = value
+        else:
+            fleet[local] = value
+    return fleet, mine
+
+
+def merged_config(schema, node, fleet, mine):
+    """One row per key: {key, value, source, secret, unknown}. A key with a schema entry is read only from the layer
+    its scope names, then its default; with no schema (a 2.1 module) every layer counts, node first."""
+    layers = {"node": node, "fleet-node": mine, "fleet": fleet}
+    keys = {k for k in schema or () if "{" not in k} | set(node) | set(fleet) | set(mine)
+    rows = []
+    for key in sorted(keys):
+        ent = schema_entry(schema, key) if schema is not None else None
+        spec = ent[1] if ent else None
+        allowed = (spec.get("scope", "node"),) if spec else tuple(layers)
+        value = source = None
+        for layer in layers:
+            if layer in allowed and key in layers[layer]:
+                value, source = layers[layer][key], layer
+                break
+        else:
+            if spec and "default" in spec:
+                value, source = spec["default"], "default"
+        rows.append({"key": key, "value": value, "source": source, "secret": bool(spec and spec.get("secret")),
+                     "unknown": schema is not None and spec is None})
+    return rows
+
+
+def config_problems(schema, node, fleet, mine):
+    """(errors, warnings) for the values a module holds against its schema. A message names a key and a rule, never a
+    value, so a secret cannot leak through it."""
+    errors, warnings = [], []
+    for layer, label, values in (("node", "node config", node), ("fleet-node", "fleet-node config", mine),
+                                 ("fleet", "fleet config", fleet)):
+        for key in sorted(values):
+            ent = schema_entry(schema, key)
+            if ent is None:
+                warnings.append(f"{label} {key}: not in the schema (kept, unused)")
+                continue
+            scope = ent[1].get("scope", "node")
+            problem = config_value_problem(ent[1], values[key])
+            if scope != layer:
+                warnings.append(f"{label} {key}: ignored, its scope is {scope}")
+            elif problem:
+                errors.append(f"{label} {key}: {problem}")
+    value = {r["key"]: r["value"] for r in merged_config(schema, node, fleet, mine)}
+    for key, spec in sorted(schema.items()):
+        if spec.get("required_at_install") and "{" not in key and spec.get("scope", "node") != "fleet-node" \
+                and value.get(key) is None:
+            errors.append(f"{key}: required and has no value (scope {spec.get('scope', 'node')})")
+    return errors, warnings
+
+
+def _shown(row):
+    if row["value"] is None:
         return None
+    return MASK if row["secret"] or row["unknown"] else row["value"]       # a key the schema dropped may have been a secret
+
+
+def _print_rows(rows, as_json):
+    if as_json:
+        print(json.dumps([{"key": r["key"], "value": _shown(r), "source": r["source"], "secret": r["secret"],
+                           "set": r["value"] is not None, **({"unknown": True} if r["unknown"] else {})}
+                          for r in rows], indent=1))
+        return
+    for r in rows:
+        note = ", ".join(x for x in (r["source"] or "unset", "secret" if r["secret"] else "",
+                                     "not in schema" if r["unknown"] else "") if x)
+        print(f"{r['key']}={_shown(r)}  ({note})" if r["value"] is not None else f"{r['key']}  ({note})")
+
+
+def _read_secret_line():
+    line = sys.stdin.readline(vocabulary.MODULE_VALUE_MAX + 2)
+    if len(line.rstrip("\n")) > vocabulary.MODULE_VALUE_MAX:
+        raise ModuleError(f"the value is longer than {vocabulary.MODULE_VALUE_MAX} characters")
+    return line.rstrip("\n")
+
+
+def _prompt(key, spec):
+    label = f"{key}: {spec['description']}"
+    if spec["type"] == "enum":
+        label += f" [{'/'.join(spec['values'])}]"
+    for _ in range(PROMPT_TRIES):
+        raw = getpass.getpass(f"{label} (hidden): ") if spec.get("secret") else input(f"{label}: ")
+        problem = "a value is required" if raw == "" else config_value_problem(spec, raw)
+        if problem is None:
+            return raw
+        print(f"hive-mind module: {key}: {problem}", file=sys.stderr)
+    raise ModuleError(f"no valid value for {key}")
+
+
+def _pairs(args, field):
+    out = {}
+    for item in getattr(args, field, None) or []:
+        key, eq, value = item.partition("=")
+        if not eq or not key:
+            raise ModuleError(f"--{field.replace('_', '-')} wants key=value, not {item!r}")
+        if key in out:
+            raise ModuleError(f"--{field.replace('_', '-')} names {key} twice")
+        out[key] = value
+    return out
+
+
+def install_config(lib, args, manifest, owner, enforce=True, asked=None, have=None):
+    """Settle a module's install-time values from `--set`, `--set-fleet`, `--set-env` and, on a terminal, prompts, before
+    anything is staged, minted or signed. Returns (node values, fleet values). `enforce=False` only checks what was
+    given (the first, staging run on a device without the owner key); `asked` limits the required keys to ask about
+    (an update asks only for keys the new schema added); `have` is this node's current file."""
+    schema = manifest.get("config_schema")
+    sets, fleet_sets, env_sets = _pairs(args, "set"), _pairs(args, "set_fleet"), _pairs(args, "set_env")
+    if schema is None:
+        if sets or fleet_sets or env_sets:
+            raise ModuleError("this module declares no config_schema: --set, --set-fleet and --set-env do not apply "
+                              "(use `hive-mind module config` after the install)")
+        return {}, {}
+    if set(sets) & set(env_sets):
+        raise ModuleError("a key is named by both --set and --set-env")
+    for key, var in env_sets.items():
+        if var not in os.environ:
+            raise ModuleError(f"--set-env {key}={var}: {var} is not set in the environment")
+        sets[key] = os.environ[var]
+    node_vals, fleet_vals = {}, {}
+    for given, want, flag, into in ((sets, "node", "--set", node_vals), (fleet_sets, "fleet", "--set-fleet", fleet_vals)):
+        for key, value in given.items():
+            ent = schema_entry(schema, key) if vocabulary.split_module_name(f"x-{manifest['name']}:{key}") else None
+            if ent is None:
+                raise ModuleError(f"{flag} {key}: not a key in this module's config_schema")
+            spec = ent[1]
+            if spec.get("scope", "node") != want:
+                raise ModuleError(f"{key} has scope {spec.get('scope', 'node')}: install sets it with "
+                                  + {"node": "--set", "fleet": "--set-fleet",
+                                     "fleet-node": "`hive-mind module config --fleet-node` after the install"}[spec.get("scope", "node")])
+            if spec.get("secret") and key not in env_sets:
+                raise ModuleError(f"{key} is a secret: pass it with --set-env {key}=<VARIABLE>, or leave it out to be "
+                                  "asked (a secret on the command line sits in shell history and `ps`)")
+            problem = config_value_problem(spec, value)
+            if problem:
+                raise ModuleError(f"{flag} {key}: {problem}")
+            into[key] = value
+    if fleet_vals and not owner:
+        raise ModuleError("--set-fleet needs the owner key: set fleet values on the owner machine")
+    if enforce:
+        fleet_have = None
+        interactive = sys.stdin is not None and sys.stdin.isatty() and not getattr(args, "non_interactive", False)
+        missing = []
+        for key, spec in sorted(schema.items()):
+            scope = spec.get("scope", "node")
+            if (not spec.get("required_at_install") or (asked is not None and key not in asked) or "default" in spec
+                    or "{" in key or scope == "fleet-node"):
+                continue                  # install asks for one concrete node or fleet value; a template or a device value is set later
+            if scope == "node" and (key in node_vals or key in (have or {})):
+                continue
+            if scope == "fleet":
+                if key in fleet_vals:
+                    continue
+                if fleet_have is None:
+                    fleet_have = fleet_layers(_gov(lib), manifest["name"], lib.NODE_ID)[0]
+                if key in fleet_have or not owner:
+                    continue                  # set already, or only the owner can set it: `config validate` reports it
+            if interactive:
+                (fleet_vals if scope == "fleet" else node_vals)[key] = _prompt(key, spec)
+            else:
+                missing.append(f"{key} ({spec['description']})" + (" [secret: --set-env]" if spec.get("secret") else ""))
+        if missing:
+            raise ModuleError("this module needs these settings before it installs, and no terminal is available to ask: "
+                              + "; ".join(missing) + ". Pass --set key=value (--set-fleet for a fleet key)")
+    if fleet_vals:
+        _require_owner(lib, [("set-config", manifest["name"])], prompt=_may_prompt(args))
+    return node_vals, fleet_vals
+
+
+def store_fleet(lib, name, key, value, spec, tag=None):
+    """Sign one `x-<name>:` value as the owner; `tag` makes it a `fleet-node` key for that device. Nothing is signed
+    when the journal already holds this value."""
+    full = f"x-{name}:" + (f"node.{tag}.{key}" if tag else key)
+    if _gov(lib)["module_config"].get(full) == value:
+        return False
+    if spec and spec.get("identifying"):
+        print(f"note: {key} is marked identifying; a fleet value is journaled and visible to every admitted device "
+              "for good", file=sys.stderr)
+    try:
+        lib._config_set(full, value)
+    except SystemExit:
+        pass
+    if _gov(lib)["module_config"].get(full) != value:
+        raise ModuleError(f"{full} was not stored (the owner key is locked or the entry was refused)")
+    return True
+
+
+def store_fleet_values(lib, name, schema, fleet_vals):
+    try:
+        for key, value in fleet_vals.items():
+            store_fleet(lib, name, key, value, schema_entry(schema, key)[1])
+    except ModuleError as e:
+        raise ModuleError(f"module {name} is installed, but a fleet setting was not stored: {e}. "
+                          f"Set it with `hive-mind module config {name} set <key> <value> --fleet`")
+
+
+def _config_value_arg(args, key, spec):
+    secret = bool(spec and spec.get("secret")) or (spec is None and _is_secret_key(key))
+    if getattr(args, "stdin", False) and getattr(args, "file", None):
+        raise ModuleError("give the value with --stdin or --file, not both")
+    if getattr(args, "stdin", False):
+        if args.value is not None:
+            raise ModuleError("--stdin takes the value from standard input: do not also give it as an argument")
+        return _read_secret_line()
+    if getattr(args, "file", None):
+        if args.value is not None:
+            raise ModuleError("--file takes the value from a file: do not also give it as an argument")
+        return _read_secret_file(args.file)
+    if secret:
+        if args.value is not None:
+            raise ModuleError(f"{key} is a secret: do not put it on the command line (shell history, `ps`); "
+                              "it is never taken from the command line. "
+                              "Omit the value to be asked, or pass --stdin or --file PATH")
+        if sys.stdin is None or not sys.stdin.isatty():
+            raise ModuleError(f"{key} is a secret: no terminal to ask on, so pass --stdin or --file PATH")
+        return getpass.getpass(f"{key} (hidden): ")
+    if args.value is None:
+        raise ModuleError("config set needs a value")
+    return args.value
+
+
+def _config_set_verb(lib, args, name, schema, node, path):
+    key = args.key
+    ent = schema_entry(schema, key) if schema is not None else None
+    if schema is not None and ent is None:
+        raise ModuleError(f"{name} has no config key {key!r} in its schema (`hive-mind module config {name} list`)")
+    spec = ent[1] if ent else None
+    if args.fleet and args.fleet_node:
+        raise ModuleError("--fleet and --fleet-node are two layers: give one")
+    layer = "fleet" if args.fleet else "fleet-node" if args.fleet_node else "node"
+    if spec and spec.get("scope", "node") != layer:
+        raise ModuleError(f"{key} has scope {spec.get('scope', 'node')}: set it with {SCOPE_FLAG[spec.get('scope', 'node')]}")
+    value = _config_value_arg(args, key, spec)
+    if spec:
+        problem = config_value_problem(spec, value)
+        if problem:
+            raise ModuleError(f"{key}: {problem}")
+    elif len(value) > vocabulary.MODULE_VALUE_MAX:
+        raise ModuleError(f"config value is longer than {vocabulary.MODULE_VALUE_MAX} characters")
+    if layer == "node":
+        if schema is not None and {r["key"]: r["value"] for r in merged_config(schema, node, {}, {})}.get(key) == value:
+            print(f"{name}: {key} is already set: nothing changed")
+            return
+        have = dict(node)
+        have[key] = value
+        _save_config(path, have)
+        print(f"{name}: set {key}")
+        return
+    tag = _device_tag(args.fleet_node) if layer == "fleet-node" else None
+    _require_owner(lib)
+    if store_fleet(lib, name, key, value, spec, tag):
+        print(f"{name}: set {key} ({layer})")
+    else:
+        print(f"{name}: {key} is already set ({layer}): nothing signed")
+
+
+def _config_validate(schema, node, fleet, mine, as_json):
+    if schema is None:
+        errors, warnings = [], ["this module declares no config_schema: nothing to validate"]
+    else:
+        errors, warnings = config_problems(schema, node, fleet, mine)
+    if as_json:
+        print(json.dumps({"ok": not errors, "errors": errors, "warnings": warnings}, indent=1))
+    else:
+        for e in errors:
+            print(f"error: {e}")
+        for w in warnings:
+            print(f"warning: {w}")
+        if not errors:
+            print("config ok")
+    return 1 if errors else 0
 
 
 def cmd_config(lib, args):
-    """`module config <name> set|unset|list`: edit the per-node config file (local, never journaled, kept by update).
-    No owner key is needed: it is this node's own file. A secret key (token, password, ...) is taken from
-    --stdin, --file or a prompt, never argv, and `list` masks it."""
+    """`module config <name> list|get|set|unset|validate`. Node values are this node's own file (local, never
+    journaled, kept by update, no owner key); `--fleet` and `--fleet-node <device>` are owner-signed. With a
+    `config_schema` the key, type, enum, bounds and scope are checked and `list`/`get` show the merged value and its
+    source; secrets are masked everywhere and are never taken from the command line."""
     path = _config_path(lib, args.name)
-    have = _read_config(path)
-    if args.action == "list":
-        for k in sorted(have):
-            print(f"{k}={'********' if _is_secret_key(k) and have[k] else have[k]}")
+    schema = installed_manifest(lib, args.name).get("config_schema")
+    node = _read_config(path)
+    action = args.action
+    merged = schema is not None or args.merged
+    fleet, mine = fleet_layers(_gov(lib), args.name, lib.NODE_ID) if merged or action == "validate" else ({}, {})
+    if action == "validate":
+        return _config_validate(schema, node, fleet, mine, args.json)
+    if action == "list":
+        if not merged and not args.json:
+            for k in sorted(node):
+                print(f"{k}={MASK if _is_secret_key(k) and node[k] else node[k]}")
+            return
+        _print_rows(merged_config(schema, node, fleet, mine), args.json)
         return
     if not vocabulary.split_module_name(f"x-{args.name}:{args.key}"):
         raise ModuleError(f"bad config key {args.key!r}: 1 to {vocabulary.MODULE_KEY_MAX} letters, digits, . _ - "
                           "starting with a letter or digit")
-    if args.action == "set":
-        secret = _is_secret_key(args.key)
-        if secret:
-            if args.value is not None:
-                raise ModuleError(f"{args.key!r} holds a secret: do not put it on the command line (it would "
-                                  f"show in the process list and shell history). Use --stdin, --file PATH, "
-                                  f"or omit the value to be prompted")
-            value = _config_secret_value(args)
+    if action == "get":
+        if schema is not None and schema_entry(schema, args.key) is None:
+            raise ModuleError(f"{args.name} has no config key {args.key!r} in its schema")
+        row = next((r for r in merged_config(schema, node, fleet, mine) if r["key"] == args.key), None)
+        if row is None or row["value"] is None:
+            raise ModuleError(f"{args.name}: {args.key} has no value")
+        if args.json:
+            _print_rows([row], True)
         else:
-            value = args.value
-            if value is None and (getattr(args, "stdin", False) or getattr(args, "file", None)):
-                value = _config_secret_value(args)
-        if value is None:
-            raise ModuleError("config set needs a value")
-        if len(value) > vocabulary.MODULE_VALUE_MAX:
-            raise ModuleError(f"config value is longer than {vocabulary.MODULE_VALUE_MAX} characters")
-        have[args.key] = value
-        print(f"{args.name}: set {args.key}")
-    else:
-        if args.key not in have:
-            raise ModuleError(f"{args.name} has no config key {args.key!r}")
-        del have[args.key]
-        print(f"{args.name}: unset {args.key}")
+            print(_shown(row))
+        return
+    if action == "set":
+        return _config_set_verb(lib, args, args.name, schema, node, path)
+    if args.fleet or args.fleet_node:
+        raise ModuleError("a fleet value is journaled and cannot be removed; set it to a new value instead")
+    if args.key not in node:
+        raise ModuleError(f"{args.name} has no config key {args.key!r}")
+    have = dict(node)
+    del have[args.key]
     _save_config(path, have)
+    print(f"{args.name}: unset {args.key}")
 
 
 def cmd_add(lib, args):
@@ -794,7 +1812,7 @@ def cmd_add(lib, args):
     if pending is not None:
         raise ModuleError(f"module {name!r} has a pending add from a device without the owner key: "
                           f"`hive-mind module add --abort {name}` first")
-    _require_owner(lib)
+    _require_owner(lib, [("admit", name), ("revoke", None)], prompt=_may_prompt(args))
     principal = _operator_principal(lib, args.principal)
     with tempfile.TemporaryDirectory(prefix="hive-module-") as tmp:
         src = Path(tmp) / "src"
@@ -803,6 +1821,8 @@ def cmd_add(lib, args):
         if manifest["name"] != name:
             raise ModuleError(f"the repository holds module {manifest['name']!r}, not {name!r}")
         _confirm_publisher(manifest, args.publisher)
+        plan = contract_plan(name, manifest, state)
+        node_vals, fleet_vals = install_config(lib, args, manifest, owner=True)
         root.mkdir(parents=True, exist_ok=True)
         os.chmod(root, 0o700)
         staging = root / f".{name}.staging"
@@ -820,30 +1840,51 @@ def cmd_add(lib, args):
             gov = _gov(lib)
             if gov["modules"].get(device_id) != name or device_id not in gov["admitted"]:
                 raise ModuleError("the owner could not admit the module's device: nothing installed")
-            _write_config(staging, manifest.get("config", {}))
+            _write_config(staging, {**manifest.get("config", {}), **node_vals})
             os.rename(staging, root / name)
-            note = install_units(lib, name, manifest)
+            note = install_units(lib, name, manifest, plan and plan["path"])
+            apply_launcher(lib, name, manifest, plan)
             state[name] = {"version": manifest["version"], "publisher": manifest["publisher"], "device_id": device_id,
                            "source": args.source, "commit": head, "installed_at": int(time.time()),
-                           "quota": dict(manifest.get("quota") or {}), "owner_quota": {}}
+                           "quota": dict(manifest.get("quota") or {}), "owner_quota": {},
+                           **_reads_record(manifest), **_trust_record(manifest)}
+            record_plan(state[name], plan)
             save_state(lib, state)
         except BaseException:
             shutil.rmtree(staging, ignore_errors=True)
-            _undo_add(lib, name, device_id)
+            _undo_add(lib, name, device_id, plan)
             raise
+        if fleet_vals:
+            store_fleet_values(lib, name, manifest["config_schema"], fleet_vals)
+    warn_missing(name, plan)
     print(f"installed module {name} {manifest['version']} (device {device_id}, principal {principal}); "
           + (f"service {unit_names(name)[0]}" + (" with a timer" if manifest["service"].get("interval") else "")
              if manifest.get("service") else "no service")
           + (f" ({note})" if note else "") + "; hooks: " + (", ".join(manifest.get("hooks") or []) or "none"))
+    return _healthy_rc(args, doctor_after(lib, name, "install"))
 
 
-def _undo_add(lib, name, device_id):
+def _healthy_rc(args, worst):
+    """`--require-healthy`: a module whose doctor reported a `fail` makes the verb exit 1. The install stays."""
+    return 1 if getattr(args, "require_healthy", False) and worst == "fail" else 0
+
+
+def _undo_add(lib, name, device_id, plan=None):
     """A failed add leaves nothing: the key goes, and a device that was admitted is revoked."""
+    if plan and plan.get("launcher"):
+        remove_launcher(plan["bin_dir"], plan["launcher"], name)
     try:
         if _device_state(lib, device_id) == "admitted":
             lib._group_change("revoke", device_id)
     except Exception:
         pass
+    try:
+        still = _device_state(lib, device_id) == "admitted"
+    except Exception:
+        still = False
+    if still:        # the revoke could not be signed (cancelled prompt, agent gone): never silent
+        print(f"device {device_id} is still admitted as a module device: run `hive-mind group revoke {device_id}`",
+              file=sys.stderr)
     shutil.rmtree(Path(lib._ensure_key_dir()) / "modules" / name, ignore_errors=True)
     shutil.rmtree(modules_dir() / name, ignore_errors=True)
     try:
@@ -860,16 +1901,18 @@ def cmd_remove(lib, args):
     device_id = rec["device_id"]
     if not lib._owner_key_exists():
         return _remove_without_owner(lib, args.name, device_id, state)
-    _require_owner(lib)
+    _require_owner(lib, [("revoke", device_id)] if _device_state(lib, device_id) == "admitted" else [])
     if _device_state(lib, device_id) == "admitted":
         lib._group_change("revoke", device_id)
     if _device_state(lib, device_id) == "admitted":
         raise ModuleError("the owner could not revoke the module's device: nothing removed")
     remove_units(args.name)                       # stop it before its files and key go
+    remove_launcher(rec.get("bin_dir"), rec.get("launcher"), args.name)
     shutil.rmtree(modules_dir() / args.name, ignore_errors=True)
     shutil.rmtree(Path(lib._ensure_key_dir()) / "modules" / args.name, ignore_errors=True)
     state.pop(args.name)
     save_state(lib, state)
+    drop_doctor_cache(lib.HIVE_HOME, args.name)
     print(f"removed module {args.name}; its device {device_id} is revoked and its entries stay in the journal")
 
 
@@ -877,16 +1920,52 @@ def _remove_without_owner(lib, name, device_id, state):
     """Remove on a device without the owner key: stop the unit, delete the tree and the key, and say what only the
     owner can finish. The device id stays admitted until the owner's revoke."""
     remove_units(name)                            # stop it before its files and key go
+    remove_launcher(state[name].get("bin_dir"), state[name].get("launcher"), name)
     shutil.rmtree(modules_dir() / name, ignore_errors=True)
     _clear_pending(lib, name)
     shutil.rmtree(Path(lib._ensure_key_dir()) / "modules" / name, ignore_errors=True)
     state.pop(name)
     save_state(lib, state)
+    drop_doctor_cache(lib.HIVE_HOME, name)
     if _device_state(lib, device_id) == "admitted":
         print(f"removed module {name} from this node; its device {device_id} STAYS ADMITTED until the owner revokes it. "
               f"On the owner machine run:\n  hive-mind group revoke {device_id}")
     else:
         print(f"removed module {name} from this node; its device {device_id} is already {_device_state(lib, device_id)}")
+
+
+def _check_trust_raise(lib, rec, manifest, prompt=True):
+    """An update may keep or lower the tier the module holds; one that signs a higher tier than the node last held it
+    at is a raise, and only the owner's key may make it. Checked before anything is fetched into place."""
+    old = rec.get("trust", "trusted")
+    if TRUST_TIERS.index(signed_trust(manifest)) > TRUST_TIERS.index(old):
+        print(f"module {manifest['name']}: this update raises the signed trust tier from {old} to {signed_trust(manifest)}")
+        _require_owner(lib, prompt=prompt)
+
+
+def cmd_trust(lib, args):
+    """Show a module's tier, or set the node-local one. `confined` lowers it and needs no key; `trusted` clears that
+    lowering, which is a raise, so it needs the owner's key. Neither goes above what the publisher signed."""
+    state = load_state(lib)
+    rec = state.get(args.name)
+    if rec is None:
+        raise ModuleError(f"module {args.name!r} is not installed")
+    if args.tier is None:
+        print(f"{args.name}: {effective_trust(rec)} (signed {rec.get('trust', 'trusted')}"
+              + (f", lowered on this node to {rec['trust_local']}" if rec.get("trust_local") else "") + ")")
+        return
+    if args.tier == "trusted":
+        if rec.get("trust_local"):
+            _require_owner(lib)
+            rec.pop("trust_local")
+            save_state(lib, state)
+        if rec.get("trust", "trusted") == "confined":
+            print(f"{args.name} stays confined: the publisher signed it that way, and only a signed manifest raises it")
+            return
+    elif rec.get("trust", "trusted") != "confined":
+        rec["trust_local"] = "confined"
+        save_state(lib, state)
+    print(f"{args.name}: {effective_trust(rec)}")
 
 
 def cmd_update(lib, args):
@@ -898,46 +1977,110 @@ def cmd_update(lib, args):
     if rec is None:
         raise ModuleError(f"module {args.name!r} is not installed")
     source = args.source or rec["source"]            # no owner key needed: it admits, revokes and re-limits nothing
-    root = modules_dir()
     with tempfile.TemporaryDirectory(prefix="hive-module-") as tmp:
         src = Path(tmp) / "src"
         tracked, head = _fetch(source, src)
-        manifest = check_tree(src, lib.CONTRACT_VERSION, tracked)
-        if manifest["name"] != args.name:
-            raise ModuleError(f"the repository holds module {manifest['name']!r}, not {args.name!r}")
-        _confirm_publisher(manifest, args.publisher, pinned=rec["publisher"])
-        staging, old = root / f".{args.name}.staging", root / f".{args.name}.old"
-        try:
-            _stage(src, manifest, staging)
-        except (ModuleError, OSError):
-            shutil.rmtree(staging, ignore_errors=True)
-            raise
-        live = root / args.name
-        swapped = False
-        try:
-            _write_config(staging, {**manifest.get("config", {}),
-                                    **(json.loads((live / "config").read_text()) if (live / "config").exists() else {})})
-            shutil.rmtree(old, ignore_errors=True)
-            os.rename(live, old)                  # two renames: a crash between them leaves the old copy at `.old`
-            swapped = True                        # only now is `.old` this update's; a stale one is never rolled back
-            os.rename(staging, live)
-            note = install_units(lib, args.name, manifest)
-        except BaseException:
-            if swapped:
-                shutil.rmtree(live, ignore_errors=True)
-                os.rename(old, live)
-                try:                                  # put the old unit back beside the old files
-                    install_units(lib, args.name, json.loads((live / MANIFEST).read_text()))
-                except (OSError, ValueError, KeyError):
-                    pass
-            shutil.rmtree(staging, ignore_errors=True)
-            raise
+        manifest = _candidate(lib, args.name, rec, src, tracked, args.publisher)
+        return _update_tree(lib, args, state, rec, source, src, manifest, head)
+
+
+def _candidate(lib, name, rec, src, tracked, publisher=None):
+    """The verified manifest of the fetched tree `src` as an update of installed module `name`: the same tree check as
+    an add, the same module, signed by the pinned publisher. Raises ModuleError."""
+    manifest = check_tree(src, lib.CONTRACT_VERSION, tracked)
+    if manifest["name"] != name:
+        raise ModuleError(f"the repository holds module {manifest['name']!r}, not {name!r}")
+    _confirm_publisher(manifest, publisher, pinned=rec["publisher"])
+    return manifest
+
+
+def _update_tree(lib, args, state, rec, source, src, manifest, head):
+    """Swap the verified `manifest` tree at `src` in for the installed module, its units and launcher with it, and roll
+    back on failure. A successful update lifts a `disabled` mark: this version is one the core admits."""
+    root = modules_dir()
+    _check_trust_raise(lib, rec, manifest, prompt=_may_prompt(args))
+    print(f"module {args.name} {manifest['version']} declares: {trust_summary(manifest)}")
+    if reads_summary(manifest):                   # the pinned key needs no prompt, but the new read access is shown
+        print(f"module {args.name} {manifest['version']} declares: {reads_summary(manifest)}")
+    try:
+        before = installed_manifest(lib, args.name).get("config_schema") or {}
+        have = _read_config(modules_dir() / args.name / "config")
+    except ModuleError:                       # update is the remedy for a broken install: ask for every required key
+        before, have = {}, {}
+    plan = contract_plan(args.name, manifest, state, rec.get("runtime_overrides"))
+    node_vals, fleet_vals = install_config(lib, args, manifest, owner=lib._owner_key_exists(),
+                                           asked=set(manifest.get("config_schema") or {}) - set(before), have=have)
+    staging, old = root / f".{args.name}.staging", root / f".{args.name}.old"
+    try:
+        _stage(src, manifest, staging)
+    except (ModuleError, OSError):
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    live = root / args.name
+    swapped = False
+    try:
+        _write_config(staging, {**manifest.get("config", {}), **node_vals,
+                                **(json.loads((live / "config").read_text()) if (live / "config").exists() else {})})
         shutil.rmtree(old, ignore_errors=True)
-        rec.update(version=manifest["version"], source=source, commit=head,
-                   quota=dict(manifest.get("quota") or {}))     # the owner's own limits (owner_quota) are kept
-        save_state(lib, state)
+        os.rename(live, old)                  # two renames: a crash between them leaves the old copy at `.old`
+        swapped = True                        # only now is `.old` this update's; a stale one is never rolled back
+        os.rename(staging, live)
+        note = install_units(lib, args.name, manifest, plan and plan["path"])
+        apply_launcher(lib, args.name, manifest, plan)
+    except BaseException:
+        if swapped:
+            shutil.rmtree(live, ignore_errors=True)
+            os.rename(old, live)
+            try:                                  # put the old unit back beside the old files
+                before_manifest = json.loads((live / MANIFEST).read_text())
+                if is_disabled(rec):                  # still disabled: the failed attempt's start is undone, nothing is revived
+                    _stop_units(args.name)
+                else:
+                    install_units(lib, args.name, before_manifest, recorded_path(rec))
+                if plan and plan.get("launcher") != rec.get("launcher"):
+                    remove_launcher(plan["bin_dir"], plan.get("launcher"), args.name)
+                if not is_disabled(rec):              # a disabled module's launcher stays gone: it would run the rejected tree
+                    _restore_launcher(lib, args.name, rec, before_manifest)
+            except (OSError, ValueError, KeyError):
+                pass
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    shutil.rmtree(old, ignore_errors=True)
+    gone = (rec.get("bin_dir"), rec.get("launcher"))
+    rec.update(version=manifest["version"], source=source, commit=head,
+               quota=dict(manifest.get("quota") or {}))     # the owner's own limits (owner_quota) are kept
+    record_plan(rec, plan)
+    rec.pop("reads", None)                                  # the new manifest's list replaces the old, or none
+    rec.update(_reads_record(manifest))
+    rec.pop("trust", None)                                  # the signed tier is the new manifest's; trust_local stays
+    rec.update(_trust_record(manifest))
+    rec.pop("disabled", None)                               # a disabled-incompatible module is back
+    if gone[1] and gone[1] != rec.get("launcher"):          # the new version renamed (or dropped) its cli
+        remove_launcher(*gone, args.name)
+    save_state(lib, state)
+    warn_missing(args.name, plan)
+    if fleet_vals:
+        store_fleet_values(lib, args.name, manifest["config_schema"], fleet_vals)
     print(f"updated module {args.name} to {manifest['version']}; its key, device and pinned publisher are unchanged"
           + (f" ({note})" if note else ""))
+    return _healthy_rc(args, doctor_after(lib, args.name, "update"))
+
+
+def is_disabled(rec):
+    """Whether `hive-mind update` disabled this module because no version of it admits this core."""
+    return isinstance(rec, dict) and isinstance(rec.get("disabled"), dict)
+
+
+def _stop_units(name):
+    """Stop and disable the module's units without deleting them, so the update that fixes it can start them again.
+    Only the module's own two units are named: seat sessions it started in their own scopes are not touched. Returns
+    False when a unit would not stop."""
+    ok = True
+    d = unit_dir()
+    for f in reversed(unit_names(name)):
+        if (d / f).exists():
+            ok = _systemctl("disable", "--now", f, timeout=_stop_timeout(_unit_grace(d / f))) and ok
+    return ok
 
 
 def _installed_signature(lib, name):
@@ -961,16 +2104,125 @@ def _quota_use(lib, device_id):
     return f"{sum(1 for t in times if t > now - 3600)}/h {len(times)}/d {life} total"
 
 
+# ── `module install`: the one idempotent command (3.1, #294 PR 5, design §8) ───────────────────────
+
+EXIT_REFUSED, EXIT_WAITING, EXIT_UNHEALTHY, EXIT_LOCKED = 1, 3, 4, 5      # 0 converged, 2 usage (argparse)
+
+
+def _doctor_row(lib, name):
+    """The doctor's `modules:<name>` row for one installed module (step 11). It never raises."""
+    import hive_module_doctor
+    import merkle
+    try:
+        return hive_module_doctor._module(lib, _gov(lib), name, load_state(lib)[name],
+                                          merkle.read_all_entries(lib.JOURNAL_DIR), hive_module_doctor.listener_up(),
+                                          time.time())
+    except Exception as e:
+        return {"name": f"modules:{name}", "status": "warn", "detail": f"the doctor could not run ({e})"}
+
+
+def _install_present(lib, args, rec):
+    """An installed module: a different commit (or a tree that no longer verifies) takes the `update` path; the same
+    commit converges the rest (config given on the command line, units, launcher) and changes nothing else."""
+    name = args.name
+    if args.publisher is not None and args.publisher != rec["publisher"]:
+        raise ModuleError("--publisher does not match the publisher key pinned at the first install: refusing")
+    with tempfile.TemporaryDirectory(prefix="hive-module-") as tmp:
+        _tracked, head = _fetch(args.source, Path(tmp) / "src")
+    if head != rec.get("commit") or args.source != rec["source"] or _installed_signature(lib, name) != "valid":
+        cmd_update(lib, args)
+        return "updated"
+    manifest = installed_manifest(lib, name)
+    path = modules_dir() / name / "config"
+    have = _read_config(path)
+    node_vals, fleet_vals = install_config(lib, args, manifest, owner=lib._owner_key_exists(), enforce=False, have=have)
+    changed = {k: v for k, v in node_vals.items() if have.get(k) != v}
+    gov_cfg = _gov(lib)["module_config"]
+    fleet_changed = {k: v for k, v in fleet_vals.items() if gov_cfg.get(f"x-{name}:{k}") != v}
+    if changed:
+        _save_config(path, {**have, **changed})
+    if fleet_changed:
+        store_fleet_values(lib, name, manifest["config_schema"], fleet_changed)
+    _reapply_names(lib, [name])                  # units and launcher: rewritten only when their text differs
+    if changed or fleet_changed:
+        print(f"module {name} {rec['version']} is installed at {head}: configuration updated")
+        return "configured"
+    print(f"module {name} {rec['version']} is installed at {head}: nothing to do")
+    return "unchanged"
+
+
+def _install(lib, args):
+    ok, why = platform_supported()
+    if not ok:
+        raise ModuleError(why)
+    name = args.name
+    if not vocabulary.valid_module_name(name):
+        raise ModuleError(f"{name!r} is not a valid module name")
+    rec = load_state(lib).get(name)
+    args.source = args.source or (rec or {}).get("source")
+    if not args.source:
+        raise ModuleError(f"module {name!r} is not installed: module install needs --from <repository>")
+    args.abort = False
+    if rec is not None:
+        return _install_present(lib, args, rec)
+    cmd_add(lib, args)
+    return "installed" if name in load_state(lib) else "staged"
+
+
+def cmd_install(lib, args):
+    """Converge on the installed module the manifest and config describe. Exit 0 converged (or nothing to do), 1
+    refused with nothing changed, 3 waiting for the owner's admit (a member node: staged), 4 installed but the doctor
+    reported `fail` (`--require-healthy`), 5 owner key locked. `--json` prints one object and never prompts."""
+    if args.json:
+        args.non_interactive = True
+    args.no_owner_prompt = args.non_interactive
+    out, err = io.StringIO(), io.StringIO()
+    outcome, rc, error, row = "refused", EXIT_REFUSED, None, None
+    with contextlib.redirect_stdout(out) if args.json else contextlib.nullcontext(), \
+            contextlib.redirect_stderr(err) if args.json else contextlib.nullcontext():
+        try:
+            outcome = _install(lib, args)
+            rc = 0
+        except OwnerWait as e:
+            outcome, rc, error = "waiting", EXIT_WAITING, str(e)
+        except OwnerLocked as e:
+            outcome, rc, error = "locked", EXIT_LOCKED, str(e)
+        except lib.OwnerKeyLocked as e:
+            outcome, rc, error = "locked", EXIT_LOCKED, str(e)
+        except ModuleError as e:
+            error = str(e)
+        if outcome == "staged":
+            rc = EXIT_WAITING
+        if rc == 0:
+            row = _doctor_row(lib, args.name)
+            print(f"doctor: {row['name']} {row['status']}: {row['detail']}")
+            if args.require_healthy and row["status"] == "fail":
+                outcome, rc = "unhealthy", EXIT_UNHEALTHY
+        if error and not args.json:
+            print(f"hive-mind module: {error}", file=sys.stderr)
+    if args.json:
+        rec = load_state(lib).get(args.name) or {}
+        pending = _read_pending(args.name)
+        print(json.dumps({"ok": rc == 0, "exit": rc, "name": args.name, "result": outcome,
+                          "version": rec.get("version") or (pending or {}).get("version"),
+                          "commit": rec.get("commit") or (pending or {}).get("commit"),
+                          "admit_line": _admit_line(pending, args.name) if pending and rc == EXIT_WAITING else None,
+                          "error": error, "doctor": row,
+                          "messages": out.getvalue().splitlines(), "warnings": err.getvalue().splitlines()},
+                         indent=1, sort_keys=True))
+    return rc
+
+
 def cmd_list(lib, args):
     state = load_state(lib)
     if not state:
         print("No modules installed.")
         return
-    print(f"{'NAME':<16}{'VERSION':<10}{'PUBLISHER':<18}{'SIGNATURE':<10}{'SERVICE':<14}{'DEVICE':<10}QUOTA USE")
+    print(f"{'NAME':<16}{'VERSION':<10}{'PUBLISHER':<18}{'SIGNATURE':<10}{'SERVICE':<14}{'DEVICE':<10}{'TRUST':<10}QUOTA USE")
     for name, rec in sorted(state.items()):
         sig = _installed_signature(lib, name)
         print(f"{name:<16}{rec['version']:<10}{fingerprint(rec['publisher']):<18}{sig.split(' ')[0]:<10}"
-              f"{service_state(name):<14}{_device_state(lib, rec['device_id']):<10}{_quota_use(lib, rec['device_id'])}")
+              f"{service_state(name):<14}{_device_state(lib, rec['device_id']):<10}{effective_trust(rec):<10}{_quota_use(lib, rec['device_id'])}")
         if sig != "valid":
             print(f"  ! {sig}")
 
@@ -981,7 +2233,7 @@ def cmd_quota(lib, args):
     rec = state.get(args.name)
     if rec is None:
         raise ModuleError(f"module {args.name!r} is not installed")
-    _require_owner(lib)
+    _require_owner(lib)                           # nothing is signed: the agent's public-key check is enough
     mine = dict(rec.get("owner_quota") or {})
     for k in QUOTA_KEYS:
         v = getattr(args, k)
@@ -999,18 +2251,43 @@ def cmd_reapply(lib, args):
     """Internal, run by `hive-mind update` after a core update: render every installed module's units again, write
     the files that changed, reload systemd once and restart only those units. It never fails: a module that cannot
     be re-applied is a warning that names it."""
+    _reapply_names(lib, sorted(load_state(lib)))
+
+
+def _reapply_names(lib, names):
+    """Re-render the units (and, for a contract-1 module, re-resolve its runtimes and refresh its launcher and
+    recorded PATH) of the named modules. Never raises."""
     if not platform_supported()[0]:
         return
-    pending = []
-    for name in sorted(load_state(lib)):
+    pending, dirty = [], False
+    state = load_state(lib)
+    for name in names:
+        rec = state.get(name)
+        if rec is None or is_disabled(rec):       # a disabled module's units stay off until an update fixes it
+            continue
         try:
             manifest = check_tree(modules_dir() / name, lib.CONTRACT_VERSION, ignore=("config",))
-            unit = _write_units(lib, name, manifest, only_changed=True)
+            plan = contract_plan(name, manifest, state, rec.get("runtime_overrides"))
+            unit = _write_units(lib, name, manifest, only_changed=True, path=plan and plan["path"])
+            if plan:
+                gone = (rec.get("bin_dir"), rec.get("launcher"))
+                apply_launcher(lib, name, manifest, plan)
+                before = dict(rec)
+                record_plan(rec, plan)
+                dirty = dirty or rec != before
+                if gone[1] and gone[1] != rec.get("launcher"):
+                    remove_launcher(*gone, name)
+                warn_missing(name, plan)
         except (ModuleError, OSError, ValueError, KeyError) as e:
             print(f"hive-mind module: warning: {name}: units not re-applied ({e})", file=sys.stderr)
             continue
         if unit:
             pending.append((name, unit))
+    if dirty:
+        try:
+            save_state(lib, state)
+        except OSError as e:
+            print(f"hive-mind module: warning: could not record the runtimes ({e})", file=sys.stderr)
     if not pending:
         return
     if not _systemctl("show-environment"):
@@ -1024,6 +2301,528 @@ def cmd_reapply(lib, args):
             print(f"hive-mind module: warning: {name}: {note}", file=sys.stderr)
 
 
+# ── `hive-mind update` brings the installed modules along (3.1, #390) ───────────────────────────────
+
+def _version_key(v):
+    """A version that is only one to three dotted integers (`1`, `1.2`, `1.2.3`), as a tuple; None for anything else
+    (a suffix, a leading non-digit, a fourth component), which cannot be ordered."""
+    if not (isinstance(v, str) and re.fullmatch(r"\d{1,9}(\.\d{1,9}){0,2}", v)):
+        return None
+    parts = tuple(int(x) for x in v.split("."))
+    return parts + (0,) * (3 - len(parts))
+
+
+def _refuse_unless_newer(have, new):
+    """An automatic update installs a strictly newer version, or a republish of the same version string. Anything the
+    two strings cannot be ordered by is refused, so a signed older tree cannot pass as an update."""
+    if have == new:
+        return
+    hk, nk = _version_key(have), _version_key(new)
+    if hk and nk and nk > hk:
+        return
+    why = "older than" if hk and nk and nk < hk else "not provably newer than"
+    raise ModuleError(f"the source offers {new}, {why} the installed {have}: an automatic update only goes forward "
+                      "(`hive-mind module update` takes any tree the pinned publisher signed)")
+
+
+def _installed_compat(lib, name):
+    """None when the installed tree still verifies under this core (so it is compatible), else why not. An OSError
+    is not an answer about compatibility: it is None too, so a read error never disables a module."""
+    try:
+        check_tree(modules_dir() / name, lib.CONTRACT_VERSION, ignore=("config",))
+    except ModuleError as e:
+        return str(e)
+    except OSError:
+        return None
+    return None
+
+
+def _refresh_args(name):
+    return argparse.Namespace(name=name, source=None, publisher=None, set=[], set_fleet=[], set_env=[],
+                              non_interactive=True, no_owner_prompt=True, require_healthy=False)
+
+
+def _loud(lines):
+    bar = "!" * 72
+    print("\n".join(["", bar, *lines, bar, ""]), file=sys.stderr)
+
+
+def _refresh_one(lib, name, state, check):
+    """One module. Returns "current", "updated", "kept" (update failed, the installed version still admits this core)
+    or "disabled". Nothing here raises."""
+    rec = state[name]
+    off = is_disabled(rec)
+    reason, manifest = None, None
+    try:
+        if not isinstance(rec.get("source"), str) or not rec["source"]:
+            raise ModuleError("no source is recorded for it")
+        with tempfile.TemporaryDirectory(prefix="hive-module-") as tmp:
+            src = Path(tmp) / "src"
+            tracked, head = _fetch(rec["source"], src)
+            manifest = _candidate(lib, name, rec, src, tracked)
+            _refuse_unless_newer(rec.get("version"), manifest["version"])
+            if not off and head == rec.get("commit") and _installed_signature(lib, name) == "valid":
+                print(f"module {name} {rec['version']} is current")
+                return "current"
+            if check:
+                print(f"module {name}: would {'re-enable and ' if off else ''}update {rec['version']} -> {manifest['version']}")
+                return "updated"
+            _update_tree(lib, _refresh_args(name), state, rec, rec["source"], src, manifest, head)
+            return "updated"
+    except (ModuleError, OSError, ValueError, KeyError, TypeError, lib.OwnerKeyLocked) as e:
+        reason = str(e) or type(e).__name__
+    except subprocess.SubprocessError as e:
+        reason = f"git failed ({e})"
+    problem = _installed_compat(lib, name)
+    if off:
+        _loud([f"module {name} stays DISABLED: {reason}",
+               f"fix it, then run: hive-mind module update {name}"])
+        return "disabled"
+    if problem is None:
+        _loud([f"module {name} {rec.get('version')} was NOT updated: {reason}",
+               "The installed version still works with this core and keeps running.",
+               f"To retry: hive-mind module update {name}"])
+        return "kept"
+    if check:
+        print(f"module {name}: would DISABLE (no version admits this core: {reason}; installed: {problem})")
+        return "disabled"
+    _disable(lib, name, state, f"{reason}; the installed version does not admit this core ({problem})")
+    return "disabled"
+
+
+def _disable(lib, name, state, why):
+    rec = state[name]
+    stopped = _stop_units(name)
+    if rec.get("bin_dir") and rec.get("launcher"):
+        with contextlib.suppress(OSError, ModuleError):
+            remove_launcher(rec["bin_dir"], rec["launcher"], name)      # the launcher would still run its code
+    rec["disabled"] = {"reason": why[:500], "core": str(lib.CONTRACT_VERSION), "at": int(time.time())}
+    save_state(lib, state)
+    _loud([f"module {name} is DISABLED: no version of it works with this core.", f"why: {why}",
+           "Its units are stopped and disabled, its hooks and command are off; nothing else of it was deleted."
+           + ("" if stopped else f" A unit would not stop: check `systemctl --user status hive-module-{name}`."),
+           f"`hv doctor` reports modules:{name} as disabled-incompatible until it is fixed.",
+           f"To bring it back once a compatible version is published: hive-mind module update {name}",
+           "The core update itself succeeded."])
+
+
+def cmd_refresh(lib, args):
+    """Internal, run by `hive-mind update` after the core update: bring each installed module to the newest signed
+    version at its recorded source that this core admits, or say loudly why not. It never fails the core update.
+    `--check` plans the same run and changes nothing."""
+    if not platform_supported()[0]:
+        return 0
+    state = load_state(lib)
+    keep = []
+    for name in sorted(state):
+        if not isinstance(state[name], dict) or not vocabulary.valid_module_name(name):
+            continue
+        outcome = _refresh_one(lib, name, state, args.check)
+        if outcome in ("current", "kept") and not args.check:
+            keep.append(name)
+    if keep:
+        _reapply_names(lib, keep)       # the new core's unit text, for a module that stays on its installed version
+    return 0
+
+
+# ── `module check`: the publisher's conformance run ─────────────────────────────────────────────────
+
+CHECK_TIMEOUT, CHECK_OUTPUT_CAP = 20, 64 * 1024
+STATUS_STATES = ("ok", "degraded", "down", "unknown")
+DOCTOR_LEVELS = ("ok", "warn", "fail")
+_TEXT_LIMIT = 1024 * 1024
+_CODE_SUFFIXES = {".py", ".sh", ".js", ".ts", ".rb", ".pl", ".rs", ".go", ".c", ".h", ".java"}
+_LINTS = (
+    ("an email address", re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+\.[A-Za-z0-9.-]+[A-Za-z]"), False),
+    ("a home directory", re.compile(r"/(?:home|Users)/(?![<{$%]|user\b|you\b|name\b|username\b)[A-Za-z0-9._-]+"), False),
+    ("an @-handle", re.compile(r"(?<![\w@.])@[A-Za-z0-9][A-Za-z0-9-]{1,38}\b(?!\.[a-z])"), True),
+    ("a repository", re.compile(r"github\.com[/:](?![<{$%])[A-Za-z0-9._-]+/[A-Za-z0-9._-]+"), False),
+)
+
+
+def status_problems(obj):
+    """Why `obj` is not the fixed `status` envelope, as a list of lines (empty when it is)."""
+    if not isinstance(obj, dict):
+        return ["status did not print a JSON object"]
+    out = []
+    if obj.get("schema") != 1 or not _is_int(obj.get("schema")):
+        out.append("status `schema` must be 1")
+    if obj.get("state") not in STATUS_STATES:
+        out.append(f"status `state` must be one of {', '.join(STATUS_STATES)}")
+    if not isinstance(obj.get("version"), str):
+        out.append("status `version` must be a string")
+    if not isinstance(obj.get("problems"), list) or not all(isinstance(p, str) for p in obj["problems"]):
+        out.append("status `problems` must be a list of strings")
+    units = obj.get("units", [])
+    if not isinstance(units, list) or not all(isinstance(u, dict) and isinstance(u.get("name"), str)
+                                              and isinstance(u.get("state"), str) for u in units):
+        out.append("status `units` must be a list of {name, state}")
+    if not isinstance(obj.get("detail", {}), dict):
+        out.append("status `detail` must be an object")
+    return out
+
+
+def doctor_problems(obj, returncode):
+    """Why `obj` and the exit code are not a conforming `doctor` answer (empty when they are)."""
+    if not isinstance(obj, dict):
+        return ["doctor did not print a JSON object"]
+    out = []
+    if obj.get("schema") != 1 or not _is_int(obj.get("schema")):
+        out.append("doctor `schema` must be 1")
+    results = obj.get("results")
+    if not isinstance(results, list) or len(results) > 100:
+        return out + ["doctor `results` must be a list of at most 100 results"]
+    failed = False
+    for i, r in enumerate(results):
+        if not (isinstance(r, dict) and r.get("level") in DOCTOR_LEVELS and isinstance(r.get("check"), str)
+                and isinstance(r.get("message"), str) and isinstance(r.get("fix_hint", ""), str)
+                and set(r) <= {"level", "check", "message", "fix_hint"}
+                and all(len(v) <= 400 for v in r.values())):
+            out.append(f"doctor result {i} must be {{level: ok|warn|fail, check, message, fix_hint?}} with strings of at most 400 characters")
+        else:
+            failed = failed or r["level"] == "fail"
+    if (returncode != 0) != failed:
+        out.append("doctor must exit 0 unless a result is `fail`" if returncode else "doctor reported a `fail` but exited 0")
+    return out
+
+
+# ── the doctor slot (3.1, #294 PR 4) ─────────────────────────────────────────────────────────────────
+# The core runs a contract-1 module's own `doctor` (an argv, no shell, 20 s, 64 KiB) and reads what it prints as text.
+# Whatever the module does wrong becomes a `warn` that names it; the core's own checks never wait on it. Results are
+# cached beside the hive (never journaled) so a dashboard shows them and their age without starting module code.
+
+DOCTOR_MODES = ("manual", "install", "update", "boot", "timer")
+DOCTOR_MAX_RESULTS, DOCTOR_MAX_STRING = 100, 400
+DOCTOR_CACHE_DIR = ".module-doctor"
+_DOCTOR_KEYS = {"level", "check", "message", "fix_hint"}
+
+
+def clean_text(value, limit=DOCTOR_MAX_STRING):
+    """Text from a module: control, format (bidi, zero-width) and line-break characters out, whitespace made plain,
+    at most `limit` characters. Rendered as text, never as markup."""
+    out = []
+    for ch in str(value):
+        cat = unicodedata.category(ch)
+        if ch in "\t\n\r":
+            out.append(" ")
+        elif cat not in ("Cc", "Cf", "Zl", "Zp"):
+            out.append(ch)
+    return "".join(out)[:limit]
+
+
+def _doctor_result(level, check, message, fix_hint=None):
+    r = {"level": level, "check": clean_text(check), "message": clean_text(message)}
+    if fix_hint:
+        r["fix_hint"] = clean_text(fix_hint)
+    return r
+
+
+def doctor_results(rc, obj, why):
+    """What the core makes of one doctor run: a list of {level, check, message, fix_hint?}. Never raises. A crash, a
+    timeout, a missing command, an over-long or non-JSON answer, a wrong shape and a bad exit code are each a `warn`;
+    a `fail` the module reported stays a `fail`."""
+    if why:
+        return [_doctor_result("warn", "doctor", f"doctor {why}" + (f" (exit {rc})" if rc else ""))]
+    if not isinstance(obj, dict):
+        return [_doctor_result("warn", "doctor", "doctor did not print a JSON object")]
+    if obj.get("schema") != 1 or not _is_int(obj.get("schema")):
+        return [_doctor_result("warn", "doctor", "doctor `schema` must be 1: its results were not read")]
+    raw = obj.get("results")
+    if not isinstance(raw, list):
+        return [_doctor_result("warn", "doctor", "doctor `results` must be a list: its results were not read")]
+    out = []
+    for i, r in enumerate(raw[:DOCTOR_MAX_RESULTS]):
+        if not (isinstance(r, dict) and r.get("level") in DOCTOR_LEVELS and isinstance(r.get("check"), str)
+                and isinstance(r.get("message"), str) and isinstance(r.get("fix_hint", ""), str) and set(r) <= _DOCTOR_KEYS):
+            out.append(_doctor_result("warn", "doctor", f"doctor result {i} is not {{level: ok|warn|fail, check, message, fix_hint?}}: ignored"))
+        else:
+            out.append(_doctor_result(r["level"], r["check"], r["message"], r.get("fix_hint")))
+    if len(raw) > DOCTOR_MAX_RESULTS:
+        out.append(_doctor_result("warn", "doctor", f"doctor printed {len(raw)} results: only the first {DOCTOR_MAX_RESULTS} are kept"))
+    if rc != 0 and not any(r["level"] == "fail" for r in out):
+        out.append(_doctor_result("warn", "doctor", f"doctor exited {rc}"))
+    return out
+
+
+def run_doctor(name, rec, manifest, key_dir, mode="manual"):
+    """Run the module's `doctor` and return `doctor_results` for it ([] for a manifest without one). The caller has
+    already established that the manifest is the pinned publisher's: this runs module code, with `narrow_env` and
+    `HIVE_DOCTOR_MODE` (manual|install|update|boot|timer) and nothing else of the caller's."""
+    if not manifest.get("doctor"):
+        return []
+    env = narrow_env(name, rec, key_dir, HIVE_DOCTOR_MODE=mode if mode in DOCTOR_MODES else "manual")
+    rc, obj, why = _run_json(manifest["doctor"], manifest["files"], modules_dir() / name, env)
+    return doctor_results(rc, obj, why)
+
+
+def doctor_worst(results):
+    return max((r["level"] for r in results), key=DOCTOR_LEVELS.index, default="ok")
+
+
+def _cache_dir(home, create=False):
+    d = Path(home) / DOCTOR_CACHE_DIR
+    if create:
+        try:
+            d.mkdir(mode=0o700, exist_ok=True)
+        except OSError:
+            return None
+    try:
+        st = os.lstat(d)
+    except OSError:
+        return None
+    return d if stat.S_ISDIR(st.st_mode) and st.st_uid == os.getuid() and not st.st_mode & 0o022 else None
+
+
+def write_doctor_cache(home, name, mode, version, results, now=None):
+    """Keep the latest results in `<home>/.module-doctor/<name>.json` (0600, a 0700 directory of the operator's: a
+    link or a shared directory is not written). Returns whether it was written. Never raises."""
+    if not vocabulary.valid_module_name(name):
+        return False
+    d = _cache_dir(home, create=True)
+    if d is None:
+        return False
+    doc = {"schema": 1, "module": name, "version": clean_text(version, 64), "mode": mode, "at": int(time.time() if now is None else now),
+           "worst": doctor_worst(results), "results": results}
+    tmp = d / f".{name}.{os.getpid()}.tmp"
+    try:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "w") as f:
+            json.dump(doc, f, sort_keys=True)
+        os.replace(tmp, d / f"{name}.json")
+        return True
+    except OSError:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        return False
+
+
+def read_doctor_cache(home, name):
+    """The cached doctor document for `name`, or None (absent, unreadable, over 256 KiB or not shaped as written).
+    Reads a file; runs nothing. Every string is cleaned again, whatever wrote the file."""
+    d = _cache_dir(home)
+    if d is None or not vocabulary.valid_module_name(name):
+        return None
+    try:
+        path = d / f"{name}.json"
+        if not stat.S_ISREG(os.lstat(path).st_mode) or os.lstat(path).st_size > 256 * 1024:
+            return None
+        doc = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    if not (isinstance(doc, dict) and doc.get("schema") == 1 and _is_int(doc.get("at")) and isinstance(doc.get("results"), list)):
+        return None
+    results = [_doctor_result(r["level"], r["check"], r["message"], r.get("fix_hint")) for r in doc["results"][:DOCTOR_MAX_RESULTS]
+               if isinstance(r, dict) and r.get("level") in DOCTOR_LEVELS and isinstance(r.get("check"), str)
+               and isinstance(r.get("message"), str) and isinstance(r.get("fix_hint", ""), str)]
+    return {"module": name, "version": clean_text(doc.get("version", ""), 64), "mode": doc.get("mode") if doc.get("mode") in DOCTOR_MODES else "manual",
+            "at": doc["at"], "worst": doctor_worst(results), "results": results}
+
+
+def drop_doctor_cache(home, name):
+    d = _cache_dir(home)
+    if d is not None and vocabulary.valid_module_name(name):
+        try:
+            os.unlink(d / f"{name}.json")
+        except OSError:
+            pass
+
+
+def doctor_after(lib, name, mode):
+    """The end of `module add` and `update`: run the new module's doctor, cache and print what it says. It never rolls
+    the install back. Returns the worst level ('ok' for a module without a doctor)."""
+    rec = load_state(lib).get(name)
+    try:
+        manifest = installed_manifest(lib, name)
+    except ModuleError:
+        return "ok"
+    if rec is None or not manifest.get("doctor"):
+        return "ok"
+    results = run_doctor(name, rec, manifest, Path(lib._ensure_key_dir()) / "modules" / name, mode)
+    write_doctor_cache(lib.HIVE_HOME, name, mode, manifest["version"], results)
+    for r in results:
+        print(f"  doctor {r['level']}: {r['check']}: {r['message']}" + (f" ({r['fix_hint']})" if r.get("fix_hint") else ""))
+    return doctor_worst(results)
+
+
+def lint_identifying(root, manifest, deny=()):
+    """Warnings (not a gate, not a claim): text in the manifest or a shipped file that looks like it names a person,
+    host, account or repository. A placeholder (`<user>`, `{org}`, `$HOME`) is not flagged."""
+    found = []
+    deny = [d.lower() for d in deny if d]
+    for rel in [MANIFEST, *sorted(manifest["files"])]:
+        path = root / rel
+        try:
+            if path.stat().st_size > _TEXT_LIMIT:
+                continue
+            text = path.read_bytes().decode("utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for what, rx, skip_code in _LINTS:
+            if skip_code and path.suffix in _CODE_SUFFIXES:
+                continue
+            for hit in sorted({m.group(0) for m in rx.finditer(text)})[:3]:
+                found.append(f"{rel}: looks like {what}: {hit}")
+        low = text.lower()
+        found += [f"{rel}: holds the denied term {d!r}" for d in deny if d in low]
+    return found[:50]
+
+
+def _run_json(argv, files, mod_dir, env):
+    """Run one manifest argv in the throwaway module dir; (returncode, parsed JSON or None, problem or None)."""
+    first = argv[0]
+    if first.startswith("/"):
+        cmd = list(argv)
+    elif "/" in first or first in files:
+        cmd = [str(mod_dir / first), *argv[1:]]
+    else:
+        found = shutil.which(first, path=env["PATH"])
+        if not found:
+            return None, None, f"{first!r} is not on PATH"
+        cmd = [found, *argv[1:]]
+    try:
+        proc = subprocess.Popen(cmd, cwd=str(mod_dir), env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                stderr=subprocess.DEVNULL, start_new_session=True)
+    except OSError as e:
+        return None, None, f"could not run: {e}"
+    deadline, chunks, size, fd = time.monotonic() + CHECK_TIMEOUT, [], 0, proc.stdout.fileno()
+    timed_out = False
+    try:
+        while True:                         # a wall-clock deadline on the read: a child that keeps the pipe open must not extend it
+            left = deadline - time.monotonic()
+            if left <= 0:
+                timed_out = True
+                break
+            if not select.select([fd], [], [], left)[0]:
+                continue
+            chunk = os.read(fd, 65536)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            size += len(chunk)
+            if size > CHECK_OUTPUT_CAP:
+                _kill_group(proc)
+                proc.wait()
+                return None, None, f"printed more than {CHECK_OUTPUT_CAP} bytes"
+        if not timed_out:
+            try:
+                proc.wait(timeout=max(deadline - time.monotonic(), 0.001))
+            except subprocess.TimeoutExpired:
+                timed_out = True
+        if timed_out:
+            _kill_group(proc)
+            proc.wait()
+            return None, None, f"did not finish in {CHECK_TIMEOUT} seconds"
+    finally:
+        proc.stdout.close()
+    out = b"".join(chunks)
+    try:
+        return proc.returncode, json.loads(out), None
+    except ValueError:
+        return proc.returncode, None, "did not print JSON"
+
+
+def _kill_group(proc):
+    """Signal the group while its leader is still unreaped (an exited, unreaped leader keeps the group id from being
+    reused). Callers `wait()` only after this."""
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except OSError:
+        pass
+
+
+def check_module(root, core_version, run=False, deny=()):
+    """Everything `module check` reports: (errors, warnings). Errors are what `install` would refuse or what a
+    contract-1 module must answer; warnings are the publisher's to read. Validates through `validate_manifest`, the
+    code `install` uses, and runs nothing unless `run`."""
+    root = Path(root)
+    errors, warnings = [], []
+    try:
+        raw = (root / MANIFEST).read_bytes()
+    except OSError:
+        return [f"no {MANIFEST} in {root}"], warnings
+    try:
+        m = validate_manifest(raw, core_version)
+    except ModuleError as e:
+        return [str(e)], warnings
+    if (root / SIGNATURE).exists():
+        try:
+            sig = base64.b64decode("".join((root / SIGNATURE).read_text().split()), validate=True)
+            if not ed25519.verify(raw, sig, base64.b64decode(m["publisher"])):
+                errors.append("the manifest signature is not valid under its publisher key")
+        except Exception:
+            errors.append(f"{SIGNATURE} is not a valid signature file")
+    else:
+        warnings.append(f"no {SIGNATURE}: unsigned, so `module add` would refuse it")
+    tracked = None
+    if (root / ".git").exists():
+        try:
+            ls = subprocess.run(["git", "-c", "core.fsmonitor=false", "-C", str(root), "ls-files", "-z"],
+                                check=True, capture_output=True, timeout=30)
+            tracked = [n.decode() for n in ls.stdout.split(b"\x00") if n]
+        except (OSError, subprocess.SubprocessError):
+            warnings.append("could not list the git-tracked files; checked every file on disk")
+    try:
+        _verify_files(root, m, tracked, ignore=("config",))
+    except ModuleError as e:
+        errors.append(str(e))
+    if "contract" not in m:
+        warnings.append("no `contract`: a 3.0-shaped manifest, which installs with none of the 3.1 slots")
+    else:
+        for field in ("status", "doctor"):
+            if run and field not in m:
+                warnings.append(f"no `{field}` command: nothing to run for it")
+        if "doctor" not in m:
+            warnings.append("no `doctor`: every contract-1 module should provide its own")
+    warnings += lint_identifying(root, m, deny)
+    if run and not errors and "contract" in m:
+        with tempfile.TemporaryDirectory(prefix="hive-module-check-") as tmp:
+            tmp = Path(tmp)
+            mod_dir, keys, home = tmp / "module", tmp / "keys", tmp / "home"
+            for d in (keys, home):
+                d.mkdir(mode=0o700)
+            for rel in [*m["files"], MANIFEST, SIGNATURE]:
+                if (root / rel).is_file():
+                    (mod_dir / rel).parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(root / rel, mod_dir / rel)
+                    os.chmod(mod_dir / rel, 0o755 if os.access(root / rel, os.X_OK) else 0o644)
+            env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(home), "LANG": "C.UTF-8",
+                   "HIVE_MODULE_NAME": m["name"], "HIVE_MODULE_DIR": str(mod_dir), "HIVE_MODULE_KEY_DIR": str(keys),
+                   "HIVE_DOCTOR_MODE": "manual"}
+            for field, judge in (("status", lambda rc, obj: ([] if rc == 0 else [f"status exited {rc}, not 0"]) + status_problems(obj)),
+                                 ("doctor", lambda rc, obj: doctor_problems(obj, rc))):
+                if field not in m:
+                    continue
+                rc, obj, why = _run_json(m[field], m["files"], mod_dir, env)
+                errors += [f"{field} {why}"] if why else [f"{p}" for p in judge(rc, obj)]
+    return errors, warnings
+
+
+def cmd_check(lib, args):
+    errors, warnings = check_module(args.dir, lib.CONTRACT_VERSION, run=args.run, deny=args.deny or ())
+    if args.json:
+        print(json.dumps({"ok": not errors, "errors": errors, "warnings": warnings}, indent=1))
+    else:
+        for w in warnings:
+            print(f"warning: {w}")
+        for e in errors:
+            print(f"error: {e}")
+        print(f"{args.dir}: {'FAILED' if errors else 'ok'} ({len(errors)} error(s), {len(warnings)} warning(s))")
+    return 1 if errors else 0
+
+
+CONFIG_ACTIONS = ("list", "get", "set", "unset", "validate")
+
+
+def _install_flags(p):
+    p.add_argument("--require-healthy", action="store_true", help="exit 1 when the module's doctor reports a fail after the install (the install is kept)")
+    p.add_argument("--set", action="append", default=[], metavar="KEY=VALUE", help="a node config value of the module's config_schema (repeatable)")
+    p.add_argument("--set-fleet", action="append", default=[], metavar="KEY=VALUE", help="a fleet config value, owner-signed after the install (repeatable)")
+    p.add_argument("--set-env", action="append", default=[], metavar="KEY=VARIABLE", help="a node config value read from an environment variable (for a secret)")
+    p.add_argument("--non-interactive", action="store_true", help="never prompt: a required setting that is not given refuses before anything is installed")
+
+
 def build_parser():
     p = argparse.ArgumentParser(prog="hive-mind module", description="Install and manage modules (Linux, 2.1).")
     sub = p.add_subparsers(dest="verb", required=True)
@@ -1033,46 +2832,90 @@ def build_parser():
     a.add_argument("--abort", action="store_true", help="drop a staged add that is waiting for the owner's admit")
     a.add_argument("--publisher", help="the publisher key you checked (base64); pins it without a prompt")
     a.add_argument("--principal", help="the operator's principal for the module's device (default: this device's)")
+    _install_flags(a)
     r = sub.add_parser("remove", help="revoke the module's device and delete it (its entries stay in the journal)")
     r.add_argument("name")
     u = sub.add_parser("update", help="re-verify and swap atomically; the publisher key must match the pin")
     u.add_argument("name")
     u.add_argument("--from", dest="source", help="a different repository (default: where it came from)")
     u.add_argument("--publisher", help="ignored unless it equals the pinned key")
+    _install_flags(u)
+    i = sub.add_parser("install", help="converge on an installed module: install, update or nothing to do; stable exit codes (0 ok, 1 refused, 2 usage, 3 waiting for the owner, 4 unhealthy, 5 owner key locked)")
+    i.add_argument("name")
+    i.add_argument("--from", dest="source", help="the module's git repository (default: where it was installed from)")
+    i.add_argument("--publisher", help="the publisher key you checked (base64); pins it without a prompt")
+    i.add_argument("--principal", help="the operator's principal for the module's device (default: this device's)")
+    i.add_argument("--json", action="store_true", help="print one JSON object; never prompts")
+    _install_flags(i)
+    t = sub.add_parser("trust", help="show a module's trust tier, or lower it on this node (confined); clearing the lowering needs the owner key")
+    t.add_argument("name")
+    t.add_argument("tier", nargs="?", choices=TRUST_TIERS)
     sub.add_parser("list", help="installed modules: version, publisher, signature, service, device, quota use")
-    sub.add_parser("reapply", help=argparse.SUPPRESS)           # internal: `hive-mind update` re-renders the units
+    sub.add_parser("reapply", help=argparse.SUPPRESS)           # internal: re-renders the units
+    rf = sub.add_parser("refresh", help="update every installed module to the newest version this core admits, or disable one that has none (`hive-mind update` runs this)")
+    rf.add_argument("--check", action="store_true", help="show what would be updated or disabled; change nothing")
     q = sub.add_parser("quota", help="the owner raises or lowers a module's limits")
     q.add_argument("name")
     for k in QUOTA_KEYS:
         q.add_argument(f"--{k.replace('_', '-')}", dest=k, type=int)
-    c = sub.add_parser("config", help="set, unset or list a module's per-node config (local, kept by update)")
+    c = sub.add_parser("config", help="list, get, set, unset or validate a module's config (node values are local and kept "
+                                      "by update; --fleet and --fleet-node are owner-signed)")
     c.add_argument("name")
-    c.add_argument("action", choices=("set", "unset", "list"))
+    c.add_argument("action", choices=CONFIG_ACTIONS)
     c.add_argument("key", nargs="?")
     c.add_argument("value", nargs="?")
-    c.add_argument("--stdin", action="store_true", help="read the value from standard input")
-    c.add_argument("--file", metavar="PATH", help="read the value from a file")
+    c.add_argument("--fleet", action="store_true", help="the fleet value: owner-signed, journaled, seen by every admitted device")
+    c.add_argument("--fleet-node", metavar="DEVICE", help="the value for one device (k1:<16 hex>): owner-signed, journaled")
+    c.add_argument("--merged", action="store_true", help="a module without a config_schema: list/get across the layers too")
+    c.add_argument("--json", action="store_true", help="list, get and validate print JSON (a secret is masked)")
+    c.add_argument("--stdin", action="store_true", help="set: read the value from standard input (the way to give a secret in a script)")
+    c.add_argument("--file", metavar="PATH", help="set: read the value from a file (the way to give a secret in a script)")
+    ru = sub.add_parser("run", help="run a module's cli command without its launcher: module run <name> [--] <args>")
+    ru.add_argument("name")
+    ru.add_argument("args", nargs="*", help="passed to the module's command unchanged")
+    st = sub.add_parser("status", help="run a module's status command; exit 0 when it says ok")
+    st.add_argument("name")
+    st.add_argument("--json", action="store_true", help="print the module's status envelope as JSON")
+    rt = sub.add_parser("runtime", help="tell the core which directory holds one of a module's runtimes (when it cannot find it)")
+    rt.add_argument("name")
+    rt.add_argument("program")
+    rt.add_argument("dir", nargs="?")
+    rt.add_argument("--unset", action="store_true", help="forget the override")
+    k = sub.add_parser("check", help="check a module directory against the module contract (what `add` would refuse; for publishers and CI)")
+    k.add_argument("dir")
+    k.add_argument("--run", action="store_true", help="also run its `status` and `doctor` commands in a throwaway directory and check what they print")
+    k.add_argument("--deny", action="append", metavar="TERM", help="warn on a file that holds TERM (a host, user or organisation name); repeatable")
+    k.add_argument("--json", action="store_true", help="print {ok, errors, warnings} as JSON")
     return p
 
 
-VERBS = {"add": cmd_add, "remove": cmd_remove, "update": cmd_update, "list": cmd_list, "quota": cmd_quota,
-         "reapply": cmd_reapply, "config": cmd_config}
+VERBS = {"add": cmd_add, "install": cmd_install, "remove": cmd_remove, "update": cmd_update, "list": cmd_list, "quota": cmd_quota,
+         "reapply": cmd_reapply, "refresh": cmd_refresh, "config": cmd_config, "check": cmd_check, "run": cmd_run, "status": cmd_status,
+         "runtime": cmd_runtime, "trust": cmd_trust}
 
 
 def main(lib, argv):
     """Run `hive-mind module <argv>` against the control-plane library `lib`. Returns an exit status."""
-    args = build_parser().parse_args(argv)
+    if argv[:1] == ["run"]:                  # everything after the name belongs to the module's command, flags included
+        if len(argv) < 2 or argv[1].startswith("-"):
+            print("usage: hive-mind module run <name> [--] <args>", file=sys.stderr)
+            return 2
+        argv = ["run", argv[1], *argv[2:]] if argv[2:3] != ["--"] else ["run", argv[1], *argv[3:]]
+        args = argparse.Namespace(verb="run", name=argv[1], args=argv[2:])
+    else:
+        args = build_parser().parse_args(argv)
     if args.verb == "config":
-        extra = args.key if args.action == "list" else args.value if args.action == "unset" else None
+        takes_key = args.action in ("get", "set", "unset")
+        extra = (args.key if not takes_key else args.value if args.action != "set" else None)
         if args.action != "set" and (args.stdin or args.file):
             print("hive-mind module: --stdin/--file only apply to config set", file=sys.stderr)
             return 2
-        if extra is not None or (args.action != "list" and args.key is None):
+        if extra is not None or (takes_key and args.key is None):
             print(f"hive-mind module: config {args.action} takes the wrong arguments", file=sys.stderr)
             return 2
     try:
-        VERBS[args.verb](lib, args)
+        rc = VERBS[args.verb](lib, args)
+        return (rc or 0) if args.verb in ("check", "config", "run", "status", "add", "update", "install") else 0
     except ModuleError as e:
         print(f"hive-mind module: {e}", file=sys.stderr)
         return 1
-    return 0

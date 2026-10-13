@@ -63,6 +63,7 @@ PROJECT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT))
 
 import vocabulary  # noqa: E402
+from _source import hv_text  # noqa: E402
 
 # Every module that writes or projects journal entries, and the sync modules that carry them. The sync
 # modules have no sites today; they are scanned so that a first one there is held to the registry too.
@@ -163,6 +164,9 @@ NOT_JOURNAL = {
     "type": {
         ("hv", "_agent_hook_reconcile"): "Claude Code hook specs, `{\"type\": \"command\"}`",
         ("hv", "_wire_agent"): "Claude Code hook specs, `{\"type\": \"command\"}`",
+        ("hive_modules.py", "config_value_problem"): "a manifest `config_schema` entry's value type (`string`, `int`, `bool`, `enum`)",
+        ("hive_modules.py", "_check_config_entry"): "a manifest `config_schema` entry's value type (`string`, `int`, `bool`, `enum`)",
+        ("hive_modules.py", "_prompt"): "a manifest `config_schema` entry's value type (`enum` lists its values in the prompt)",
     },
     "kind": {
         ("hv", "_wire_one"): "a cell's kind (`agent` or `tool`), which `hv wire` dispatches on",
@@ -183,7 +187,7 @@ LINK_PASS_THROUGH = {("hivemind_owner.py", "_link_payload")}
 # ── AST helpers ─────────────────────────────────────────────────────────────────────────────────────
 
 def _sources(overrides=None):
-    src = {f: (PROJECT / f).read_text() for f in SCANNED}
+    src = {f: hv_text() if f == "hv" else (PROJECT / f).read_text() for f in SCANNED}   # "hv" = the file and its parts
     src.update(overrides or {})
     return src
 
@@ -713,7 +717,7 @@ def test_registry_shape():
 
 def test_hv_takes_its_tables_from_the_registry():
     """`_CHANNELS` and `_LINK_EVIDENCE_KINDS` moved into the registry: `hv` derives them, with the same values."""
-    tree = ast.parse((PROJECT / "hv").read_text())
+    tree = ast.parse(hv_text())
     derived = {t.id: ast.unparse(n.value) for n in tree.body if isinstance(n, ast.Assign)
                for t in n.targets if isinstance(t, ast.Name)}
     assert derived["_CHANNELS"] == "vocabulary.CHANNEL_NAMES"
@@ -726,7 +730,7 @@ def test_the_registry_imports_nothing_and_hv_imports_it():
     """Like `commandmap.py`: a table `hv` can import without its import graph reaching anything new (S2)."""
     tree = ast.parse((PROJECT / "vocabulary.py").read_text())
     assert not [n for n in ast.walk(tree) if isinstance(n, (ast.Import, ast.ImportFrom))]
-    hv = ast.parse((PROJECT / "hv").read_text())
+    hv = ast.parse(hv_text())
     assert any(isinstance(n, ast.Import) and any(a.name == "vocabulary" for a in n.names) for n in hv.body)
 
 

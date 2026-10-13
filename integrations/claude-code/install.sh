@@ -30,6 +30,12 @@ echo "== register telemetry + nudge/audit hooks (idempotent, additive) =="
 # CLAUDE_CONFIG_DIR, so point it at the dir we resolved above.
 CLAUDE_CONFIG_DIR="$CLAUDE_DIR" python3 "$REPO/hv" wire claude
 
+echo "== auto-mode operator profile (merged into settings.json, idempotent, user entries untouched) =="
+# Marked, versioned autoMode.environment lines so `claude --permission-mode auto` does not refuse the
+# operator's routine watchers. Non-fatal: an unparseable settings.json is left alone.
+python3 "$REPO/integrations/claude-code/automode.py" install "$REPO" --claude-dir "$CLAUDE_DIR" \
+  || echo "WARN: auto-mode profile not installed (see above)"
+
 echo
 echo "== done =="
 echo "Skill installed user-level (cross-project). In a RUNNING Claude Code session you can now:"

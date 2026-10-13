@@ -38,6 +38,7 @@ import merkle  # noqa: E402
 import sync_common  # noqa: E402
 import hive_sync_daemon as d  # noqa: E402
 import _planes  # noqa: E402  (which plane runs a command, 2.0)
+from _fs import FileSigner  # noqa: E402
 
 
 def _load_hv(home, monkeypatch):
@@ -215,7 +216,7 @@ def _signed(hvm, dev, seq, etype, payload):
     seed, pub, nid = dev
     e = {"node_id": nid, "seq": seq, "type": etype, "timestamp": f"2026-05-{seq:02d}T00:00:00Z",
          "payload": payload, "prev_hash": "sha256:genesis"}
-    return hvm._sign_entry(e, seed, pub)
+    return hvm._sign_entry(e, FileSigner(seed))
 
 
 def test_an_unadmitted_devices_content_is_refused_without_a_signature_check(tmp_path, monkeypatch):

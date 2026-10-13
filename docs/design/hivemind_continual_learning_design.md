@@ -28,7 +28,7 @@ The one-sentence thesis (from the ChatGPT synthesis, kept):
 The one-sentence constraint (from HiveMind's own code, which the synthesis missed):
 
 > Every "learned" signal is a deterministic projection over signed journal entries. Nothing is a classifier,
-> nothing is node-local. (`_is_salient` comment, ~L1568: a learned classifier "would reintroduce a capturable authority".)
+> nothing is node-local. (the salience comment at the top of `hivemind/parts/07_data_commands.py`: a learned classifier "would reintroduce a capturable authority".)
 
 ---
 
@@ -36,8 +36,8 @@ The one-sentence constraint (from HiveMind's own code, which the synthesis misse
 
 | ChatGPT concept | Already in `hv` | Gap |
 |---|---|---|
-| Admission salience | `_is_salient` (~L1578) — structural, content-neutral, opt-in via `remember --gate` | Misnamed only |
-| Confidence | `_content_evidence` → `_content_confidence` → `_effective_confidence` (~L1353–1437). Keyed by **content string**; pos = identity-weighted assertions, neg = `retract` entries via `retracts_ref`; same-principal `cap_self`; 180-day half-life at query time via `$HIVE_NOW` | Facts only, correctly — decisions are confidence-free by design (§4) |
+| Admission salience | the `--gate` salience check (`hivemind/parts/07_data_commands.py`) — structural, content-neutral, opt-in via `remember --gate` | Misnamed only |
+| Confidence | `_content_evidence` → `_content_confidence` → `_effective_confidence` (`hivemind/parts/04_projection.py` and `05_trust_validation.py`). Keyed by **content string**; pos = identity-weighted assertions, neg = `retract` entries via `retracts_ref`; same-principal `cap_self`; 180-day half-life at query time via `$HIVE_NOW` | Facts only, correctly — decisions are confidence-free by design (§4) |
 | Provenance links | Three bespoke pass-2 resolvers: `resolve_entity_fact`, decision `superseded_by`, `resolve_resolves` (`facts.resolves`, 1.11). All reference journal identity `(node_id, seq)` through `journal_index` | Not generic; each link is its own type + resolver |
 | Extensible vocabulary | `announce` act (1.18): fixed envelope `{action, kind}`, kind-specific `data`, **unknown kinds accepted and ignored** | Pattern exists for governance only |
 | Salience L3 / utility | `facts.importance` (v1 write-only stub, journaled in payload, never read — **gains learned behavior, §7.1; not renamed**), `access_count`/`last_accessed` (telemetry, explicitly NOT confidence, not journaled) | `importance` never projected; `access_count` must stay out of projections |

@@ -25,6 +25,7 @@ sys.path.insert(0, str(PROJECT))
 
 import commandmap  # noqa: E402
 import _keys  # noqa: E402
+from _source import copy_hv, hv_text  # noqa: E402
 
 HV = PROJECT / "hv"
 CTL = PROJECT / "hivemind_ctl.py"
@@ -136,7 +137,7 @@ def test_the_data_plane_parser_defines_none_of_the_control_plane_commands():
 def test_the_pointer_machinery_is_gone():
     for name in ("pointer_text", "POINTER_EXIT", "MOVED", "RENAMED", "renamed", "renamed_text"):
         assert not hasattr(commandmap, name), name
-    src = HV.read_text()
+    src = hv_text()
     for name in ("_moved_key", "def _point("):
         assert name not in src, name
 
@@ -188,10 +189,12 @@ def test_a_parser_split_mutant_fails_the_frozen_list(tmp_path):
     root.mkdir()
     for f in PROJECT.glob("*.py"):
         shutil.copy(f, root / f.name)
-    src = HV.read_text()
+    src = hv_text()
     assert 'build_parser(plane="data").parse_args(sys.argv[1:])' in src
-    (root / "hv").write_text(src.replace('build_parser(plane="data").parse_args(sys.argv[1:])',
-                                         'build_parser(plane="control").parse_args(sys.argv[1:])'))
+    copy_hv(root)
+    for f in [root / "hv", *(root / "hivemind" / "parts").glob("*.py")]:
+        f.write_text(f.read_text().replace('build_parser(plane="data").parse_args(sys.argv[1:])',
+                                           'build_parser(plane="control").parse_args(sys.argv[1:])'))
     home = tmp_path / "h"
     r = subprocess.run([sys.executable, str(root / "hv"), "admit"], env=_env(home), capture_output=True, text=True)
     assert "usage:" not in r.stderr, "the mutant must differ from the real data-plane parser"

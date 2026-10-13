@@ -145,16 +145,17 @@ def stash_sealed(sealed_path, stash_dir):
         return None
 
 
-def sign_governance(payload, owner_seed, owner_pub):
-    """Attach `owner_pub`, then `owner_sig` — the owner's signature over the payload without `owner_sig`.
+def sign_governance(payload, signer):
+    """Attach the signer's public key as `owner_pub`, then `owner_sig` — the owner's signature over the payload
+    without `owner_sig`. `signer` is a `hivemind.crypto.signer.Signer`: this function never holds the seed.
 
     This authorizes the governance ACTION independently of which device appends the entry, which is why
     it is the function that must become unreachable from `hv`: an agent that cannot produce these bytes
     cannot mint governance, whatever else it can do."""
     payload = dict(payload)
-    payload["owner_pub"] = base64.b64encode(owner_pub).decode()
+    payload["owner_pub"] = base64.b64encode(signer.public_key()).decode()
     body = merkle._canonical({k: v for k, v in payload.items() if k != "owner_sig"})
-    payload["owner_sig"] = base64.b64encode(_ed25519.sign(body, owner_seed)).decode()
+    payload["owner_sig"] = base64.b64encode(signer.sign(body)).decode()
     return payload
 
 
