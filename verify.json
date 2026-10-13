@@ -1,5 +1,5 @@
 {
-  "digest": "0c6053dfba746a1ffa71126228d3e1062c7867327d1971aac95698e247cdd1d1",
+  "digest": "2d60756c190e7496cafa34becabb19b9d2da4b0481d76a176cfea02e00a18f6e",
   "files": {
     ".github/FUNDING.yml": "ca6c63d7539bb7d2f809b5068781c78de97c028a44c5ae252b11bc1695caf85d",
     ".github/ISSUE_TEMPLATE/bug_report.yml": "22df51b1e51c25f50726392c79811116b88c40370843ff2d4a3e76b643f1cb68",
@@ -25,6 +25,7 @@
     "changelog.d/ci-release-issue-close.md": "b1b64493fd10c1cde711239319e61a1188b92b8e0ab9418f4f4c88607793aa5b",
     "changelog.d/feat-hive-mind-version.md": "e8e736f1452fbff17bffe35dd5d02df70802eb523baf2b7c445716c768cbba83",
     "changelog.d/implementer2-peers-module.md": "e2670ad7f09cb17bbad1e89a60bae14bf9765ce1f6c99def51228e249bb2da79",
+    "changelog.d/implementer3-config-help.md": "f34cab39b884cfccb3a4284dc694ea704bd5d6d52bc3716faefa2da53e28b03f",
     "changelog.d/implementer3-fake-seat-auth-probe.md": "d4c2d8ca0b5b47652f6b04559bb4477204f890718e39965e4fe98f9da1dca92c",
     "changelog.d/sign-retry-473.md": "e5af9dfc3c2e9b741e074e5d753eb15b0538a337bc5efae4efee68bbf4bca87d",
     "commandmap.py": "8bd409700a0667a15fa435d74cb3d48ae79a1d80b963b78e8791be12f9bc6e1b",
@@ -33,7 +34,7 @@
     "crypto_selftest.py": "5cfacd5a3ca4936f1d5a15c2ec088accf576b78d736365860c8163902ad98be4",
     "docs/ADVISORIES.md": "aee9fab7f28266625d7f9d29a8636197f898ae1e117aea8d62456740892a6422",
     "docs/AGENT_INTEGRATION.md": "63b99d28011c4450552c609d058f4412e8c041c0d9b6388e9316707fed003c65",
-    "docs/CLI_REFERENCE.md": "8c8097d92b33a7168c6a2f71673ffca1a6652af1aaa754d05672a0b2447181d1",
+    "docs/CLI_REFERENCE.md": "e94bc41abcd721cf063a6e122f4df962a13644725d1bfe6b682e419244acaa1f",
     "docs/CONTRACT.md": "fe7d9aa24ca92553796e721093906bb0753cd2baea1ad4574141aaf512e6bbe1",
     "docs/CONTRACT_HISTORY.md": "b35f80affe48f389acf7bb593ae33c385a35b37ecac713156e40db09454276d0",
     "docs/HV_ARCHITECTURE.md": "06e7e5e1d880f3eaced360025fa1403ed0d89907c45ddfffd0746276244bb835",
@@ -62,7 +63,7 @@
     "hivemind/parts/01_identity.py": "6bc744bd22c92f2418ecccd0793723e4117079bbbb134869c75daa2907429a58",
     "hivemind/parts/02_store_journal.py": "f6dd9815081d67e0677059a1d06795846c6a8961b873727ccb526e77b1e9997e",
     "hivemind/parts/03_ingest.py": "8e0fc9a5bf36c9d38bd1c17cf07e93efe1ca5808a377049742f1804f53e3da95",
-    "hivemind/parts/04_projection.py": "bf4bdb77a5a447b7d5effdc4b9924bbca05b104d74c3679787454e8c3e586fa9",
+    "hivemind/parts/04_projection.py": "b9422d5c865f9221d613d1a4ecaccdfd476c29cd92d2fadfca9ca5c57a6b3294",
     "hivemind/parts/05_trust_validation.py": "5bc472065d8a83633c1851c334854440d455af315bbcfc1a575fcbf0f57b3cbb",
     "hivemind/parts/06_links_forget.py": "bb1614aae418764a6300656d5392e4852b3fcd3a5884bc364e7cb31bb036b09f",
     "hivemind/parts/07_data_commands.py": "2d96a3437a634324831f58a05a5a42ff68ddef99a1f5b7545c661e28495f4cc8",
@@ -73,7 +74,7 @@
     "hivemind/parts/12_capsules_keys.py": "67719c0092a322db32e03f6440dbfd955f27e4e1b2d0de43c4295e0338ac0c31",
     "hivemind/parts/13_doctor_status.py": "6a2c57ae2a33acf4cecabc133146a167218448c7b4f5b2c8e42557596183142a",
     "hivemind/parts/14_peers.py": "4206d6622523fc1d5fba1ad7bb872c16b5722edeaff4fcfef145472d0434c404",
-    "hivemind/parts/15_doctor_control_join.py": "018d5e19daf532475b1849a6206d5a57a3159347dcc6083fc9ca1a57654c31b9",
+    "hivemind/parts/15_doctor_control_join.py": "72e04111695ac2635cea0ade1ef95873692f1aeb23114031e2a1d0b3c8abdfe0",
     "hivemind/parts/17_cli.py": "26574231eded27f1ad893bb375888977e27a7831304803aa4dfc519fb7728108",
     "hivemind_ctl.py": "0019c2c315f5bdc9936ef50356c2681b86f1e1585ee0e7c9380326cfa90b8312",
     "hivemind_owner.py": "49f66d1deaf579a4aebe02b443b63e177aff7f0db439d7ed43fd69ec4867e93c",
@@ -167,7 +168,7 @@
     "tests/test_cell_comb_authz.py": "2a2aa96b13ca86adaed544cc0a243ec34d15e1be8cfd8423735ca26d423fc680",
     "tests/test_chacha.py": "d8b4d0bdf2ba9545ca557adc11474f8950955807ecd08880e99cb27350c5fdac",
     "tests/test_config_node_noninteractive.py": "b562cfd6ca18aa43baaaff96b522c9d51c70b8278692f5a492f666de4fdeb416",
-    "tests/test_config_schema_show.py": "37e752b3b64fa93d6d996d99f66d325e16e7f411e9d767d0d40fb7ba6a6c2675",
+    "tests/test_config_schema_show.py": "1e8eb1d0b5ecac7bc33f5987054174030dbdc0af2d90e20c0c1233da3d55ea36",
     "tests/test_control_plane.py": "afedeeb3ff6826b40a6008a2c150886459dfe5a6524c89954c3754f325eeea5d",
     "tests/test_cron_repoint.py": "ccb1b88f7dbfb802b2d44b935702d372969828f1ef89f84d4e0dbe71e5eadb71",
     "tests/test_daemon_bounds.py": "5d275cb6ce85cb7cc21447dcec96c797b5d55ac8053cefc30292350e745d1661",
@@ -307,6 +308,6 @@
     "vocabulary.py": "3a6977fc89573561e6248748db90379acc810ff183556e220ce6bf1b2c0d0d3b",
     "x25519.py": "ec1967595a2306cde860afe4dffab40a3f833d089de6caf5c9c080df8fd45726"
   },
-  "sequence": 662,
+  "sequence": 664,
   "version": "4.0"
 }
