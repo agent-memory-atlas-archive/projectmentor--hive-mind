@@ -36,8 +36,8 @@ fi
 
 # /sync/hello
 HELLO=$(curl -sf http://127.0.0.1:9876/sync/hello 2>/dev/null) && {
-  NODE=$(echo "$HELLO" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("node_id","?"))')
-  ENT=$(echo "$HELLO" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("journal_summary",{}).get("total", d.get("journal_entries","?")))')
+  NODE=$(echo "$HELLO" | python3 -I -c 'import sys,json; d=json.load(sys.stdin); print(d.get("node_id","?"))')
+  ENT=$(echo "$HELLO" | python3 -I -c 'import sys,json; d=json.load(sys.stdin); print(d.get("journal_summary",{}).get("total", d.get("journal_entries","?")))')
   ok "HTTP: /sync/hello responding  (node=$NODE entries=$ENT)"
 } || warn "HTTP: daemon not responding on :9876"
 
@@ -68,7 +68,7 @@ esac
 # Peers
 PEERS_FILE="$HIVE_DIR/.peers.json"
 if [ -f "$PEERS_FILE" ]; then
-  python3 - "$PEERS_FILE" "$HIVE_DIR" << 'PYEOF'
+  python3 -I - "$PEERS_FILE" "$HIVE_DIR" << 'PYEOF'
 import json, sys, urllib.request, urllib.error
 data = json.load(open(sys.argv[1]))
 # A peer in read-auth enforce refuses an unsigned /sync/hello (401), so sign the probe the way sync
