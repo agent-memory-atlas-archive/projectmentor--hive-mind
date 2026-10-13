@@ -239,6 +239,28 @@ def test_a_drifted_unit_warns_and_fix_re_renders_it_only_when_the_manifest_verif
 
 
 @LINUX_ONLY
+def test_fix_re_renders_a_drifted_contract_1_unit_with_its_recorded_path_and_converges(hive, tmp_path, units, listener):
+    unit_dir, _calls = units
+    pub = _publish(tmp_path / "repo", service=SERVICE, trust="confined", contract=1, config=None, min_core="3.1")
+    _add(hive, tmp_path / "repo", pub)
+    f = unit_dir / "hive-module-demo.service"
+    installed = f.read_text()
+    state = json.loads((hive / ".modules.json").read_text())
+    state["demo"]["runtime_dirs"] = [str(tmp_path / "rt" / "bin")]
+    (hive / ".modules.json").write_text(json.dumps(state))
+    _r, c = _mod(hive)
+    assert c["status"] == "warn" and "differs from what the manifest renders" in c["detail"]
+    _run(hive, "doctor", "--fix", check=False)
+    fixed = f.read_text()
+    assert fixed != installed and f'PATH={tmp_path / "rt" / "bin"}:' in fixed
+    _r, c = _mod(hive)
+    assert c["status"] == "ok", c                              # converged: doctor no longer sees drift
+    f.write_text(fixed.replace("Restart=always", "Restart=no"))
+    _run(hive, "doctor", "--fix", check=False)
+    assert f.read_text() == fixed
+
+
+@LINUX_ONLY
 def test_a_missing_unit_warns(good, units):
     home, _ = good
     unit_dir, _ = units

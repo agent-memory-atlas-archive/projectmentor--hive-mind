@@ -639,6 +639,7 @@ def test_trust_verb_lowers_without_owner_and_raise_needs_it(tmp_path, monkeypatc
     state = {"demo": {"version": "1"}}
     monkeypatch.setattr(hive_modules, "load_state", lambda lib: state)
     monkeypatch.setattr(hive_modules, "save_state", lambda lib, s: saved.update(s))
+    monkeypatch.setattr(hive_modules, "_reapply_names", lambda lib, names: None)    # the re-render has its own test
 
     class Lib:
         def _owner_key_exists(self):
