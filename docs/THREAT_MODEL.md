@@ -358,7 +358,7 @@ at once). Concretely:
   can stall its sync with that peer (a denial of service, not a disclosure). Under `enforce` the pull is
   unsigned until the hello is `verified`: an `unsigned`, `unadmitted` or `addr-unproven` peer is sent no
   `Hive-Auth-*` headers (a legacy peer that does not check signatures still answers; an enforce-mode peer that
-  has not proved its address is not pulled until it has, and `hv doctor --fix` repoints a proved address).
+  has not proved its address is not pulled until it has, and `hv doctor --fix` repoints a proved address). The replayable signed read on the pull path (private#80) was fixed by #330.
 - **Update rollback protection needs one update to start, and trusts the signer's count.** `hive-mind update`
   refuses a fetched commit that is not a descendant of the installed one unless `--allow-rewind` is passed, and
   refuses a signed manifest whose `sequence` (the integer `git rev-list --count HEAD` of the commit sign.yml
