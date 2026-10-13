@@ -1,0 +1,1 @@
+- **Security: the CLA workflow runs with least privilege (CI-01).** `cla.yml` keeps `pull_request_target` (the CLA action must comment on fork PRs) but drops its workflow-wide write scopes for a job-level grant of only what the action needs, and records in the file why it must never check out or run PR-head code.
