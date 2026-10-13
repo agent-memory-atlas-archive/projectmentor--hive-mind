@@ -70,9 +70,7 @@ def _prune_ended_peers(gov):
         if not any(d for _p, d in gone):
             return []
         cfg["peers"] = [p for p, d in gone if d is None]
-        tmp = path.with_name(path.name + ".tmp")
-        tmp.write_text(json.dumps(cfg, indent=2) + "\n")
-        os.replace(tmp, path)
+        _atomic_write_text(path, json.dumps(cfg, indent=2) + "\n")
     except (OSError, ValueError, AttributeError):
         return []
     dropped = sorted({d for _p, d in gone if d})
