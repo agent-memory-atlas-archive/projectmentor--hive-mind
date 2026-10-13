@@ -446,7 +446,8 @@ def test_config_knob_bounds_via_cli(tmp_path):
             assert r.returncode == 0, r.stderr
         return r
     run("owner", "init")
-    assert "must be in [0, 1]" in run("config", "confidence", "set", "introspect_support_weight", "1.5").stdout
+    bad = run("config", "confidence", "set", "introspect_support_weight", "1.5", check=False)
+    assert bad.returncode == 1 and "must be in [0, 1]" in bad.stdout                 # 4.0 C1: a refusal exits 1
     assert "set introspect_support_weight = 0.25" in run("config", "confidence", "set", "introspect_support_weight", "0.25").stdout
     run("version")
 
