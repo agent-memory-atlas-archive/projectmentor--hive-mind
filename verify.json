@@ -1,5 +1,5 @@
 {
-  "digest": "b54e9c638253d7cd29082121d2bdce94ba33a4012b7067172d73c039dc384702",
+  "digest": "15e6ba1786bbca4d9fcb112696eaa49f452f56311df1f8d8e296dd58f69e5162",
   "files": {
     ".github/FUNDING.yml": "ca6c63d7539bb7d2f809b5068781c78de97c028a44c5ae252b11bc1695caf85d",
     ".github/ISSUE_TEMPLATE/bug_report.yml": "22df51b1e51c25f50726392c79811116b88c40370843ff2d4a3e76b643f1cb68",
@@ -21,6 +21,7 @@
     "changelog.d/admit-device-field.md": "7dba7ab32e6881b8e0cc4d0d259b6adf89648b4ddf23685549cd3f0365ebef3e",
     "changelog.d/atomic-peers-key.md": "f77da26d1b02651f7b48fa412514ad3fb2020867b01a26447ae4b90a3714965b",
     "changelog.d/docs-419-3.1-followups.md": "f9d12ab2cea30a4b08486a9f9886d22db5a11fcbdf7ca01626488736a6dae67c",
+    "changelog.d/docs-hcns-threat-model.md": "3062c020aceda2af62fd410c54e0243beb493d724d81b3318570eeae13e9815b",
     "changelog.d/implementer3-b10-passphrase-never-daemon.md": "355be728356a7662d21e113fed0e85ed05cf4ff0d0c96e5eb0aacadf45087537",
     "changelog.d/implementer3-ci01-cla-least-privilege.md": "107a33298cedf1e1050c6604bc2fc0451d3bbba145b84d760c40a8f69598c274",
     "changelog.d/implementer3-sn12-ck6-http.md": "0a694b25d065b05d351657d242ed56c3c6e8f981cdba43756a1c34a575346c0f",
@@ -41,7 +42,7 @@
     "docs/MODULE_API.md": "419c340ce880c7bda902a3e8eab4c3ffa171b0b11a0a42a72678c94fd2555b98",
     "docs/NAMESPACES.md": "9bf01e1a565d4158f340be9f3c1f4ebc55583708546dbc29f18f1353f20ecdeb",
     "docs/SYNC_API.md": "acca61104873742601a17a5a897db4c763ab102f8661a3b6d47b344162920709",
-    "docs/THREAT_MODEL.md": "56f6306760e5a21f1db314d1a51e169d9f5441aacc49f23b10a89250b6fe1ac2",
+    "docs/THREAT_MODEL.md": "2f420bf7358e3813a8ce06027751a8d7deb0875f2f9f02585d12eb20721b140c",
     "docs/WORKING_TOGETHER.md": "2ad8f81d57c57976c6c4bcc68ac5a1d77c6511346ba763eea9a90320cb56aba3",
     "docs/design/hivemind_continual_learning_design.md": "95dd0438ab71ab0f0bf85ca67e102e7b3cc28074ff9ce9a187ded9f5595828f5",
     "docs/history/P2P_DESIGN.md": "91b34fee3d1c55a1759b4d256c1c805afb5e084e874932bb133c2487825de1dd",
@@ -273,6 +274,6 @@
     "vocabulary.py": "3a6977fc89573561e6248748db90379acc810ff183556e220ce6bf1b2c0d0d3b",
     "x25519.py": "ec1967595a2306cde860afe4dffab40a3f833d089de6caf5c9c080df8fd45726"
   },
-  "sequence": 598,
+  "sequence": 600,
   "version": "3.1"
 }
