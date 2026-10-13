@@ -1,0 +1,1 @@
+- Tests: `tests/integration/` and the `hivefleet` harness (real `hv` nodes as separate processes, scrubbed environment, free ports, process control), a separate `integration` CI job, and scenario S6 (the session hook with no `timeout`), expected-fail until the hook fix lands. The default `pytest` run does not collect them.
