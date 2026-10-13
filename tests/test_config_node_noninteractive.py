@@ -66,10 +66,11 @@ def test_node_list_and_get_report_value_source_and_default(tmp_path):
     doc = json.loads(hv(home, "config", "node", "list", "--json").stdout)
     rows = {r["id"]: r for r in doc["keys"]}
     assert doc["schema"] == 1 and list(rows) == ["port", "bind", "sync_auth", "sync_auth_outbound",
-                                                 "dashboard_viewers", "dashboard_viewer_port"]
+                                                 "dashboard_share", "dashboard_viewers", "dashboard_viewer_port"]
     assert rows["bind"]["value"] == "100.64.0.1" and rows["bind"]["source"] == "node" and rows["bind"]["set"]
     assert rows["sync_auth"] == {**rows["sync_auth"], "value": "permissive", "source": "default", "set": False}
     assert rows["dashboard_viewers"]["value"] == []
+    assert rows["dashboard_share"]["value"] is False and rows["dashboard_share"]["type"] == "bool"
     got = json.loads(hv(home, "config", "node", "get", "port", "--json").stdout)
     assert got["key"]["value"] == 9876 and got["key"]["source"] == "node"
     assert hv(home, "config", "node", "get", "bind").stdout.strip() == "100.64.0.1"
@@ -81,7 +82,7 @@ def test_node_set_validates_and_a_refusal_changes_nothing(tmp_path):
     before = (home / ".peers.json").read_bytes()
     for key, bad in (("port", "0"), ("port", "70000"), ("port", "abc"), ("port", "1.5"), ("bind", "not an ip"),
                      ("bind", ""), ("sync_auth", "sometimes"), ("sync_auth_outbound", "yes"),
-                     ("dashboard_viewers", "[1]"), ("dashboard_viewers", "a b"), ("dashboard_viewer_port", "99999"),
+                     ("dashboard_share", "maybe"), ("dashboard_share", ""), ("dashboard_viewers", "[1]"), ("dashboard_viewers", "a b"), ("dashboard_viewer_port", "99999"),
                      ("peers", "[]"), ("self", "x"), ("nonsense", "1")):
         r = hv(home, "config", "node", "set", key, bad, check=False)
         assert r.returncode == 1, (key, bad, r.stdout)
@@ -96,9 +97,12 @@ def test_node_set_accepts_each_type_and_keeps_the_rest(tmp_path):
     hv(home, "config", "node", "set", "bind", "127.0.0.1")
     hv(home, "config", "node", "set", "dashboard_viewers", "b@x.org, a@x.org")
     hv(home, "config", "node", "set", "dashboard_viewer_port", "8081")
+    hv(home, "config", "node", "set", "dashboard_share", "ON")
     cfg = json.loads((home / ".peers.json").read_text())
-    assert (cfg["port"], cfg["bind"], cfg["dashboard_viewers"], cfg["dashboard_viewer_port"]) == \
-        (9999, "127.0.0.1", ["a@x.org", "b@x.org"], 8081)
+    assert (cfg["port"], cfg["bind"], cfg["dashboard_viewers"], cfg["dashboard_viewer_port"], cfg["dashboard_share"]) == \
+        (9999, "127.0.0.1", ["a@x.org", "b@x.org"], 8081, True)
+    hv(home, "config", "node", "set", "dashboard_share", "false")
+    assert json.loads((home / ".peers.json").read_text())["dashboard_share"] is False
     assert cfg["peers"] == PEERS["peers"] and cfg["future_key"] == PEERS["future_key"]
     out = json.loads(hv(home, "config", "node", "set", "sync_auth", "ENFORCE", "--json").stdout)
     assert out["ok"] and out["value"] == "enforce" and "restart the daemon" in out["note"]

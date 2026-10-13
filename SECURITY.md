@@ -58,6 +58,9 @@ See [`docs/ADVISORIES.md`](docs/ADVISORIES.md) for every published advisory and 
 - **Switch sync to `enforce`** (`hv sync auth enforce`) once every peer reports protocol version 2,
   and don't set `HIVE_BIND=0.0.0.0`.
 - **Restrict who can connect** with Tailscale ACLs; HiveMind's signed reads decide who can *read*.
+- **Sharing the dashboard is opt-in and read-only.** `hive-mind config node set dashboard_share true` (with hdash's `share`
+  verb) lets allowlisted tailnet logins view a read-only subset through the tailnet front end. Never enable Funnel on it, and
+  keep `hdash doctor`'s `dashboard-exposure` row green.
 - **Stay current:** `hive-mind update`, then `hv verify`. The self-heal timer runs `hv doctor --fix`
   every 15 minutes; read its advisories.
 

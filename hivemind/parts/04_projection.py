@@ -267,6 +267,8 @@ NODE_KEYS = {
                   "description": "what this node requires of a peer that reads from it"},
     "sync_auth_outbound": {"type": "str", "default": "permissive", "choices": ["off", "permissive", "enforce"],
                            "description": "what this node requires of a peer before it pushes to it"},
+    "dashboard_share": {"type": "bool", "default": False,
+                        "description": "whether hdash serves the dashboard read-only to the allowlisted tailnet logins"},
     "dashboard_viewers": {"type": "list", "default": [],
                           "description": "tailnet logins allowed to view the dashboard read-only"},
     "dashboard_viewer_port": {"type": "int", "default": None, "min": 1, "max": 65535,

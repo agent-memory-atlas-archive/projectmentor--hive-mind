@@ -875,6 +875,11 @@ def _node_coerce(key, raw):
         if not spec["min"] <= val <= spec["max"]:
             raise ValueError(f"{key} must be between {spec['min']} and {spec['max']}")
         return val
+    if spec["type"] == "bool":
+        word = str(raw).strip().lower()
+        if word not in ("true", "false", "on", "off", "yes", "no", "1", "0"):
+            raise ValueError(f"bad value for {key}: {raw!r} is not true or false")
+        return word in ("true", "on", "yes", "1")
     if spec["type"] == "list":
         try:
             val = json.loads(raw) if str(raw).lstrip().startswith("[") else [x.strip() for x in str(raw).split(",")]

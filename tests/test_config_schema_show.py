@@ -18,7 +18,7 @@ import vocabulary  # noqa: E402
 from test_governance import _run  # noqa: E402
 from test_links import _loadhv  # noqa: E402
 
-NODE = ["port", "bind", "sync_auth", "sync_auth_outbound", "dashboard_viewers", "dashboard_viewer_port"]
+NODE = ["port", "bind", "sync_auth", "sync_auth_outbound", "dashboard_share", "dashboard_viewers", "dashboard_viewer_port"]
 
 
 def _journal(home):

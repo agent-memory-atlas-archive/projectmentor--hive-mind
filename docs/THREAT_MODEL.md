@@ -622,6 +622,13 @@ header of the tailnet front end, so it is only as sound as that front end stripp
 assumption: the operator rule is to expose it through the front end only, never directly). A same-user process already has the
 operator port, so the viewer port gives it nothing more; accepted for 3.x.
 
+The listener's switch and allowlist are three node-local keys of `.peers.json` (`dashboard_share`, `dashboard_viewers`,
+`dashboard_viewer_port`), written only by `hive-mind config node set`: never journaled, never a `set-config`, never served to a
+viewer. The core daemon gains no listener and no code for them; hdash reads them at its own start. Operator rules: expose the
+viewer port only through the tailnet front end on its own HTTPS port, never enable Funnel on it, and keep the viewer port clear of
+hdash's operator port and the daemon's port range (`hdash doctor` checks all three). A viewer is a tailnet login, not an admitted
+device: it is served the dashboard's read-only subset and nothing of sync.
+
 ## Seat steering (agent seats driven by GitHub and the hive)
 
 A seat is an agent session that the runner wakes on a GitHub event or a hive entry. Text a seat reads can steer
