@@ -1,0 +1,1 @@
+- Session hook: on macOS (no `timeout`) the telemetry call was silently skipped; it now falls back to `gtimeout` or a python3 12s cap.

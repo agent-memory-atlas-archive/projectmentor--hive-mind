@@ -152,3 +152,20 @@ def test_api_telemetry_reads_a_store_under_a_home_with_uri_special_characters(tm
     t = _api(home)
     assert t["available"] and t["totals"]["sessions"] == 2
     assert [r["tokens_in"] for r in t["recent"]] == [9, 3]      # newest first
+
+
+def test_session_hook_still_runs_the_module_where_timeout_is_missing(tmp_path):
+    """macOS ships no `timeout`: the hook must cap the call another way, not silently skip it."""
+    env, log = _env(tmp_path, installed=True, rc=7)
+    # a PATH of just the stub dir plus a bin of symlinks to the tools the hook needs, minus timeout/gtimeout
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    import shutil
+    for name in ("bash", "python3", "sed", "hostname", "id", "dirname", "env", "sh", "printf"):
+        found = shutil.which(name)
+        if found:
+            (tools / name).symlink_to(found)
+    env["PATH"] = f"{tmp_path / 'bin'}:{tools}"
+    r = _hook(env, "start")
+    assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
+    assert log.read_text().split()[:3] == ["module", "run", "hwatch"]
