@@ -11,8 +11,12 @@ import _realhome                                    # noqa: E402  (tests/_realho
 from hivefleet import Fleet                          # noqa: E402
 
 
+# Resolved at import, before any fixture points CLAUDE_CONFIG_DIR / HIVE_IDENTITY_STASH at the per-test sandbox.
+REAL = _realhome.session_paths()
+
+
 def _real_state():
-    p = _realhome.session_paths()
+    p = REAL
     return _realhome.snapshot(p["claude"], p["stash"], p["hive"], p["key_dir"], p["keys_root"])
 
 
