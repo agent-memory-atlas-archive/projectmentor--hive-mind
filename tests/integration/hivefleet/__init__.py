@@ -38,6 +38,20 @@ def free_port(host="127.0.0.1"):
     raise RuntimeError("free_port: no free port in 20000-32767")
 
 
+def lan_ip():
+    """This host's non-loopback address as the kernel routes it, or None (a locked-down runner). The sync daemon trusts all of
+    127.0.0.0/8 by source address, so only a non-loopback bind exercises the production Hive-Auth path (as sync_auth_smoke.sh)."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+    except OSError:
+        return None
+    finally:
+        s.close()
+    return None if ip.startswith("127.") else ip
+
+
 def wait_for(cond, timeout=30.0, interval=0.1, what="condition"):
     """Poll `cond` until it returns a truthy value (returned) or `timeout` passes. Never a fixed sleep."""
     deadline = time.monotonic() + timeout
