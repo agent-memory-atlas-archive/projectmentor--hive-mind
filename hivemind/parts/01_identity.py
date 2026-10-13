@@ -78,9 +78,30 @@ def _ensure_key_dir():
 def _write_private(path, text):
     """Write a private file (0600) into the key directory, creating it first."""
     _ensure_key_dir()
-    path.write_text(text)
+    # Temp file + fsync + os.replace in the same directory (SECREV C CK-4): a crash leaves the old key or the
+    # new one, never a torn file. The temp is created 0600 by os.open itself, so the seed is never on disk
+    # at a wider mode, whatever the umask; no chmod after.
+    path = Path(os.path.realpath(path))
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
-        os.chmod(path, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    try:
+        dfd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(dfd)
+        finally:
+            os.close(dfd)
     except OSError:
         pass
 

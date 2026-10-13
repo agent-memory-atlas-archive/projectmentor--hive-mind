@@ -605,7 +605,7 @@ def sync_cmd(args):
             cfg["sync_auth"] = mode
         if outbound:
             cfg["sync_auth_outbound"] = outbound      # #107: what this node requires before it pushes
-        cfg_path.write_text(json.dumps(cfg, indent=2) + "\n")
+        sync_common.atomic_write_text(cfg_path, json.dumps(cfg, indent=2) + "\n")
         if mode:
             print(f"sync read-auth mode set to '{mode}' in {cfg_path}.")
             if os.environ.get("HIVE_SYNC_AUTH"):

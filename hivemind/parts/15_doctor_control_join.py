@@ -700,7 +700,7 @@ def _add_peer(url, label):
     cfg.setdefault("bind", "0.0.0.0")
     cfg.setdefault("port", 9876)
     try:
-        path.write_text(json.dumps(cfg, indent=2) + "\n")
+        _atomic_write_text(path, json.dumps(cfg, indent=2) + "\n")
     except Exception:
         return False
     return True

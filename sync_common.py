@@ -104,6 +104,31 @@ def hive_home():
     return Path(os.environ.get("HIVE_HOME", Path.home() / "projects" / "hive-mind"))
 
 
+def atomic_write_text(path, text):
+    """Write `path` through a temp file in the same directory, fsync, then os.replace: a crash leaves the old
+    file or the new one, never a torn one. An existing file keeps its mode; a new one is 0600. A symlink is
+    rewritten at its target."""
+    import tempfile
+    path = Path(os.path.realpath(path))
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=path.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        try:
+            os.chmod(tmp, path.stat().st_mode & 0o777)
+        except FileNotFoundError:
+            pass
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
 def peers_path():
     """The .peers.json that load_peers() reads: HIVE_HOME's, else the repo root's; None if neither
     exists. `hv doctor --fix` rewrites this same file (#7)."""

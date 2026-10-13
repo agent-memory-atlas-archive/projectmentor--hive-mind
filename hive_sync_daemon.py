@@ -839,7 +839,7 @@ def _persist_port(port):
         path = sync_common.hive_home() / ".peers.json"
         cfg = json.loads(path.read_text()) if path.exists() else {}
         cfg["port"] = port
-        path.write_text(json.dumps(cfg, indent=2) + "\n")
+        sync_common.atomic_write_text(path, json.dumps(cfg, indent=2) + "\n")
     except Exception:
         pass
 
