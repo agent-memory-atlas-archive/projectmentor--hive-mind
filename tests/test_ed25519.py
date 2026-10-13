@@ -91,8 +91,7 @@ STRICT_CASES = {
 
 def test_non_canonical_point_encodings_are_rejected():
     msg = b"edge"
-    assert fast.verify(msg, IDENTITY + bytes(32), IDENTITY)               # the canonical control
-    assert ref.verify(msg, IDENTITY + bytes(32), IDENTITY)
+    assert ref.verify(msg, IDENTITY + bytes(32), IDENTITY)                # the reference took it (CK-7 refuses it now)
     # S = l is the boundary: an S = 0 signature re-encoded as l satisfies the equation, so only the S < l check refuses it
     assert not fast.verify(msg, IDENTITY + L.to_bytes(32, "little"), IDENTITY)
     for name, (r_bytes, pub) in STRICT_CASES.items():
@@ -132,22 +131,20 @@ def test_decoding_matches_the_reference_on_canonical_edge_encodings():
     assert outcome(ref, _enc(Q + 3)) == "ok"             # the reference took it; the narrowing is deliberate
 
 
-def test_raw_r_bytes_are_hashed_like_the_reference():
-    """Small-order keys make [h]A depend on h mod 4 (or mod 2), so whether a signature (R, S=0) verifies
-    depends on exactly which bytes of R were hashed. Each family mixes accepts and rejects over eight
-    messages; an implementation that hashed a different encoding of R would give a different pattern. Only
-    canonical encodings are left, since the non-canonical ones are refused (see STRICT_CASES)."""
-    families = {
-        "R order-4; A order-4": (_enc(0), _enc(0)),
-        "R order-4, sign 1; A order-4, sign 1": (_enc(0, 1), _enc(0, 1)),
-        "R order-2; A order-4": (_enc(Q - 1), _enc(0)),
-    }
-    for name, (r_bytes, pub) in families.items():
-        sig = r_bytes + bytes(32)
-        got = [fast.verify(b"edge-%d" % i, sig, pub) for i in range(8)]
-        want = [ref.verify(b"edge-%d" % i, sig, pub) for i in range(8)]
-        assert got == want, name
-        assert any(got) and not all(got), f"{name}: the family no longer discriminates"
+def test_small_order_keys_verify_nothing():
+    """CK-7. Under the reference a small-order A made [h]A depend on h mod 8 alone, so (R, S=0) verified for a
+    share of all messages (every message for the identity) with no secret. Now the key itself is refused."""
+    small = {"identity": _enc(1), "order-2": _enc(Q - 1), "order-4": _enc(0), "order-4, sign 1": _enc(0, 1)}
+    for name, pub in small.items():
+        assert fast.is_small_order(pub), name
+        for r_bytes in (_enc(1), _enc(Q - 1), _enc(0), _enc(0, 1)):
+            sig = r_bytes + bytes(32)
+            got = [fast.verify(b"edge-%d" % i, sig, pub) for i in range(16)]
+            assert not any(got), name
+            # without the check some of these verify: the family is real, not vacuous
+        assert ref.verify(b"x", _enc(1) + bytes(32), _enc(1))
+    assert not fast.is_small_order(fast.pub_from_seed(os.urandom(32)))
+    assert not fast.is_small_order(b"short") and not fast.is_small_order(_enc(Q + 1))
 
 
 def test_rejections_match_the_reference():
