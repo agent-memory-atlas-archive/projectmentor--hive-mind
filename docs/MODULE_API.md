@@ -164,7 +164,7 @@ dashboard. All are `GET`, read-only, loopback and signed like every other route,
 | `/v1/tags` | | `{"tags": [...]}` |
 | `/v1/related` | `id` (a local row id, required), `kind` (`fact` or `decision`, default `fact`) | `{"related": [...], "tags": [...]}`; `400` for a missing or malformed `id` or a bad `kind` |
 | `/v1/audit` | | counts (`recheck`, `stale`, `duplicate`, `contravened`) and `samples` |
-| `/v1/peers` | `probe` (`0` to skip the live probe) | `{"peers": [{name, device, principal, addr, seen, status, self}]}` |
+| `/v1/peers` | `probe` (`0` to skip the live probe) | `{"peers": [{name, device, principal, addr, seen, status, self, module}]}`; `module` is the module name for a module identity, else `null`; no host device is recorded |
 | `/v1/verify` | | `{ok, version, level, lines, official_source, site}` |
 | `/v1/node` | `node` (an admitted peer's device id, required) | `{"node": "k1:…", "addr": "host:port"}`; `404` if it is not an admitted, reachable peer |
 

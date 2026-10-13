@@ -1,0 +1,1 @@
+- `api_peers` rows (`/api/peers`, `/v1/peers`) gain an additive `module` field: the module name for a module identity (the owner's `admit` marker), else `null`. No wire or signing change, and no `host` field because the marker does not record one.
