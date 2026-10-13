@@ -1,5 +1,5 @@
 {
-  "digest": "bdbc9263e84cdf5e95844c3ecae3b6f7e98ba4b07c53b4623ab35cdb221222ff",
+  "digest": "fb7f9d1fb8be31fa1c112783103acc9ba45473d70632808a35a14146f65bc92c",
   "files": {
     ".github/FUNDING.yml": "ca6c63d7539bb7d2f809b5068781c78de97c028a44c5ae252b11bc1695caf85d",
     ".github/ISSUE_TEMPLATE/bug_report.yml": "22df51b1e51c25f50726392c79811116b88c40370843ff2d4a3e76b643f1cb68",
@@ -11,6 +11,7 @@
     ".github/workflows/cla.yml": "09e9c23c9183758cf86ccf10ed8975b3660bd59c8e90846866c96ac723a7e40f",
     ".github/workflows/release-issue-close.yml": "a625c6cf5a913245d3bf1dfba5111e270d8f8685d411e0593419e36bee83de4b",
     ".github/workflows/sign.yml": "ce497aa2a81d7218813774ba4a0f4defa21516ef60b9dafa42140d2184237c67",
+    "AGENTS.md": "4abda267ab6ded83f372bfa36362ad8a55ebdaff6a2c7f258eee9eed584374e3",
     "CHANGELOG.md": "3c603d55aa7587e3680cb4c31c23fcd3ca8ac3448dd623e0ed9c96268028e117",
     "CLA.md": "78a00158ab3090dbb1a4de6ed03b150f22b5a0e99bcbba139a6244728780cc7b",
     "CONTRIBUTING.md": "7216acc171c51cb43bb9c82d276bb5cdaa7a899be41cd99e6e2bd52e8612b2b9",
@@ -19,6 +20,7 @@
     "advisories.json": "e1f7246819257c9cdcb8118aaee972ed89f22fb056d67230320d5ea7fdce6703",
     "cells/example-tool.json": "1ef1bb649f6805631bb6c20940baefb4a4bd867122b2c9e9b565c69aac30f060",
     "chacha20poly1305.py": "6c3bb50dc126dab128184280b4d11cb1494800651e97aea941a821f31ff012fd",
+    "changelog.d/agents-md.md": "a166ffe7c73b220d8b3fe9433058021c7fe746920226a251786ff924ef8feeb5",
     "changelog.d/ci-release-issue-close.md": "b1b64493fd10c1cde711239319e61a1188b92b8e0ab9418f4f4c88607793aa5b",
     "commandmap.py": "8bd409700a0667a15fa435d74cb3d48ae79a1d80b963b78e8791be12f9bc6e1b",
     "config/.peers.json.example": "e81eb4533b4e06969946a8fa1c977e0692bc047275101bcdbae1504355866674",
@@ -294,6 +296,6 @@
     "vocabulary.py": "3a6977fc89573561e6248748db90379acc810ff183556e220ce6bf1b2c0d0d3b",
     "x25519.py": "ec1967595a2306cde860afe4dffab40a3f833d089de6caf5c9c080df8fd45726"
   },
-  "sequence": 652,
+  "sequence": 654,
   "version": "4.0"
 }
