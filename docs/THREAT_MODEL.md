@@ -263,14 +263,14 @@ at once). Concretely:
   leave out owner-forgotten facts that the old page showed. Operator rule: remove hdash on a node where other local
   OS accounts must not see the hive (`hive-mind module remove hdash`); the daemon's `/api/*` stays loopback-open
   either way, as before.
-- **Session telemetry is a module, `hwatch` (3.1).** `hv telemetry` forwards to `hwatch telemetry` through
-  `hive-mind module run` (a subprocess; `hv` imports no module code and adds no control-plane edge). The forwarder passes
-  its arguments through unchanged and runs no shell. The store is the same local file as before, outside the journal,
+- **Session telemetry is a module, `hwatch` (3.1).** `hv telemetry` forwarded to `hwatch telemetry` in 3.1 and
+  is removed in 4.0 (exit 2, nothing run). The session hook now runs the module itself through `hive-mind module run`
+  (a subprocess; `hv` imports no module code and adds no control-plane edge), passing fixed flags and no shell. The store is the same local file as before, outside the journal,
   and core now only opens it read-only for the loopback `/api/telemetry`. Residuals, all needing a local process or an
   admitted device and so accepted for 3.x: `hwatch telemetry record` writes whatever its caller passes (no signature,
   as before), so a local process can forge or hide a session's tokens and cost; and a module installed under the name
   `hwatch` is run with the operator's own account when a hook fires (the module is signed under its pinned publisher,
-  as every module is). Operator rule: treat `hv telemetry report` as a report, not a control.
+  as every module is). Operator rule: treat `hwatch telemetry report` as a report, not a control.
 - **Unsigned entries cannot fork a chain.** `_verify_entry` accepts an entry with no signature at all
   (historical entries predate device keys), so an unsigned entry could take an admitted device's future
   `(node_id, seq)`, become that device's chain tip, and make the device's own later entry drop as a
@@ -314,6 +314,9 @@ at once). Concretely:
   bytes. The socket is mode 0600 in a 0700 directory owned by the user, and a connection from any other uid is closed
   unread. The seed lives only in the agent's memory (never a file, argv, env or log); `--for` is an idle timeout (1m
   to 8h), 12h is a hard cap, and expiry, `owner lock`, a suspend/resume jump or a vanished socket end the process.
+  `config set` and `module config set --fleet|--fleet-node` take `--non-interactive` (4.0): the verb never prompts for the
+  passphrase or reads stdin, and exits 5 with nothing signed when the agent is absent, locked, or refuses the act (so a
+  front end that runs it cannot hang on, or feed its own input to, a passphrase prompt).
   Residuals, none changing a journal, signature or sync byte: (1) *admitted-device class (accepted for 3.x):* while it
   is unlocked, any process running as the operator can obtain signatures for the acts above, so it can set config under
   an installed module's prefix or admit a module device for a module named at unlock; it can never get the seed or a
@@ -606,6 +609,36 @@ publisher key holder can sign `trusted`; the pinned key and the operator's look 
 Residual, admitted device only and so accepted for 3.x: `ProtectSystem=strict` makes paths read-only, not unreadable. The node
 key directory, `HIVE_HOME` and the modules directory are hidden from a confined unit only because their defaults sit under
 the home. Operator rule: keep `HIVE_KEY_DIR`, `HIVE_HOME` and `HIVE_MODULES_DIR` under the home for `confined` to hide them.
+
+### Configuration module (hconfig, 4.x)
+
+**hconfig** is a front for the core's own configuration verbs. It adds no listener, no socket and no stored credential, has no
+signing code, and reads no passphrase or owner variable (they are removed from the environment of every program it starts).
+A dashboard write is therefore hdash's request gates, then hconfig, then the core verb, then the owner-unlock agent, and the
+passphrase stays on the operator's terminal: hconfig reports `owner-locked` (exit 5) and never prompts. Anything it can do, the
+account that runs it could already do with the core's verbs, so it changes no one's authority; it is as unconfined as its caller
+(its manifest's `confined` tier describes the unit it does not have). It adds no `/v1` use and declares `reads: []`.
+
+`$HIVE_HOME/hconfig/audit.jsonl` is a local convenience record of node and module-node changes made through hconfig: mode 0600
+in a 0700 directory, never synced, with no value for a secret. It is not evidence: any process of the same user can edit it, and a
+change made directly with a core verb is not in it. Governed changes are the journal. Secrets reach hconfig only on standard input
+and print masked everywhere; the plaintext 0600 node file for module secrets is unchanged (a residual of the 3.1 baseline).
+
+**Viewer surface.** hdash can serve a read-only subset to allowlisted tailnet logins (not admitted devices) on its own viewer
+listener. From hconfig that is only governed values whose key is not `identifying`, and non-secret module values whose `ui` marks
+the panel `viewer: true`. Never a `node:` key (including the viewer allowlist itself), a secret, an `identifying` value, the
+owner and device block of `config show`, a `set_by` device id, an audit line or a `write_via` command; and no write: the listener
+has no `POST`. hconfig labels each record (`visibility`); hdash's viewer listener enforces it. The viewer path trusts the identity
+header of the tailnet front end, so it is only as sound as that front end stripping a client-supplied header (a fail-open
+assumption: the operator rule is to expose it through the front end only, never directly). A same-user process already has the
+operator port, so the viewer port gives it nothing more; accepted for 3.x.
+
+The listener's switch and allowlist are three node-local keys of `.peers.json` (`dashboard_share`, `dashboard_viewers`,
+`dashboard_viewer_port`), written only by `hive-mind config node set`: never journaled, never a `set-config`, never served to a
+viewer. The core daemon gains no listener and no code for them; hdash reads them at its own start. Operator rules: expose the
+viewer port only through the tailnet front end on its own HTTPS port, never enable Funnel on it, and keep the viewer port clear of
+hdash's operator port and the daemon's port range (`hdash doctor` checks all three). A viewer is a tailnet login, not an admitted
+device: it is served the dashboard's read-only subset and nothing of sync.
 
 ### A module listener on the tailnet (`hcns`, optional module)
 

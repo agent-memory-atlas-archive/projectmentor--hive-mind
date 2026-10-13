@@ -174,9 +174,8 @@ def build_parser(plane="data"):
     subparsers.add_parser("whoami", help="Show this device's identity + membership status (sterile/fertile/owner)")
     subparsers.add_parser("peers", help="List hive members by device + principal + address + reachability")
 
-    dash_parser = subparsers.add_parser("dash", help="Open the web dashboard (forwards to the hdash module; removed in 4.0)")
-    dash_parser.add_argument("--print", dest="print_only", action="store_true",
-                             help="Print the dashboard URL only; do not open a browser")
+    dash_parser = subparsers.add_parser("dash", help="Removed in 4.0: the dashboard is the hdash module (`hdash dash`)")
+    dash_parser.add_argument("rest", nargs=argparse.REMAINDER, help=argparse.SUPPRESS)
 
     doctor_parser = subparsers.add_parser("doctor", help="Health checks + device maintenance (rebuild, merkle)")
     doctor_parser.add_argument("--format", choices=["text", "json"], default="text")
@@ -318,6 +317,9 @@ def build_parser(plane="data"):
         config_set.add_argument("key", help="a governed key, e.g. cap_self, importance_self_cap, capsule_putters "
                                             "(an unknown key lists them all)")
         config_set.add_argument("value", help="numeric value")
+        config_set.add_argument("--non-interactive", action="store_true",
+                                help="never ask for the owner passphrase or read stdin: exit 5 when the agent is "
+                                     "absent, locked or refuses")
     # canonical: identity (this device's key) + confidence (owner-signed hive params)
     config_id = config_sub.add_parser("identity", help="Show or mint this device's identity key")
     config_id_sub = config_id.add_subparsers(dest="config_identity_action")
@@ -325,6 +327,19 @@ def build_parser(plane="data"):
     config_id_sub.add_parser("show", help="Show this device's device_id and pubkey")
     config_id_init = config_id_sub.add_parser("init", help="Mint a device key (fresh install)")
     config_id_init.add_argument("--force", action="store_true", help="Replace an existing key / skip the populated-journal guard")
+    for _name, _help in (("schema", "Print the governed and node-local key tables (types, defaults, ranges)"),
+                         ("show", "Print every governed key's value, source and who set it last")):
+        config_sub.add_parser(_name, help=_help).add_argument("--json", action="store_true", help="machine-readable output")
+    config_node = config_sub.add_parser("node", help="Node-local keys of .peers.json (port, bind, sync_auth, ...): no owner key")
+    config_node_sub = config_node.add_subparsers(dest="config_node_action")
+    for _name, _help in (("list", "every node key with its value and source"), ("get", "one node key"),
+                         ("set", "set one node key (the daemon re-reads at restart)")):
+        _p = config_node_sub.add_parser(_name, help=_help)
+        if _name != "list":
+            _p.add_argument("key", help="port | bind | sync_auth | sync_auth_outbound | dashboard_share | dashboard_viewers | dashboard_viewer_port")
+        if _name == "set":
+            _p.add_argument("value")
+        _p.add_argument("--json", action="store_true", help="machine-readable output")
     if control:
         config_conf = config_sub.add_parser("confidence", help="Set an owner-signed confidence parameter")
         config_conf_sub = config_conf.add_subparsers(dest="config_confidence_action")
@@ -366,9 +381,8 @@ def build_parser(plane="data"):
                              help="set the outbound mode (#107): enforce pushes only to a peer whose hello "
                                   "verified; applies from the next sync round")
 
-    tel_parser = subparsers.add_parser("telemetry", help="Session telemetry (forwards to the hwatch module; removed in 4.0)")
-    tel_parser.add_argument("rest", nargs=argparse.REMAINDER,
-                            help="record|report|list and their options, passed to `hwatch telemetry` (see `hwatch telemetry --help`)")
+    tel_parser = subparsers.add_parser("telemetry", help="Removed in 4.0: session telemetry is the hwatch module (`hwatch telemetry`)")
+    tel_parser.add_argument("rest", nargs=argparse.REMAINDER, help=argparse.SUPPRESS)
 
     return parser
 
@@ -378,6 +392,9 @@ _STORE_COMMANDS = {"remember", "search", "decide", "propose", "retract", "entity
 
 
 def main():
+    if sys.argv[1:2] and sys.argv[1] in _REMOVED_VERBS:
+        # Whatever follows the removed verb (argparse would reject a bare `--print`) gets the pointer, not a usage error.
+        return removed_verb_cmd(argparse.Namespace(command=sys.argv[1]))
     args = build_parser(plane="data").parse_args(sys.argv[1:])
     return dispatch(args)
 
@@ -478,14 +495,12 @@ def _dispatch(args):
         audit(args)
     elif args.command == "sync":
         sync_cmd(args)
-    elif args.command == "telemetry":
-        telemetry_cmd(args)
+    elif args.command in ("dash", "telemetry"):
+        return removed_verb_cmd(args)
     elif args.command == "whoami":
         whoami_cmd(args)
     elif args.command == "peers":
         peers_cmd(args)
-    elif args.command == "dash":
-        dash(args)
     else:
         # Unreachable through the CLI: argparse rejects an unknown subcommand before this. Explicit
         # rather than silent, because the control plane routes through here too and a typo in its own

@@ -30,7 +30,7 @@ Not here: anything the suite already proves (sync convergence and refusals, modu
 ## 3. Real `claude` and `grok`
 
 1. `claude -p "reply with ok"` and `grok` equivalent, from a seat's launcher: each exits 0 and prints a reply. The session hook
-   records a start and an end row (`hv telemetry` shows both).
+   records a start and an end row (`hwatch telemetry` shows both).
 2. A seat launched through `hwatch` runs under its own uid and cannot read the owner's key directory.
 
 ## 4. Termux / runit on a phone

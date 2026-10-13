@@ -802,9 +802,160 @@ def _config_set(key, value):
     raise NotOnDataPlane(("config", "set"))
 
 
+def _config_schema_doc():
+    """`config schema --json`: the two tables, governed (`GOVERNED_KEYS`) and node-local (`NODE_KEYS`), one record per key."""
+    return {"schema": 1,
+            "governed": [_config_key_record(k, v) for k, v in GOVERNED_KEYS.items()],
+            "node": [_config_key_record(k, v) for k, v in NODE_KEYS.items()]}
+
+
+def _config_show_doc():
+    """`config show --json`: every governed key's merged value, its source (`default` | `fleet`) and `set_by`
+    ({device_id, ts, sid} of the last honoured `set-config` for it), plus the operator-only `governance` block (the
+    owner, the admitted devices with their principals, `quorum_m`) that explains the values. Reads the journal only."""
+    gov = _governance_state(merkle.read_all_entries(JOURNAL_DIR))
+    cfg, by = gov.get("config") or {}, gov.get("config_by") or {}
+    keys = [{"id": k, "value": cfg.get(k, spec["default"]), "default": spec["default"],
+             "source": "fleet" if k in by else "default", "set_by": by.get(k)} for k, spec in GOVERNED_KEYS.items()]
+    return {"schema": 1, "governed": keys,
+            "governance": {"owner_id": gov.get("owner_id"),
+                           "admitted": [{"device_id": d, "principal": gov["principals"].get(d)}
+                                        for d in sorted(gov["admitted"])],
+                           "quorum_m": cfg.get("quorum_m", GOV_QUORUM_M)}}
+
+
+def _config_show_text(doc):
+    w = max(len(k["id"]) for k in doc["governed"])
+    for k in doc["governed"]:
+        who = f"  (set by {k['set_by']['device_id']} {k['set_by']['sid']})" if k["set_by"] else ""
+        print(f"{k['id']:<{w}}  {k['value']}  [{k['source']}]{who}")
+
+
+_NODE_ENV = {"bind": "HIVE_BIND", "sync_auth": "HIVE_SYNC_AUTH", "sync_auth_outbound": "HIVE_SYNC_AUTH_OUTBOUND"}
+_NODE_MASK = "********"     # an env override of an address or an auth mode is never printed (hconfig design §2)
+
+
+def _node_file():
+    import sync_common
+    path = sync_common.hive_home() / ".peers.json"
+    try:
+        cfg = json.loads(path.read_text()) if path.exists() else {}
+    except Exception:
+        cfg = {}
+    return path, cfg if isinstance(cfg, dict) else {}
+
+
+def _node_record(key, cfg):
+    """One `config node` row: the merged value and where it came from. `set` is whether the node FILE holds the key
+    (an env override shadows it, which is `source: env` with the value masked)."""
+    spec = NODE_KEYS[key]
+    present = key in cfg
+    env = os.environ.get(_NODE_ENV.get(key, ""), "") if key in _NODE_ENV else ""
+    if env and key in ("sync_auth", "sync_auth_outbound"):
+        env = env.strip().lower() if env.strip().lower() in spec["choices"] else ""     # an invalid mode is ignored
+    if env:
+        value, source = _NODE_MASK, "env"
+    elif present:
+        value, source = cfg[key], "node"
+    else:
+        value, source = spec["default"], "default"
+    return {"id": key, "type": spec["type"], "value": value, "default": spec["default"], "source": source,
+            "set": present, "env": _NODE_ENV.get(key), "description": spec["description"]}
+
+
+def _node_coerce(key, raw):
+    """The value to store for `config node set <key> <raw>`, or raise ValueError with the refusal line."""
+    import ipaddress
+    spec = NODE_KEYS[key]
+    if spec["type"] == "int":
+        try:
+            val = int(raw)
+        except (TypeError, ValueError):
+            raise ValueError(f"bad value for {key}: {raw!r} is not a whole number")
+        if not spec["min"] <= val <= spec["max"]:
+            raise ValueError(f"{key} must be between {spec['min']} and {spec['max']}")
+        return val
+    if spec["type"] == "bool":
+        word = str(raw).strip().lower()
+        if word not in ("true", "false", "on", "off", "yes", "no", "1", "0"):
+            raise ValueError(f"bad value for {key}: {raw!r} is not true or false")
+        return word in ("true", "on", "yes", "1")
+    if spec["type"] == "list":
+        try:
+            val = json.loads(raw) if str(raw).lstrip().startswith("[") else [x.strip() for x in str(raw).split(",")]
+        except ValueError:
+            raise ValueError(f"bad value for {key}: give a comma-separated list or a JSON list of strings")
+        val = [x for x in val if x != ""] if isinstance(val, list) else None
+        if val is None or not all(isinstance(x, str) and 0 < len(x) <= 256 and not any(c.isspace() for c in x)
+                                  for x in val):
+            raise ValueError(f"bad value for {key}: a list of logins, each 1 to 256 characters with no spaces")
+        return sorted(set(val))
+    val = str(raw).strip()
+    if "choices" in spec:
+        val = val.lower()
+        if val not in spec["choices"]:
+            raise ValueError(f"{key} must be one of: {', '.join(spec['choices'])}")
+        return val
+    if key == "bind":
+        try:
+            ipaddress.ip_address(val)
+        except ValueError:
+            raise ValueError("bind must be an IP address (e.g. this node's tailnet address, 127.0.0.1, or 0.0.0.0 "
+                             "for all interfaces)")
+        return val
+    return val
+
+
+def _config_node(args):
+    """`config node list|get|set` (4.0 C2): the node-local keys of `.peers.json` (`NODE_KEYS`), no owner key. The write is
+    `sync_common.update_peers_file`, the same writer `hv sync auth` uses, so every other key in the file is kept. The
+    daemon re-reads the file at restart."""
+    act, as_json = getattr(args, "config_node_action", None), getattr(args, "json", False)
+
+    def fail(msg):
+        if as_json:
+            print(json.dumps({"schema": 1, "ok": False, "error": msg}, indent=2))
+        else:
+            print(msg)
+        sys.exit(1)
+
+    path, cfg = _node_file()
+    key = getattr(args, "key", None)
+    if act in ("get", "set") and key not in NODE_KEYS:
+        fail(f"unknown node key {key!r} (known: {', '.join(NODE_KEYS)})")
+    if act == "list" or act is None:
+        rows = [_node_record(k, cfg) for k in NODE_KEYS]
+        if as_json:
+            print(json.dumps({"schema": 1, "keys": rows}, indent=2))
+        else:
+            for r in rows:
+                print(f"{r['id']}={r['value']}  [{r['source']}]")
+    elif act == "get":
+        row = _node_record(key, cfg)
+        print(json.dumps({"schema": 1, "key": row}, indent=2) if as_json else f"{row['value']}")
+    elif act == "set":
+        try:
+            val = _node_coerce(key, args.value)
+        except ValueError as e:
+            fail(str(e))
+        import sync_common
+        written = sync_common.update_peers_file({key: val})
+        env = _NODE_ENV.get(key)
+        shadow = bool(env and os.environ.get(env) and _node_record(key, {key: val})["source"] == "env")
+        note = "restart the daemon to apply: systemctl --user restart hive-sync"
+        if as_json:
+            print(json.dumps({"schema": 1, "ok": True, "key": key, "value": val, "path": str(written),
+                              "env_overrides": shadow, "note": note}, indent=2))
+        else:
+            print(f"set {key} = {val} in {written}")
+            if shadow:
+                print(f"  note: {env} is set in the environment and OVERRIDES this file.")
+            print(f"  {note}")
+
+
 def config_cmd(args):
-    """Settings: `hv config identity show|init` (this device's key) and
-    `hive-mind config set <param> <value>` (owner-signed hive params).
+    """Settings: `hv config identity show|init` (this device's key), `config schema|show` (the governed keys,
+    read-only) and `hive-mind config set <param> <value>` (owner-signed hive params; exit 1 on every refusal).
     `hive-mind config set …` is kept as a silent alias for `config confidence set`."""
     action = getattr(args, "config_action", None)
     if action == "identity":
@@ -815,20 +966,36 @@ def config_cmd(args):
             _key_announce()
         else:
             _identity_show()
+    elif action == "node":
+        _config_node(args)
+    elif action in ("schema", "show"):
+        doc = _config_schema_doc() if action == "schema" else _config_show_doc()
+        if getattr(args, "json", False):
+            print(json.dumps(doc, indent=2))
+        elif action == "show":
+            _config_show_text(doc)
+        else:
+            for k in doc["governed"] + doc["node"]:
+                print(f"{k['id']}  {k['type']}  default {k['default']!r}  {k['description']}")
     elif action == "confidence":
         if getattr(args, "config_confidence_action", None) == "set":
-            _config_set(args.key, args.value)
+            if _config_set(args.key, args.value) is False:
+                sys.exit(1)
         else:
             print("usage: hive-mind config set <same_device_lambda|cap_self> <value>")
     elif action == "quorum":
         if getattr(args, "config_quorum_action", None) == "set":
-            _config_set(args.key, args.value)
+            if _config_set(args.key, args.value) is False:
+                sys.exit(1)
         else:
             print("usage: hive-mind config set <quorum_m|quorum_by|dead_man_days> <value>")
     elif action == "set":            # silent back-compat alias for `config confidence set`
-        _config_set(args.key, args.value)
+        if getattr(args, "non_interactive", False):
+            globals()["_NON_INTERACTIVE"] = True       # a passphrase prompt becomes exit 5 (4.0 C2)
+        if _config_set(args.key, args.value) is False:
+            sys.exit(1)
     else:
-        print("usage: hv config identity show|init  |  hive-mind config set <key> <value>  |  "
+        print("usage: hv config identity show|init  |  hv config schema|show [--json]  |  "
               "hive-mind config set <key> <value>")
 
 

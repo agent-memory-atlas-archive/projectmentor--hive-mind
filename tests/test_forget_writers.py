@@ -206,8 +206,8 @@ def test_config_set_refuses_while_a_fact_would_come_back_and_names_it(tmp_path):
     run = _cli(tmp_path)
     base = _legacy_hive(tmp_path, run)
     sid = _backdate_forget(tmp_path, run, "the backup runs at 02:00")
-    r = run("config", "set", "forget_writers", "owner")
-    assert "Not set" in r.stdout and sid in r.stdout and "hive-mind retract" in r.stdout and "hive-mind unforget" in r.stdout
+    r = run("config", "set", "forget_writers", "owner", check=False)
+    assert r.returncode == 1 and "Not set" in r.stdout and sid in r.stdout and "hive-mind retract" in r.stdout and "hive-mind unforget" in r.stdout
     assert len(_policy_acts(tmp_path)) == base                             # nothing written
     doc = json.loads(run("doctor", "--format", "json", check=False).stdout)
     fa = {c["name"]: c for c in doc["checks"]}["forget-authz"]
@@ -238,7 +238,8 @@ def test_config_set_refuses_an_unknown_value_and_needs_no_decision_when_nothing_
     run = _cli(tmp_path)
     base = _legacy_hive(tmp_path, run)
     run("remember", "a fact nobody forgot")
-    assert "must be 'owner'" in run("config", "set", "forget_writers", "sometimes").stdout
+    bad = run("config", "set", "forget_writers", "sometimes", check=False)
+    assert "must be 'owner'" in bad.stdout and bad.returncode == 1                  # 4.0 C1: every refusal exits 1
     r = run("config", "set", "forget_writers", "legacy", check=False)      # 3.0: refused with a sentence, exit 1 (#368)
     assert "no longer honoured" in r.stdout and r.returncode == 1
     assert len(_policy_acts(tmp_path)) == base

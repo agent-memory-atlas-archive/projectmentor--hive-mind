@@ -54,6 +54,7 @@ import logging
 import os
 import queue
 import re
+import shutil
 import subprocess
 import threading
 import time
@@ -199,14 +200,22 @@ def _hv_telemetry(event: str, *, session_id: str = "", identity: str = "", cwd: 
     """Best-effort: record a session start/end into the LOCAL telemetry lane (never the corpus).
     agent is always 'hermes'; `identity` is the stable instance discriminator (agent_identity) so
     two hermes on the same node stay distinct. Failure is silent."""
-    args = ["telemetry", "record", "--event", event, "--agent", "hermes"]
+    args = ["--event", event, "--agent", "hermes"]
     if identity:
         args += ["--identity", identity]
     if session_id:
         args += ["--session", session_id]
     if cwd:
         args += ["--cwd", cwd]
-    _hv(*args, timeout=10)
+    # Session telemetry is the hwatch module's (`hv telemetry` was removed in 4.0); no module, no record.
+    launcher = shutil.which("hive-mind")
+    cmd = [launcher, "module", "run", "hwatch", "--", "telemetry", "record", *args] if launcher else (
+        [shutil.which("hwatch"), "telemetry", "record", *args] if shutil.which("hwatch") else None)
+    if cmd:
+        try:
+            subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, timeout=10)
+        except Exception:
+            pass
 
 
 def _load_nudge_cfg() -> dict[str, str]:

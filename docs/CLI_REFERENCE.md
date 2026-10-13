@@ -16,7 +16,7 @@ memory.
 |---|---|
 | `hv audit` | Surface redundant, obsolete, stale or missing facts (used by agent hooks) |
 | `hv config` | Device identity (`identity`); governed parameters are set with `hive-mind config set` (owner) |
-| `hv dash` | Open the web dashboard (forwards to the hdash module; removed in 4.0) |
+| `hv dash` | Removed in 4.0 (exit 2): the dashboard is the hdash module, `hdash dash` |
 | `hv decide` | Record a decision |
 | `hv discover` | Find hives on your tailnet |
 | `hv doctor` | Check that your device is healthy; `--fix` self-heals (orphan daemons + Claude Code hooks/skill); subcommands `merkle`, `rebuild`. *(3.1)* For a contract-1 module it also runs the module's own `doctor` (`HIVE_DOCTOR_MODE` in the environment names the caller: `manual` by default, `timer` from the 15-minute timer) |
@@ -37,7 +37,7 @@ memory.
 | `hive-mind unforget` | Owner only: reverse an owner forget (`hive-mind retract --owner`) |
 | `hive-mind migrate forget` | Owner only (3.0): re-issue, owner-signed, the forgets that only the pre-genesis grandfather keeps in effect; `--check` lists them |
 | `hv sync` | Sync with peer nodes; `auth` sets the read-auth mode, `auth --outbound` what a peer must prove before this node pushes to it |
-| `hv telemetry` | Session observability (forwards to the hwatch module; removed in 4.0) |
+| `hv telemetry` | Removed in 4.0 (exit 2): session telemetry is the hwatch module, `hwatch telemetry` |
 | `hv verify` | Check that this install is the official, signed release |
 | `hv version` | Print the agent contract version |
 | `hv whoami` | Show this device's identity and membership status (sterile/fertile/owner) |
@@ -65,10 +65,25 @@ cd ~/projects/hive-mind
 hv config identity announce            # publish this device's key as a signed journal entry
 hv config identity show                # this device's device_id + pubkey
 hv config identity init [--force]      # mint a device key (fresh install)
+hv config node list|get <key>|set <key> <value> [--json]   # 4.0: the node-local keys of .peers.json, no owner key
+hv config schema [--json]              # 4.0: the governed and node-local key tables (type, default, range or choices)
+hv config show [--json]                # 4.0: every governed key's value, source and who set it last (`set_by`), plus the `governance` block
 ```
 
+`config node` reads and writes the node-local keys (`port`, `bind`, `sync_auth`, `sync_auth_outbound`, `dashboard_share`,
+`dashboard_viewers`, `dashboard_viewer_port`) with the same writer `hv sync auth` uses, so every other key in `.peers.json` is kept; an
+environment override (`HIVE_BIND`, `HIVE_SYNC_AUTH`, `HIVE_SYNC_AUTH_OUTBOUND`) shows as `source: env` with its value masked,
+and the daemon re-reads the file at restart. `hive-mind config set <key> <value> --non-interactive` never asks for the
+owner passphrase and never reads stdin: when the unlock agent is absent, locked or refuses the act it exits 5 with nothing
+signed (a passphrase in `$HIVE_OWNER_KEY_PASSPHRASE` is not a prompt).
+
+`config schema` and `config show` are reads (any device). `config show --json` is `{schema: 1, governed: [{id, value,
+default, source: "default"|"fleet", set_by: {device_id, ts, sid}|null}], governance: {owner_id, admitted: [{device_id,
+principal}], quorum_m}}`; the `governance` block is for the operator, not for a viewer.
+
 `hive-mind config set` tunes the owner-signed, journaled knobs (identical on every
-device, which is what keeps confidence converging). It runs on the owner machine:
+device, which is what keeps confidence converging). Every refusal (unknown key, bad or out-of-range value, no owner key)
+prints its reason and exits 1 (before 4.0 most exited 0). It runs on the owner machine:
 
 ```
 hive-mind config set same_device_lambda 0.5              # weight of EACH extra agent on one device (default 0.5)
@@ -1146,43 +1161,11 @@ they remain its internal keys and join columns; they just stop leaking out as na
 
 ---
 
-### `hv dash` — Open the web dashboard
+### `hv dash` — removed in 4.0
 
-*(3.1)* The dashboard is the **hdash module** now ([`projectmentor/hive-mind-dash`](https://github.com/projectmentor/hive-mind-dash)),
-and `hv dash` forwards to it (`hive-mind module run hdash -- dash`). The forwarder is removed in 4.0: use `hdash dash`.
-When hdash is not installed, `hv dash` prints the install line (`hive-mind module install hdash --from …`) and exits 1.
-
-The page is the one that shipped in core, unchanged: **Overview** (counts, convergence, contested, the live audit
-summary), **Corpus** (facts and decisions: search, filter by tag, sort, filter by status; paginated), **Hive**
-(peers and health) and **Telemetry**. The module serves it on `http://127.0.0.1:9896/` (config key `port`) and answers
-only on the device it runs on. To see another device's data, pick it in the dashboard: your own daemon fetches it with a
-signed request. The sync daemon no longer serves the page, only the `/api/*` JSON the module reads. Nothing is exposed
-to the public internet.
-
-`hv dash` prints the URL and tries to open your browser. On a headless box (or Android/Termux, or WSL) where it can't,
-the printed URL is the point: open it yourself.
-
-```
-hv dash [--print]
-```
-
-**Arguments:**
-
-| Argument | What it does |
-|---|---|
-| `--print` | Print the dashboard URL only; don't try to open a browser. Handy in scripts. |
-
-**Examples:**
-```bash
-# Open the dashboard in your browser
-./hv dash
-
-# Just show me the URL
-./hv dash --print
-```
-
-The dashboard is **read-only** — it never writes to the corpus. Governed actions
-(admitting devices, retracting, deciding) stay on the CLI by design.
+*(4.0)* The dashboard is the **hdash module** ([`projectmentor/hive-mind-dash`](https://github.com/projectmentor/hive-mind-dash)).
+`hv dash` is gone: it prints one line naming `hdash dash` on stderr and exits 2, whatever arguments follow, and runs
+nothing. Install the module with `hive-mind module install hdash --from …`; its page is on `http://127.0.0.1:9896/`.
 
 ---
 
@@ -1313,7 +1296,7 @@ checks, strongest last:
    `https://hivemind.projectmentor.org/.well-known/hivemind.pub`, a different origin from the code
    host. Catches a fork that ships its own key and a self-signed manifest.
 
-A healthy install prints `✓ Official HiveMind v3.1 from ProjectMentor — verified.` If you edited
+A healthy install prints `✓ Official HiveMind v4.0 from ProjectMentor — verified.` If you edited
 files yourself it says the install was modified locally.
 
 **Exit codes** (a script or CI step can rely on them):
@@ -1336,7 +1319,7 @@ rather than failed while it is pending (see `hv doctor` above).
 ### `hv version` — Agent contract version
 
 ```
-hv version        # → hv contract-version 3.1
+hv version        # → hv contract-version 4.0
 ```
 
 The version of the agent contract (`docs/AGENT_INTEGRATION.md`). Adapters compare it with the
@@ -1344,7 +1327,7 @@ version they last integrated against: a MINOR bump is additive, a MAJOR bump mea
 
 ---
 
-### Agent-hook verbs: `hv nudge`, `hv audit`, `hv telemetry`
+### Agent-hook verbs: `hv nudge`, `hv audit`
 
 These are called by agent integrations (the Claude Code hooks, the Hermes plugin, the MCP server)
 rather than typed by hand. `docs/AGENT_INTEGRATION.md` is the full reference.
@@ -1352,7 +1335,6 @@ rather than typed by hand. `docs/AGENT_INTEGRATION.md` is the full reference.
 ```
 hv nudge --event session-start|user-prompt|precompact|sessionend [--session ID] [--cwd DIR] [--agent NAME]
 hv audit [--depth light|normal|deep] [--session ID] [--format text|json]
-hv telemetry record|report|list …
 ```
 
 - **`hv nudge`** reads recent text on stdin and prints a short hint to stdout, or nothing. With
@@ -1362,13 +1344,10 @@ hv telemetry record|report|list …
 - **`hv audit`** lists facts to reconcile: redundant, obsolete, due for a re-check (`volatile` facts
   past their freshness window), missing (with `--session`), and CONTRAVENED (a correction that names
   a still-live fact in prose but never resolved it).
-- **`hv telemetry`** *(3.1)* forwards to the **hwatch module** (`hive-mind module run hwatch -- telemetry …`; the
-  command is `hwatch telemetry record|report|list`). The module records and reports session observability (duration,
-  tokens, cost) in the same local-only store as before (`$HIVE_HOME/.telemetry/telemetry.db`: never in the journal,
-  never synced), so history carries over. `record` runs from session hooks, so it prints nothing and exits 0 when
-  hwatch is not installed (a node without the module behaves as before and records nothing); `report` and `list`
-  print the install line (`hive-mind module install hwatch --from …`) and exit 1. The forwarder is removed in 4.0:
-  use `hwatch telemetry`.
+- **`hv telemetry`** *(removed in 4.0)* prints one line naming `hwatch telemetry` on stderr and exits 2, whatever
+  arguments follow. Session telemetry is the **hwatch module** (`hwatch telemetry record|report|list`); it keeps the
+  same local-only store (`$HIVE_HOME/.telemetry/telemetry.db`: never in the journal, never synced). The session hook
+  (`session_hook.sh`) calls the module directly and stays silent and exits 0 when hwatch is not installed.
 
 ---
 
@@ -1403,10 +1382,12 @@ hive-mind module install <name> [--from <repo>] [--publisher KEY] [--principal P
                           [--non-interactive] [--json] [--require-healthy]       # (3.1) the idempotent form of add/update
 hive-mind module remove <name>
 hive-mind module update <name> [--from <repo>] [--publisher KEY] [--require-healthy] [--set ...] [--set-fleet ...] [--set-env ...] [--non-interactive]
-hive-mind module list
+hive-mind module list [--json]                                   # (4.0) --json: {schema: 1, modules: [{name, version, publisher, signature, service, device, trust, quota_use, problem, config_schema}]}
 hive-mind module check <dir> [--run] [--deny TERM] [--json]       # (3.1)
-hive-mind module config <name> set <key> [<value>] [--fleet | --fleet-node DEVICE] [--stdin | --file PATH] | unset <key> | list [--merged] | get <key> | validate   # get, validate, --fleet*, --stdin: (3.1)
-                          # list, get, validate take --json
+hive-mind module config <name> set <key> [<value>] [--fleet | --fleet-node DEVICE] [--stdin | --file PATH] | unset <key> | list [--merged] | get <key> | validate | schema   # get, validate, --fleet*, --stdin: (3.1); schema, --non-interactive: (4.0)
+                          # list, get, validate take --json; schema prints the installed manifest's config_schema block as JSON
+                          # set --non-interactive: never ask for the owner passphrase or read stdin to unlock; exit 5 when the unlock agent is absent,
+                          #   locked or would not sign the act (a --fleet / --fleet-node value; a node value needs no key and is unchanged)
                           # a secret key (token, password, ...) is never taken from argv: --stdin, --file PATH or a hidden prompt
 hive-mind module quota <name> [--per-hour N] [--per-day N] [--entry-bytes N] [--lifetime N]
 hive-mind module run <name> [--] <args>...             # (3.1) the module's cli command, without its launcher

@@ -5,7 +5,7 @@ three things from one port:
 
 - the **sync protocol** peers use to converge their journals (`/sync/*`);
 - **discovery**, so a new device can find and verify a hive before it is admitted (`/hive/info`);
-- the JSON data the dashboard reads (`/api/*`). The page itself is the hdash module's since 3.1 (`hv dash` forwards).
+- the JSON data the dashboard reads (`/api/*`). The page itself is the hdash module's since 3.1 (`hdash dash`).
 
 Sync wire-protocol version: **3** (the `protocol_version` field; 2 = understands signed read requests,
 3 = signs its `/sync/hello` and `/hive/info` answers, see *Responder signatures*).
@@ -55,6 +55,10 @@ Every path belongs to one of three classes. A **loopback** caller is a request t
 | **Remote-auth** | `/sync/hello`, `/sync/chunk`, `/sync/ingest` | allowed | depends on the node's **sync auth mode** (below) |
 | **Local only** | the dashboard (`/`, `/index.html`, `/dashboard`, `/dashboard/`, `/logo.svg`, `/favicon.svg`) and every other `/api/*` path | allowed | only a validly **signed** request from an admitted device (the dashboard's per-node view, below); anything else gets **403**, even in `permissive` mode |
 
+**Viewer class (4.x).** A fourth class lives on hdash's own listener, not the daemon's: an allowlisted tailnet login (the
+`dashboard_viewers` node key), arriving through the tailnet front end, may `GET` the read-only dashboard subset and nothing else
+(no write, no `/sync/*`, no `node:` key, no secret). The daemon serves it no path and its access classes above are unchanged.
+
 **Sync auth mode** is set per node and is not journaled, so each node can switch on its own schedule:
 
 | Mode | Remote-auth paths from another device | Local-only paths from another device |
@@ -71,7 +75,7 @@ This mode governs who may **read from** this node. What this node requires of a 
 to** it is a separate setting, `hv sync auth --outbound`; see *Responder signatures*.
 
 **What this means for the dashboard.** Open it on a device that runs a HiveMind node:
-`hv dash` (the hdash module, `http://127.0.0.1:9896/`). That includes an Android phone running HiveMind in Termux.
+`hdash dash` (the hdash module, `http://127.0.0.1:9896/`). That includes an Android phone running HiveMind in Termux.
 A browser on a device that is *not* running its own node, pointed at another node's tailnet address,
 is refused with 403. To look at another node, use the dashboard's node picker — your own daemon fetches
 that node's data with a signed request.
@@ -418,6 +422,7 @@ Written by the installer; per node and git-ignored.
 | `bind` | automatic | Optional override of the bind address (see *Binding*); `0.0.0.0` is treated as automatic |
 | `sync_auth` | `permissive` | Optional sync auth mode (`hv sync auth` sets it) |
 | `sync_auth_outbound` | `permissive` | Optional outbound mode: what a peer's hello must prove before this node pushes to it (`hv sync auth --outbound` sets it; see *Responder signatures*) |
+| `dashboard_share`, `dashboard_viewers`, `dashboard_viewer_port` | `false`, `[]`, unset | Node-local keys for hdash's read-only tailnet viewer listener (`hive-mind config node set` writes them; the daemon ignores them) |
 | `peers[].csrf_token_file` | optional | Path to the `.csrf-token` of a daemon on this same machine under another `HIVE_HOME`. A POST to a loopback daemon needs its `Hive-CSRF` token (or a valid signed envelope); `hv sync` reads this file to send it. Not needed for a remote peer |
 
 Admitting a device with `hive-mind group admit` also adds a peer entry from the address in its join request.

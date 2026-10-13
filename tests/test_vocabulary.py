@@ -167,6 +167,7 @@ NOT_JOURNAL = {
         ("hive_modules.py", "config_value_problem"): "a manifest `config_schema` entry's value type (`string`, `int`, `bool`, `enum`)",
         ("hive_modules.py", "_check_config_entry"): "a manifest `config_schema` entry's value type (`string`, `int`, `bool`, `enum`)",
         ("hive_modules.py", "_prompt"): "a manifest `config_schema` entry's value type (`enum` lists its values in the prompt)",
+        ("hv", "_node_coerce"): "a `NODE_KEYS` row's value type (`int`, `list`, `str`), not an entry's type",
     },
     "kind": {
         ("hv", "_wire_one"): "a cell's kind (`agent` or `tool`), which `hv wire` dispatches on",
@@ -488,21 +489,11 @@ def collect(sources):
         for unit, _unode, call in _calls(tree, "_config_set"):
             if call.args and _is_str(call.args[0]):
                 S.w("config_keys", call.args[0].value, f"{f}:{unit}:{call.lineno}")
-    for unode in _unit(trees["hivemind_owner.py"], "_config_set"):
-        tables = [v for t, v in _assignments(unode) if isinstance(t, ast.Name) and t.id == "coercers"]
-        if len(tables) != 1 or not isinstance(tables[0], ast.Dict):
-            S.unresolved.append("hivemind_owner.py:_config_set: no `coercers` table (the set-config gate moved)")
-            continue
-        for k, v in zip(tables[0].keys, tables[0].values):
-            site = f"hivemind_owner.py:_config_set:{v.lineno}"
-            if _is_str(k):
-                S.w("config_keys", k.value, site)
-            elif (k is None and isinstance(v, ast.DictComp) and isinstance(v.generators[0].iter, ast.Name)
-                  and _module_table(hv, v.generators[0].iter.id)):
-                for key in _module_table(hv, v.generators[0].iter.id):
-                    S.w("config_keys", key, f"{site} ({v.generators[0].iter.id})")
-            else:
-                S.unresolved.append(f"{site}: a coercer key that is neither a literal nor a table in hv")
+    gk = _module_table(hv, "GOVERNED_KEYS")       # the `_config_set` gate's table (4.0 C1): hv's module-level dict
+    if not gk:
+        S.unresolved.append("hv:GOVERNED_KEYS: no table (the set-config gate moved)")
+    for key in gk or []:
+        S.w("config_keys", key, "hv:GOVERNED_KEYS")
 
     # channels: hv's --channel choices
     for unit, _unode, call in _calls(hv, "add_argument"):
@@ -816,7 +807,7 @@ def test_mutant_unregistered_group_verb_is_caught():
 
 
 def test_mutant_unregistered_config_key_is_caught():
-    S = _mutated("hivemind_owner.py", '"capsule_putters": str,', '"capsule_putters": str, "x_new_knob": float,')
+    S = _mutated("hv", 'GOVERNED_KEYS = {', 'GOVERNED_KEYS = {"x_new_knob": {"type": "float"},')
     assert any("'x_new_knob'" in m for m in unregistered_writes(S, REGISTRY))
 
 

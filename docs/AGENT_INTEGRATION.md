@@ -1,6 +1,6 @@
 # HiveMind Agent Integration Spec
 
-`Contract-Version: 3.1`  *(SemVer `MAJOR.MINOR`; authoritative value: `hv version`)*
+`Contract-Version: 4.0`  *(SemVer `MAJOR.MINOR`; authoritative value: `hv version`)*
 
 > **Audience: any AI agent** (Claude Code, Hermes, OpenClaw, an MCP host, any CLI agent).
 > You are reading this because you are joining a HiveMind — a shared, local-first memory.
@@ -61,7 +61,7 @@ All logic lives in the `hv` CLI (`$HIVE_HOME/hv`); your adapter only *calls* it.
 | `hv retract <sid>` | Negative evidence. The owner forget, `hive-mind retract <sid> --owner`, is decisive and owner-signed, and runs on the owner's control plane (2.0) |
 | `hv nudge --event=<E> [--session=<id>] [--cwd=<dir>]` | Emit a save/audit hint or a startup digest (reads recent text on **stdin**, prints a terse hint to **stdout**, or nothing) |
 | `hv audit [--depth light\|normal\|deep] [--format json] [--session=<id>]` | Surface redundant / obsolete / missing facts |
-| `hv telemetry record --event=start\|end --agent=<you> --identity=<instance> --session=<id> [--cwd=<dir>]` | **(optional, since 1.1)** record session observability into the LOCAL telemetry lane |
+| `hwatch telemetry record --event=start\|end --agent=<you> --identity=<instance> --session=<id> [--cwd=<dir>]` | **(optional)** record session observability into the LOCAL telemetry lane. The hwatch module's verb since 3.1; `hv telemetry` was removed in 4.0 and exits 2 |
 
 **Contract invariants you can rely on:** `hv nudge`/`hv audit` are best-effort and print to
 stdout (empty = no nudge); `--source` is your stable identity; confidence rises only from
@@ -136,13 +136,13 @@ call is fixed; you provide the plumbing (where the text comes from, where the ou
    These two hooks are best-effort: a hard kill skips them, so they sit on top of audit-on-boot
    (behavior 1), which is the actual guarantee.
 5. **Telemetry (OPTIONAL, since 1.1).** If you want session observability, call
-   `hv telemetry record --event=start` at session start and `--event=end` at session end, passing a
+   `hwatch telemetry record --event=start` at session start and `--event=end` at session end, passing a
    stable `--agent` and `--identity` (your instance discriminator) plus `--session`/`--cwd`. This is
    pure observability — token usage, duration, cost — written to a LOCAL-ONLY lane that **never enters
    the corpus, the journal, or sync**. It has no effect on knowledge or confidence; skip it entirely
    if you do not want it. Never write telemetry as a `hv remember` fact. Since core 3.1 the verb is
-   served by the hwatch module (`hv telemetry` forwards to `hwatch telemetry`); with the module absent `record` is a
-   silent no-op that exits 0, so a hook never needs to guard it.
+   the hwatch module's, and `hv telemetry` was removed in 4.0 (it exits 2 and names `hwatch telemetry`). Call the
+   module only when it is installed, and keep the hook silent and exit 0 when it is not, as `session_hook.sh` does.
 
 ---
 
@@ -270,6 +270,7 @@ governance actions, config keys, channels and the rest) is listed in [`NAMESPACE
 generated from `vocabulary.py`, and a name anything else adds takes a prefix.
 
 **Changelog.** The full per-version record is [`CONTRACT_HISTORY.md`](CONTRACT_HISTORY.md).
+- `4.0` — **removes the `hv dash` and `hv telemetry` forwarders; every `config set` refusal exits 1.** **MAJOR: re-integrate (§0) by re-reading; an adapter that ran a removed verb moves to `hdash dash` or `hwatch telemetry`.** `hv dash` and `hv telemetry` exit 2 with a pointer and run nothing (#433); `hive-mind config set` exits 1 on every refusal where most exited 0 (#432); new: `hv config node`, `config schema|show --json`, `module list --json`, `--non-interactive` (exit 5), and the node-local `dashboard_share` key (#435, #437). No signing, manifest or sync change. Full entry: [`CONTRACT_HISTORY.md`](CONTRACT_HISTORY.md).
 - `3.1` — **module manifest contract 1; additive: no re-integration.** Nothing an adapter calls changes, so an adapter written for 3.0 keeps working and re-reads nothing. A signed module manifest may declare `"contract": 1` and the optional fields `cli`, `runtimes`, `config_schema`, `status`, `doctor`, `reads` and `ui`, and `hive-mind module check <dir>` validates one. A 3.0 node refuses such a manifest (unknown fields). Full entry: [`CONTRACT_HISTORY.md`](CONTRACT_HISTORY.md).
 - `3.0` — **removes what 2.x deprecated; forget grandfather gone; entity identity by ref** (public #136 close-out, #151). **MAJOR: re-integrate (§0) by re-reading; no adapter calls a removed name.** The 2.0 exit-2 pointers and the 1.x aliases are gone (an unknown command on `hv`, still exit 2); `forget_writers=legacy` and the pre-genesis honouring branch are removed, and `hive-mind update` re-issues the forgets that depended on them, owner-signed, before the new code runs; an entity is identified by its creating ref (`hv entity add --new`, `--entity` by `h:` id). Update the owner machine first. No signing, manifest or sync change. Full entry: [`CONTRACT_HISTORY.md`](CONTRACT_HISTORY.md).
 - `2.4` — **`hv search --chain`; a superseded decision names its superseder** (#157, #283). **Additive: no re-integration.** Nothing an adapter calls changes. New: `hv search --chain SID|REF` follows one decision's supersede chain to the decision in effect and exits 1 when the id names no decision; and a superseded decision carries `superseded_by_sid`, `superseded_by_ref`, `superseded_by_authority` and `supersede_evidence` in `hv search` and `hv search --id` JSON, the dashboard and the MCP tools (an adapter that ignores unknown fields is unaffected; the node-local `superseded_by` rowid is unchanged). The hive's governance reading tightens in the way §7 allows a MINOR: an owner-signed act, an entry whose body does not match its type, a module device's out-of-policy entry and a non-creator's entity rewrite stop projecting, and a revoked or purged device leaves .peers.json; they stay in the journal. Full entry: [`CONTRACT_HISTORY.md`](CONTRACT_HISTORY.md).
@@ -639,7 +640,7 @@ generated from `vocabulary.py`, and a name anything else adds takes a prefix.
   `--source` label is unchanged; the device is identified for you.
 - `1.2` — `hv remember` auto-tags transient operational-status claims `volatile` (new optional
   `--no-volatile` flag). Additive: existing calls keep working; you just get smarter freshness tagging.
-- `1.1` — added the optional `hv telemetry` verb (behavior 5). Additive and backward-compatible:
+- `1.1` — added the optional telemetry verb (behavior 5; `hv telemetry` then, `hwatch telemetry` since 3.1). Additive and backward-compatible:
   a `1.0` adapter keeps working unchanged; wire telemetry only if you want it.
 
 - **2.0.3 (#204): a `link` entry is the only way to supersede or resolve.** The pre-1.19 payload fields
