@@ -1,1 +1,2 @@
 - Session, nudge and installer scripts: the `python3` calls that run in the caller's directory (`hive-mind status`, `update`, and the install probes before it enters the checkout; `_status.sh`, `_update.sh`, `_install_node.sh`) now run with `-I`, so a `json.py` or `requests.py` planted in that directory is never imported.
+- Session hook: on macOS, which has no `timeout`, the hook's telemetry call failed silently and recorded nothing; it now falls back to `gtimeout`, then to a bounded python3 child, so the 12 s cap holds and the hook works there.
