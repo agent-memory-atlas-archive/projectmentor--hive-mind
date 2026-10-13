@@ -860,7 +860,7 @@ def _node_record(key, cfg):
     else:
         value, source = spec["default"], "default"
     return {"id": key, "type": spec["type"], "value": value, "default": spec["default"], "source": source,
-            "set": present, "env": _NODE_ENV.get(key), "description": spec["description"]}
+            "set": present, "env": _NODE_ENV.get(key), "description": spec["description"], "help": spec["help"]}
 
 
 def _node_coerce(key, raw):

@@ -1,0 +1,1 @@
+- `config schema --json` and `config node list|get --json` rows carry a plain-language `help` text for every core key (additive optional field, shown by hconfig and hdash). (hive-mind-dash#18 item 10)
