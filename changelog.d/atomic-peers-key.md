@@ -1,1 +1,0 @@
-- **Security: `.peers.json` and the device key are written atomically (SECREV C SN-13, CK-4).** Both go through a temp file in the same directory, fsync, then `os.replace`, so a crash leaves the old file intact. The key file is created `0600` by `os.open` itself, never by umask or a later chmod.
