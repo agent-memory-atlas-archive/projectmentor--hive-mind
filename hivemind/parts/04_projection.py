@@ -491,6 +491,40 @@ def _auto_pin_genesis(entries):
     return _write_genesis_pin(_genesis_pin_for(cands[0])) if len(cands) == 1 else None
 
 
+def _genesis_pin_lost(entries):
+    """SN-14: True when this device WROTE the genesis its journal shows and holds no valid pin. `owner init`
+    pins as it claims, so a genesis writer without a pin has lost it (deleted, truncated, restored from a backup).
+
+    Membership rests on evidence an outside party cannot put in the journal: the genesis must carry a valid
+    DEVICE signature, which binds its `node_id` to a key only this device holds. A bare `node_id` match, or an
+    `admit` naming us, is something any peer we pull from can write while we are unpinned, so neither counts."""
+    if _load_genesis_pin() is not None:
+        return False
+    gov = _governance_state(entries)
+    if not gov.get("owner_id") or NODE_ID != gov.get("genesis_device"):
+        return False
+    return any(e.get("node_id") == NODE_ID and "sig" in e and _verify_entry(e)
+               for e in _self_signed_owner_acts(entries))
+
+
+def _restore_genesis_pin(entries=None):
+    """SN-14: re-pin a LOST pin from the genesis in this node's own journal, with no network input: the
+    batch being ingested never reaches this. Only for the genesis writer (`_genesis_pin_lost`) and only when the
+    journal holds exactly ONE candidate, so a stored rival leaves the choice to the operator. Returns the
+    pin it wrote, or None."""
+    if entries is None:
+        entries = merkle.read_all_entries(JOURNAL_DIR)
+    if not _genesis_pin_lost(entries):
+        return None
+    cands = _self_signed_owner_acts(entries)
+    if len(cands) != 1:
+        return None
+    pin = _write_genesis_pin(_genesis_pin_for(cands[0]))
+    print(f"hv: the genesis pin was missing on this device; re-pinned {pin['genesis_ref']} "
+          f"(owner {pin['owner_id']}) from the local journal.", file=sys.stderr)
+    return pin
+
+
 def _genesis_fingerprint(entries, gov=None):
     """This hive's genesis, in a form a human can compare across devices and an invite can carry:
     `<hive_id>/<owner_id>/<hash8>`. The hash prefix is what makes it a FINGERPRINT rather than a

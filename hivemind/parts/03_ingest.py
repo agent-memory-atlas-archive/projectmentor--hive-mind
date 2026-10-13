@@ -171,6 +171,11 @@ def append_foreign_entries(entries, advertised_chunks=None):
     accepted = duplicates = rejected = 0
     arrived_ideas = []
     pin = _load_genesis_pin()        # the one `owner` act this node accepted (hive-mind-private #14)
+    if pin is None:                  # SN-14: a member that lost its pin re-pins from its OWN journal, not this batch
+        try:
+            pin = _restore_genesis_pin()
+        except Exception:
+            pin = None
     tips = {}                        # node_id -> highest seq this node already holds
     for _nid, _seq in existing:
         if isinstance(_seq, int) and _seq > tips.get(_nid, 0):
