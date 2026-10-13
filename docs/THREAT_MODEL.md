@@ -596,6 +596,31 @@ Residual, admitted device only and so accepted for 3.x: `ProtectSystem=strict` m
 key directory, `HIVE_HOME` and the modules directory are hidden from a confined unit only because their defaults sit under
 the home. Operator rule: keep `HIVE_KEY_DIR`, `HIVE_HOME` and `HIVE_MODULES_DIR` under the home for `confined` to hide them.
 
+### A module listener on the tailnet (`hcns`, optional module)
+
+The `hcns` module (an ephemeral event bus; not part of the base) adds one listener when installed. These lines state
+what it changes; the module ships its own threat model with the bounds.
+
+- **A module listener on the tailnet.** Port `x-hcns:port` on the node's tailnet address serves signed
+  `GET /events` streams and nothing else to admitted devices, and proves itself to each subscriber with a responder
+  signature in the stream's first frame. It reads the hive through `/v1` and never writes it, and holds no owner
+  material. Its manifest is `trust: confined`.
+- **Residual, admitted device only, accepted for 3.x and 4.x.** `/v1/peers` does not say which module device is which
+  node's hcns, and the envelope's `node` field is the origin's own claim. An admitted hcns key may therefore say
+  "this happened on node N" for any N, publish any event about its own node, and flood within its bucket. It cannot
+  forge another `origin`, which is bound to the proved responder of the stream it arrived on. The worst case is an
+  early look at a durable source, one sync pass at most every 15 s for the node, or a wasted wake inside hwatch's
+  budget; never a decision, because consumers act on the source, not on the event. Operator rule: revoke the device;
+  a revoked device's open stream ends at the next good admission read, within 5 minutes.
+- **Presence disclosure.** Admitted devices learn which nodes run hcns and when they come and go.
+- **Local processes (B9).** Any process of the operator's own user can publish, subscribe and, through
+  `hcns wait --wake`, be woken or cause a wake inside the allowlist and budgets. Operator rule as for seats: run no
+  code you do not trust as the operator on a node that runs seats.
+- **Nothing on the bus is journaled, synced, searched or weighed, and an event is never evidence.** The bus carries no
+  body, so a public comment cannot reach a seat through it.
+- **Operator rule: admit the genesis device** (`hive-mind admit <its device id>` on the owner node). `owner init` does
+  not, and without it that node has no row in `/v1/peers`, so no peer dials it.
+
 ## Seat steering (agent seats driven by GitHub and the hive)
 
 A seat is an agent session that the runner wakes on a GitHub event or a hive entry. Text a seat reads can steer
