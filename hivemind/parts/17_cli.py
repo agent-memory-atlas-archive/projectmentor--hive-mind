@@ -164,7 +164,7 @@ def build_parser(plane="data"):
                                                "`manual`, the only source that is owner-signed on the owner "
                                                "device (#114)")
 
-    subparsers.add_parser("version", help="Print the hv contract version (SemVer)")
+    subparsers.add_parser("version", help="Print the hv contract version (SemVer), not the release; `hive-mind version` prints the release")
     subparsers.add_parser("verify", help="Verify this is the official, untampered HiveMind")
     subparsers.add_parser("stats", help="Show memory usage stats")
     feed_parser = subparsers.add_parser("feed", help="Read-only: journal entries past a per-node cursor, as JSON")

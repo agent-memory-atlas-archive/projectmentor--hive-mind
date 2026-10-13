@@ -34,6 +34,7 @@ case "$CMD" in
   status)    exec bash "$INSTALLER/_status.sh"       "$@" ;;
   invite)    exec bash "$INSTALLER/_invite.sh"       "$@" ;;
   uninstall) exec bash "$INSTALLER/_uninstall.sh"    "$@" ;;
+  version|--version) exec python3 "$HIVE_DIR/hivemind_ctl.py" version "$@" ;;
   # 2.0 (#136): the owner/operator control plane. `hv` is the agent data plane and cannot owner-sign;
   # these verbs are where the owner key is loaded and governance is signed. This dispatcher stays the
   # `hive-mind` command — it is already in the signed manifest by its .sh suffix and already symlinked
@@ -48,6 +49,7 @@ case "$CMD" in
     echo "  install      Set up this device from scratch"
     echo "  update       Verify, pull latest + restart daemon (auto-heals after a force-push/rewrite)"
     echo "  reset        Recover a wedged install: force-align code + rebuild + restart + verify (keeps your Hive data)"
+    echo "  version      Print the installed release, commit, contract version and verify state (--json, --no-verify)"
     echo "  status       Show device health and peer sync state"
     echo "  invite       Print the address to paste on a new device to join this hive"
     echo "  uninstall    Remove HiveMind from this device (--keep-hive to keep your data)"
