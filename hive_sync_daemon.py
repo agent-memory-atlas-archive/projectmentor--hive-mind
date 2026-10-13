@@ -438,6 +438,17 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _internal_error(self):
+        """SN-12: an unexpected failure answers a generic 500 body. The exception (which can carry a
+        path, a peer address or a parser's view of the caller's bytes) goes to this node's stderr only."""
+        import traceback
+        try:
+            print(f"sync daemon: 500 on {self.command} {self.path.split('?', 1)[0]}:\n"
+                  f"{traceback.format_exc()}", file=sys.stderr)
+        except Exception:
+            pass
+        self._send(500, {"error": "internal error"})
+
     def _send_signed(self, path, body):
         """#107: send a /sync/hello or /hive/info `body` with this node's `hello_sig` over it and the
         caller's Hive-Auth-Nonce, when the caller sent a well-formed nonce and this node has a device-key
@@ -743,8 +754,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, {"peers": hv.api_peers(probe=probe)})
             else:
                 self._send(404, {"error": "not found"})
-        except Exception as e:  # never crash the handler thread
-            self._send(500, {"error": str(e)})
+        except Exception:  # never crash the handler thread
+            self._internal_error()
         finally:
             self._leave()
 
@@ -799,8 +810,8 @@ class Handler(BaseHTTPRequestHandler):
                 if accepted:
                     hv.rebuild_db()
             self._send(200, {"accepted": accepted, "duplicates": duplicates})
-        except Exception as e:
-            self._send(500, {"error": str(e)})
+        except Exception:
+            self._internal_error()
         finally:
             self._leave()
 
