@@ -290,7 +290,7 @@ a module. The owner then admits the module's device (`admit --module`). On a mac
 not hold the owner key, `add` stages the tree and prints the owner's admit line; a second `add`
 after that admit has synced finishes the install.
 
-**Today (contract 3.0).** Modules run on Linux with a systemd user manager.
+**Today (contract 3.1).** Modules run on Linux with a systemd user manager.
 [`docs/MODULES.md`](docs/MODULES.md) is the developer guide: the manifest, signing, the
 `x-<module>:` namespace, the module API, per-node vs fleet config, and a worked example.
 The route reference is [`docs/MODULE_API.md`](docs/MODULE_API.md).
