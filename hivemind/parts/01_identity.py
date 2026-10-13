@@ -348,7 +348,9 @@ def _canon_pub(b64):
     regardless of base64 whitespace/padding differences."""
     try:
         raw = base64.b64decode(b64)
-        return base64.b64encode(raw).decode() if len(raw) == 32 else None
+        if len(raw) != 32 or (_ed25519 is not None and _ed25519.is_small_order(raw)):
+            return None                  # CK-7: a small-order key verifies messages nobody signed
+        return base64.b64encode(raw).decode()
     except Exception:
         return None
 

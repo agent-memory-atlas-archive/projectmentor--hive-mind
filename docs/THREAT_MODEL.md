@@ -686,6 +686,12 @@ second login or collaborator admitted by the gate. Tracked in hive-mind-private 
   the fleet for good, since ingest keeps the first copy of a `(node_id, seq)` and `sig` is inside the entry
   hash. No forgery was possible. The cofactorless equation stays, since RFC 8032 permits it. A node that
   has not updated to v2.0.3 still accepts malleated copies, so update every node.
+- **Small-order keys (3.1.x, CK-7).** `verify` also refuses a public key of small order (the identity and the
+  seven other points of order dividing 8), and `_canon_pub` will not take one as an owner key. Such a key
+  verified a signature nobody had made: for the identity key, `R = identity, S = 0` verified for every
+  message. A node that has not updated still accepts them, so a mixed fleet can disagree about such an
+  entry until every node updates. Keys with a torsion component but not of small order are not refused: the
+  cofactorless equation stays (RFC 8032), and an honest key is never one.
 - **Signer seam (3.1).** Every signature core makes (journal entries, owner governance, Hive-Auth envelopes,
   hello proofs) goes through `hivemind/crypto/signer.py`, and `tests/test_signer_seam.py` fails on a call to
   `ed25519.sign` anywhere else in core. Callers hold `sign(bytes)`, never the seed. With the one backend
