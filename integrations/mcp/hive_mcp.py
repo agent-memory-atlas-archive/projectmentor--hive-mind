@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -397,17 +398,12 @@ def hive_version() -> str:
 
 @mcp.tool()
 def hive_telemetry_report(view: str = "report", since: str = "") -> str:
-    """Read the LOCAL-ONLY session telemetry (observability, never corpus/sync data). Read-only.
+    """Removed in 4.0: session telemetry is the hwatch module's, not this server's.
 
-    view="report" aggregates usage (optionally windowed by `since`, e.g. "7d", "24h");
-    view="list" shows recent raw session records. This is pure observability — it is NOT knowledge.
+    Returns the pointer. Run `hwatch telemetry report|list` on the device (the arguments here are ignored).
     """
-    if view == "list":
-        return _run_hv(["telemetry", "list"])
-    args = ["telemetry", "report"]
-    if since:
-        args += ["--since", since]
-    return _run_hv(args)
+    return ("hv telemetry: removed in 4.0; session telemetry is the hwatch module: run `hwatch telemetry report` "
+            "or `hwatch telemetry list` (`hive-mind module install hwatch` to add it)")
 
 
 @mcp.tool()
@@ -472,12 +468,22 @@ def hive_telemetry(event: str, session_id: str = "", cwd: str = "") -> str:
     event="start" at the beginning, event="end" when wrapping up. Pull-only caveat: an MCP host
     cannot guarantee the end call fires, so event="end" is best-effort.
     """
-    args = ["telemetry", "record", "--event", event, "--agent", "claude-ai"]
+    args = ["--event", event, "--agent", "claude-ai"]
     if session_id:
         args += ["--session", session_id]
     if cwd:
         args += ["--cwd", cwd]
-    return _run_hv(args)
+    # Session telemetry is the hwatch module's (`hv telemetry` was removed in 4.0). Best-effort, like the hooks:
+    # with the module absent nothing is recorded and the call still succeeds.
+    launcher = shutil.which("hive-mind")
+    cmd = [launcher, "module", "run", "hwatch", "--", "telemetry", "record", *args] if launcher else (
+        [shutil.which("hwatch"), "telemetry", "record", *args] if shutil.which("hwatch") else None)
+    if cmd:
+        try:
+            subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, timeout=12)
+        except Exception:
+            pass
+    return ""
 
 
 if __name__ == "__main__":

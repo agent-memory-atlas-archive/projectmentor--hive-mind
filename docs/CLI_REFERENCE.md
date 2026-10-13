@@ -16,7 +16,7 @@ memory.
 |---|---|
 | `hv audit` | Surface redundant, obsolete, stale or missing facts (used by agent hooks) |
 | `hv config` | Device identity (`identity`); governed parameters are set with `hive-mind config set` (owner) |
-| `hv dash` | Open the web dashboard (forwards to the hdash module; removed in 4.0) |
+| `hv dash` | Removed in 4.0 (exit 2): the dashboard is the hdash module, `hdash dash` |
 | `hv decide` | Record a decision |
 | `hv discover` | Find hives on your tailnet |
 | `hv doctor` | Check that your device is healthy; `--fix` self-heals (orphan daemons + Claude Code hooks/skill); subcommands `merkle`, `rebuild`. *(3.1)* For a contract-1 module it also runs the module's own `doctor` (`HIVE_DOCTOR_MODE` in the environment names the caller: `manual` by default, `timer` from the 15-minute timer) |
@@ -37,7 +37,7 @@ memory.
 | `hive-mind unforget` | Owner only: reverse an owner forget (`hive-mind retract --owner`) |
 | `hive-mind migrate forget` | Owner only (3.0): re-issue, owner-signed, the forgets that only the pre-genesis grandfather keeps in effect; `--check` lists them |
 | `hv sync` | Sync with peer nodes; `auth` sets the read-auth mode, `auth --outbound` what a peer must prove before this node pushes to it |
-| `hv telemetry` | Session observability (forwards to the hwatch module; removed in 4.0) |
+| `hv telemetry` | Removed in 4.0 (exit 2): session telemetry is the hwatch module, `hwatch telemetry` |
 | `hv verify` | Check that this install is the official, signed release |
 | `hv version` | Print the agent contract version |
 | `hv whoami` | Show this device's identity and membership status (sterile/fertile/owner) |
@@ -1153,43 +1153,11 @@ they remain its internal keys and join columns; they just stop leaking out as na
 
 ---
 
-### `hv dash` — Open the web dashboard
+### `hv dash` — removed in 4.0
 
-*(3.1)* The dashboard is the **hdash module** now ([`projectmentor/hive-mind-dash`](https://github.com/projectmentor/hive-mind-dash)),
-and `hv dash` forwards to it (`hive-mind module run hdash -- dash`). The forwarder is removed in 4.0: use `hdash dash`.
-When hdash is not installed, `hv dash` prints the install line (`hive-mind module install hdash --from …`) and exits 1.
-
-The page is the one that shipped in core, unchanged: **Overview** (counts, convergence, contested, the live audit
-summary), **Corpus** (facts and decisions: search, filter by tag, sort, filter by status; paginated), **Hive**
-(peers and health) and **Telemetry**. The module serves it on `http://127.0.0.1:9896/` (config key `port`) and answers
-only on the device it runs on. To see another device's data, pick it in the dashboard: your own daemon fetches it with a
-signed request. The sync daemon no longer serves the page, only the `/api/*` JSON the module reads. Nothing is exposed
-to the public internet.
-
-`hv dash` prints the URL and tries to open your browser. On a headless box (or Android/Termux, or WSL) where it can't,
-the printed URL is the point: open it yourself.
-
-```
-hv dash [--print]
-```
-
-**Arguments:**
-
-| Argument | What it does |
-|---|---|
-| `--print` | Print the dashboard URL only; don't try to open a browser. Handy in scripts. |
-
-**Examples:**
-```bash
-# Open the dashboard in your browser
-./hv dash
-
-# Just show me the URL
-./hv dash --print
-```
-
-The dashboard is **read-only** — it never writes to the corpus. Governed actions
-(admitting devices, retracting, deciding) stay on the CLI by design.
+*(4.0)* The dashboard is the **hdash module** ([`projectmentor/hive-mind-dash`](https://github.com/projectmentor/hive-mind-dash)).
+`hv dash` is gone: it prints one line naming `hdash dash` on stderr and exits 2, whatever arguments follow, and runs
+nothing. Install the module with `hive-mind module install hdash --from …`; its page is on `http://127.0.0.1:9896/`.
 
 ---
 
@@ -1351,7 +1319,7 @@ version they last integrated against: a MINOR bump is additive, a MAJOR bump mea
 
 ---
 
-### Agent-hook verbs: `hv nudge`, `hv audit`, `hv telemetry`
+### Agent-hook verbs: `hv nudge`, `hv audit`
 
 These are called by agent integrations (the Claude Code hooks, the Hermes plugin, the MCP server)
 rather than typed by hand. `docs/AGENT_INTEGRATION.md` is the full reference.
@@ -1359,7 +1327,6 @@ rather than typed by hand. `docs/AGENT_INTEGRATION.md` is the full reference.
 ```
 hv nudge --event session-start|user-prompt|precompact|sessionend [--session ID] [--cwd DIR] [--agent NAME]
 hv audit [--depth light|normal|deep] [--session ID] [--format text|json]
-hv telemetry record|report|list …
 ```
 
 - **`hv nudge`** reads recent text on stdin and prints a short hint to stdout, or nothing. With
@@ -1369,13 +1336,10 @@ hv telemetry record|report|list …
 - **`hv audit`** lists facts to reconcile: redundant, obsolete, due for a re-check (`volatile` facts
   past their freshness window), missing (with `--session`), and CONTRAVENED (a correction that names
   a still-live fact in prose but never resolved it).
-- **`hv telemetry`** *(3.1)* forwards to the **hwatch module** (`hive-mind module run hwatch -- telemetry …`; the
-  command is `hwatch telemetry record|report|list`). The module records and reports session observability (duration,
-  tokens, cost) in the same local-only store as before (`$HIVE_HOME/.telemetry/telemetry.db`: never in the journal,
-  never synced), so history carries over. `record` runs from session hooks, so it prints nothing and exits 0 when
-  hwatch is not installed (a node without the module behaves as before and records nothing); `report` and `list`
-  print the install line (`hive-mind module install hwatch --from …`) and exit 1. The forwarder is removed in 4.0:
-  use `hwatch telemetry`.
+- **`hv telemetry`** *(removed in 4.0)* prints one line naming `hwatch telemetry` on stderr and exits 2, whatever
+  arguments follow. Session telemetry is the **hwatch module** (`hwatch telemetry record|report|list`); it keeps the
+  same local-only store (`$HIVE_HOME/.telemetry/telemetry.db`: never in the journal, never synced). The session hook
+  (`session_hook.sh`) calls the module directly and stays silent and exits 0 when hwatch is not installed.
 
 ---
 

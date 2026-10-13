@@ -138,7 +138,7 @@ except Exception:
     sys.exit(0)
 def is_hive(h):
     s = json.dumps(h)
-    return any(m in s for m in (hive, "hive-mind", "hive_dispatch.sh", "_hook.sh", "hv nudge", "hv telemetry"))
+    return any(m in s for m in (hive, "hive-mind", "hive_dispatch.sh", "_hook.sh", "hv nudge", "hv telemetry"))   # "hv telemetry": hooks wired before 4.0
 hooks = d.get("hooks", {})
 for ev in list(hooks):
     kept = [h for h in (hooks[ev] or []) if not is_hive(h)]

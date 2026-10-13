@@ -336,8 +336,8 @@ Its fleet keys are `x-hwatch:…`, set by the owner. Its per-node keys are
 ## hwatch telemetry
 
 Session telemetry is **hwatch's** since 3.1 (`hwatch telemetry record|report|list`). The module declares `cli: hwatch`, so
-the core writes a `hwatch` launcher (§ the `cli` slot) and `hv telemetry` forwards to `hive-mind module run hwatch --
-telemetry …`. It keeps the store core wrote, `$HIVE_HOME/.telemetry/telemetry.db`, so nothing is copied or migrated. A
+the core writes a `hwatch` launcher (§ the `cli` slot) and the session hook calls `hive-mind module run hwatch --
+telemetry record …` (`hv telemetry` was removed in 4.0). It keeps the store core wrote, `$HIVE_HOME/.telemetry/telemetry.db`, so nothing is copied or migrated. A
 node without hwatch records nothing and the hooks stay silent. hwatch's manifest is contract 1 from this release
 (`min_core` 3.1, a `config_schema` for the keys it already knew, no `config` block), so it needs a 3.1 core.
 
@@ -347,7 +347,7 @@ node without hwatch records nothing and the hooks stay silent. hwatch's manifest
 extracted unchanged from core in 3.1. It is a `service` module (a loopback listener, config key `port`, default 9896)
 with a `cli` (`hdash dash`), and `reads` `overview`, `tags`, `related`, `audit`, `peers` and `verify`. Its `/api/*`
 calls go to the core's signed `/v1` routes, or, for `status`, `telemetry`, `entities` and a peer's `?node=` view, to the
-sync daemon's loopback `/api/*`. `hv dash` forwards to it in 3.1 and is removed in 4.0; the sync daemon no longer
+sync daemon's loopback `/api/*`. `hv dash` forwarded to it in 3.1 and was removed in 4.0 (exit 2, naming `hdash dash`); the sync daemon no longer
 serves the page. Install it with `hive-mind module install hdash --from https://github.com/projectmentor/hive-mind-dash`.
 
 ## Planned
