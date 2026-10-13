@@ -436,3 +436,22 @@ def test_wire_add_names_a_cell_without_a_kind_and_a_comb_without_cells(tmp_path,
         hv.wire_cmd(type("A", (), {"add": str(f)})())
     assert _on_disk(tmp_path) == []
     assert capsys.readouterr().out.count("Not a valid") == 2
+
+
+@pytest.mark.parametrize("payload", ["not an object", ["a"], 5, True, 0, ""])
+def test_non_object_governance_payload_rejects_only_that_entry(tmp_path, monkeypatch, payload):
+    """SECREV C GM-10: one governance entry whose payload is not an object is one rejected entry; the rest of the batch lands."""
+    hv = _loadhv(tmp_path, monkeypatch)
+    d = _device(hv)
+    _assert_refused_and_journal_reads(hv, tmp_path, _signed(hv, d, 1, "governance", payload))
+
+
+@pytest.mark.parametrize("payload", ["not an object", ["a"], 5, True])
+def test_a_non_object_governance_payload_in_a_projected_list_is_skipped(tmp_path, monkeypatch, payload):
+    """The projection helpers take entries as given (a caller may hand them an unfiltered list): none may raise."""
+    hv = _loadhv(tmp_path, monkeypatch)
+    d = _device(hv)
+    entries = [_signed(hv, d, 1, "governance", payload), _fact(hv, d, "kept", TS % 2)]
+    assert hv._governance_state(entries)["owner_id"] is None
+    assert hv._self_signed_owner_acts(entries) == []
+    hv._owner_declaration(entries)

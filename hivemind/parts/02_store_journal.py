@@ -527,7 +527,8 @@ def _ts_problem(e, floor, prior_max):
     if prior_max is not None and inst < prior_max - TS_TOLERANCE:
         return "timestamp is more than 5 minutes before the device's latest earlier entry"
     if (floor is not None and not (e.get("type") == "governance"
-                                   and (e.get("payload") or {}).get("action") in _TS_RULE2_EXEMPT)
+                                   and isinstance(e.get("payload"), dict)
+                                   and e["payload"].get("action") in _TS_RULE2_EXEMPT)
             and inst < floor - TS_TOLERANCE):
         return "timestamp is more than 5 minutes before the device's first admit"
     return None

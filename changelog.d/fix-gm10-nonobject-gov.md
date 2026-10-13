@@ -1,0 +1,1 @@
+- Security (SECREV C GM-10): a governance entry whose payload is not an object is skipped by the owner-declaration scan instead of raising, so one bad entry never stops the governance projection; ingest already rejected it alone. Tests added.
