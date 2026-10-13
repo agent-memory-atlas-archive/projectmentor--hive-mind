@@ -323,6 +323,11 @@ fi  # end Linux/WSL Tailscale branch
 # ════════════════════════════════════════════════════════════════════════════
 step "3/$TOTAL  Python dependencies"
 
+# requests must be importable AND inside the pinned range (an older OS copy, e.g. Ubuntu 24.04's 2.31.0, imports fine).
+requests_ok() {
+  python3 -I -c "import sys,requests; v=tuple(int(p) for p in requests.__version__.split('.')[:3]); sys.exit(not ((2,32,4) <= v < (3,)))" 2>/dev/null
+}
+
 if [ -n "$IS_ANDROID" ]; then
   # Termux: `pkg` not apt, no sudo, no root. The core only needs `requests`, and
   # `uv` has no reliable Termux/aarch64 wheel — so install python/git via pkg and
@@ -330,10 +335,11 @@ if [ -n "$IS_ANDROID" ]; then
   command -v python3 &>/dev/null || { info "Installing python (pkg)..."; pkg install -y python; }
   command -v git     &>/dev/null || { info "Installing git (pkg)...";    pkg install -y git; }
   ok "python3 $(python3 --version)"
-  python3 -I -c "import requests" 2>/dev/null || {
+  requests_ok || {
     info "Installing requests (pip)..."
     pip install 'requests>=2.32.4,<3'
   }
+  requests_ok || die "requests >=2.32.4,<3 is not importable. Run: pip install 'requests>=2.32.4,<3'"
   ok "requests available (Termux, no uv)"
 else
   command -v python3 &>/dev/null || {
@@ -356,11 +362,13 @@ else
   fi
   ok "uv $(uv --version)"
 
-  python3 -I -c "import requests" 2>/dev/null || {
+  requests_ok || {
     info "Installing requests..."
-    uv pip install --system 'requests>=2.32.4,<3'
+    uv pip install --system 'requests>=2.32.4,<3' \
+      || warn "could not upgrade requests (an OS-managed copy?). Run: pip install --user 'requests>=2.32.4,<3'  (or your OS package manager)"
   }
-  ok "requests available"
+  if requests_ok; then ok "requests available"
+  else warn "requests is missing or older than 2.32.4: peer sync will not be safe until it is upgraded"; fi
 fi
 
 # ════════════════════════════════════════════════════════════════════════════

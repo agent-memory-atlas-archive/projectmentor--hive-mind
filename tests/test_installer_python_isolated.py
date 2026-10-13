@@ -19,9 +19,9 @@ def _plant(tmp_path, module):
     return proj, marker
 
 
-def _call(script, pattern):
+def _call(script, pattern, flags=0):
     """The shell text of the one `python3 ... ` call in `script` that matches `pattern`, as the script has it today."""
-    m = re.search(pattern, (INSTALLER / script).read_text())
+    m = re.search(pattern, (INSTALLER / script).read_text(), flags)
     assert m, f"{script}: no call matching {pattern!r}"
     return m.group(0)
 
@@ -39,7 +39,7 @@ def test_status_peer_probe_never_imports_a_module_planted_in_the_callers_cwd(tmp
 
 def test_install_requests_probe_never_imports_a_module_planted_in_the_callers_cwd(tmp_path):
     proj, marker = _plant(tmp_path, "requests")
-    call = _call("_install_node.sh", r'python3 [^\n]*?-c "import requests"')
+    call = _call("_install_node.sh", r'python3 -I -c "import sys,requests;[^"]*"')
     r = subprocess.run(["bash", "-c", f"{call} 2>/dev/null; true"], cwd=proj, capture_output=True, text=True, timeout=60)
     assert r.returncode == 0
     assert not marker.exists()
@@ -60,3 +60,26 @@ def test_every_update_call_that_reads_the_callers_cwd_is_isolated():
     assert calls
     for rest in calls:
         assert rest.startswith("-I ") or " -I " in rest.split("<<")[0], f"_update.sh: python3 without -I: {rest[:60]!r}"
+
+
+def _run_guard(tmp_path, version):
+    """Run requests_ok with `-I` dropped (it would hide the planted copy) and a stub requests of `version` on PYTHONPATH."""
+    tmp_path.mkdir(parents=True)
+    (tmp_path / "requests.py").write_text(f"__version__ = {version!r}\n")
+    fn = _call("_install_node.sh", r"requests_ok\(\) \{.*?\n\}", re.S).replace("python3 -I ", "python3 ")
+    return subprocess.run(["bash", "-c", f"{fn}\nrequests_ok"], env=dict(os.environ, PYTHONPATH=str(tmp_path)),
+                          capture_output=True, text=True, timeout=60).returncode
+
+
+def test_requests_guard_rejects_a_copy_below_the_floor_and_accepts_the_pinned_range(tmp_path):
+    for i, v in enumerate(("2.31.0", "2.32.3", "3.0.0")):
+        assert _run_guard(tmp_path / str(i), v) != 0, v
+    for i, v in enumerate(("2.32.4", "2.33.1"), 10):
+        assert _run_guard(tmp_path / str(i), v) == 0, v
+
+
+def test_both_installer_branches_gate_the_pinned_install_on_the_version_guard_and_the_floor_is_in_requirements():
+    text = (INSTALLER / "_install_node.sh").read_text()
+    assert 'python3 -I -c "import requests"' not in text
+    assert len(re.findall(r"requests_ok \|\| \{\n[^\n]*\n\s*(?:uv )?pip install (?:--system )?'requests>=2\.32\.4,<3'", text)) == 2
+    assert "requests>=2.32.4,<3" in (PROJECT / "requirements.txt").read_text()
