@@ -201,7 +201,7 @@ Most of the time your agents call `hv` for you. Full reference:
 | `hive-mind invite`  | Print the one line a new device pastes into `hive-mind install` to join this hive |
 | `hive-mind uninstall` | Remove HiveMind from this device (`--keep-hive` preserves your journal + keys; `--keep-identity` preserves only this device's identity, so a reinstall needs no re-admit; `--yes` skips the confirmation prompt) |
 | `hive-mind group`   | Owner only: admit, revoke, deny, change or purge devices (`hv group list` shows the roster) |
-| `hive-mind module`  | Add, list, configure, update and remove modules (`add`, `list`, `config`, `quota`, `update`, `remove`) |
+| `hive-mind module`  | Install, list, configure, update and remove modules (`install`, `list`, `config`, `status`, `update`, `remove`; `add` and `quota` too) |
 | `hive-mind update`  | Pull latest and restart the daemon (auto-heals after a force-push / history rewrite) |
 | `hive-mind reset`   | Recover a wedged install: force-align code to `origin` + rebuild + restart + verify. Keeps your Hive data (journal, keys, identity). `-y` skips the prompt. |
 
@@ -279,24 +279,37 @@ brain (`hv`), one spec, no hand-maintained per-agent adapters.
 
 ## Modules
 
-A **module** is a signed, sandboxed add-on. It is its own process, with its own device key and
-its own write quota. The owner admits that device. The module talks to the hive only on
-loopback, through `/v1`, never through the owner key. Install one with
-`hive-mind module add <name> --from <repo>`.
+A **module** is a signed add-on that gives HiveMind a new ability without changing the core. It is its own process,
+with its own device key and its own write quota, and it talks to the hive only on loopback, through `/v1`, never
+through the owner key.
 
-**Trust.** The module's `module.json` is signed by its publisher key. That key is shown at
-`add` and pinned on first use (or you pass `--publisher`). The HiveMind release key never signs
-a module. The owner then admits the module's device (`admit --module`). On a machine that does
-not hold the owner key, `add` stages the tree and prints the owner's admit line; a second `add`
-after that admit has synced finishes the install.
+A module is a git repository with a signed manifest (`module.json`). Under module contract 1 the manifest names
+every file by digest and declares the module's `trust` tier (`trusted` or `confined`), its typed per-module config
+schema, and the commands the core runs for its status and health. One idempotent command installs, updates or leaves
+alone:
 
-**Today (contract 3.1).** Modules run on Linux with a systemd user manager.
-[`docs/MODULES.md`](docs/MODULES.md) is the developer guide: the manifest, signing, the
-`x-<module>:` namespace, the module API, per-node vs fleet config, and a worked example.
-The route reference is [`docs/MODULE_API.md`](docs/MODULE_API.md).
+```bash
+hive-mind module install <name> --from <repo>
+```
 
-**hwatch** is the first module. It watches GitHub and the hive, routes addressed posts and
-holds to agent seats, and launches those sessions.
+**Trust.** The publisher signs the manifest, and that key is shown and pinned on first use (or you pass `--publisher`).
+The HiveMind release key never signs a module. The owner then admits the module's device. On a machine without the
+owner key, `install` stages the tree and prints the owner's admit line; running it again after that admit has synced
+finishes the install. A `confined` module runs in a sandbox that can write only its own key directory, and
+a node can lower any module to `confined`. Nothing is installed until the signed tree checks out.
+
+Modules run on Linux with a systemd user manager. The developer guide is [`docs/MODULES.md`](docs/MODULES.md): the
+manifest, signing, the config schema, the module API and a worked example. The route reference is
+[`docs/MODULE_API.md`](docs/MODULE_API.md).
+
+- **hwatch** keeps a team of agents working without anyone polling: it watches GitHub and the hive, routes addressed
+  posts to agent seats and launches their sessions. [Overview](docs/MODULES.md#hwatch).
+- **hconfig** puts every setting on a node in one place, with its schema, its current value, where the value came
+  from and who may change it. [hive-mind-config](https://github.com/projectmentor/hive-mind-config).
+- **hdash** shows your hive in a browser, read-only: the facts and decisions, your devices and their health.
+  [hive-mind-dash](https://github.com/projectmentor/hive-mind-dash).
+- **hcns** wakes a session within a second of a new hive entry by carrying short events between processes and nodes,
+  so nothing has to poll. [Overview](docs/MODULES.md#hcns).
 
 ---
 
