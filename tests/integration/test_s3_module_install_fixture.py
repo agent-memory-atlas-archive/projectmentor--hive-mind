@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import _realhome                                              # noqa: E402  (tests/_realhome.py)
+from conftest import REAL                                     # noqa: E402  (the paths as the developer's session had them)
 
 from hivefleet import CORE                                    # noqa: E402
 from hivefleet.modules import ctl, make_owner, module_add, module_env, modules_state   # noqa: E402
@@ -135,7 +135,7 @@ def test_the_throwaway_seed_and_key_never_reach_the_real_account(fleet, publishe
     # The seed (raw, base64, hex) is in no file the run wrote: node directories, fixture repos (including .git), the temp dir.
     assert _holding([tmp_path], publisher.seed_forms()) == []
     # The public key is absent from every non-test hive: the real account's hive, its identity stash and key directories.
-    real = _realhome.session_paths()
+    real = REAL                                                              # import-time: the isolation fixture has moved the env by now
     non_test = [real["hive"] / ".modules.json", real["hive"] / ".peers.json", real["hive"] / "journal", real["stash"],
                 real["key_dir"], real["keys_root"], real["home"] / ".hive" / "modules"]
     assert _holding(non_test, [publisher.pub.encode(), *publisher.seed_forms()]) == []
