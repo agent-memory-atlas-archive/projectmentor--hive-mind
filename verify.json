@@ -1,5 +1,5 @@
 {
-  "digest": "7967a19523ae95988d56bd9c65f62d0690b8373ed83497c29e8f21ca97634d21",
+  "digest": "dd24da25f94a5d27456c173a76e9134af49b6785eb3d32df18e12925eaf77f18",
   "files": {
     ".github/FUNDING.yml": "ca6c63d7539bb7d2f809b5068781c78de97c028a44c5ae252b11bc1695caf85d",
     ".github/ISSUE_TEMPLATE/bug_report.yml": "22df51b1e51c25f50726392c79811116b88c40370843ff2d4a3e76b643f1cb68",
@@ -13,7 +13,7 @@
     ".github/workflows/release-issue-close.yml": "a625c6cf5a913245d3bf1dfba5111e270d8f8685d411e0593419e36bee83de4b",
     ".github/workflows/sign.yml": "4be19163ffa6c3c6010ac249475ffce87c8b514fa1b1e5496f19d64634905778",
     "AGENTS.md": "4abda267ab6ded83f372bfa36362ad8a55ebdaff6a2c7f258eee9eed584374e3",
-    "CHANGELOG.md": "3c603d55aa7587e3680cb4c31c23fcd3ca8ac3448dd623e0ed9c96268028e117",
+    "CHANGELOG.md": "04c9411a36320176a0de93c2a4ece1e0e54007923e3be67f8f65d2cefac7b06e",
     "CLA.md": "78a00158ab3090dbb1a4de6ed03b150f22b5a0e99bcbba139a6244728780cc7b",
     "CONTRIBUTING.md": "052e1f9801c447f652a472dbce0e9928582ec70828b043f591f8286250a015d6",
     "README.md": "20621d1f94f13ffcf78c8872e6536fc87b441070d2395f9f009f411218226317",
@@ -21,15 +21,6 @@
     "advisories.json": "e1f7246819257c9cdcb8118aaee972ed89f22fb056d67230320d5ea7fdce6703",
     "cells/example-tool.json": "1ef1bb649f6805631bb6c20940baefb4a4bd867122b2c9e9b565c69aac30f060",
     "chacha20poly1305.py": "6c3bb50dc126dab128184280b4d11cb1494800651e97aea941a821f31ff012fd",
-    "changelog.d/agents-md.md": "a166ffe7c73b220d8b3fe9433058021c7fe746920226a251786ff924ef8feeb5",
-    "changelog.d/ci-release-issue-close.md": "b1b64493fd10c1cde711239319e61a1188b92b8e0ab9418f4f4c88607793aa5b",
-    "changelog.d/feat-hive-mind-version.md": "e8e736f1452fbff17bffe35dd5d02df70802eb523baf2b7c445716c768cbba83",
-    "changelog.d/implementer-owner-plan-json-475.md": "2b31efbcf106b45f14ce18cf8b2aee2f35fcde2f159dfbb1e38da49e016f242a",
-    "changelog.d/implementer2-peers-module.md": "e2670ad7f09cb17bbad1e89a60bae14bf9765ce1f6c99def51228e249bb2da79",
-    "changelog.d/implementer3-config-help.md": "f34cab39b884cfccb3a4284dc694ea704bd5d6d52bc3716faefa2da53e28b03f",
-    "changelog.d/implementer3-fake-seat-auth-probe.md": "d4c2d8ca0b5b47652f6b04559bb4477204f890718e39965e4fe98f9da1dca92c",
-    "changelog.d/implementer3-module-help.md": "bd72b8f86b3a7311f27173928110d244b6efe929e82a51d301eed330f405c0c7",
-    "changelog.d/sign-retry-473.md": "e5af9dfc3c2e9b741e074e5d753eb15b0538a337bc5efae4efee68bbf4bca87d",
     "commandmap.py": "8bd409700a0667a15fa435d74cb3d48ae79a1d80b963b78e8791be12f9bc6e1b",
     "config/.peers.json.example": "e81eb4533b4e06969946a8fa1c977e0692bc047275101bcdbae1504355866674",
     "config/nudge.env.example": "b278edb191f6588316383f5c095f6332fc3ccaf695c595dccd9b21c4322d5cf3",
@@ -311,6 +302,6 @@
     "vocabulary.py": "3a6977fc89573561e6248748db90379acc810ff183556e220ce6bf1b2c0d0d3b",
     "x25519.py": "ec1967595a2306cde860afe4dffab40a3f833d089de6caf5c9c080df8fd45726"
   },
-  "sequence": 668,
+  "sequence": 670,
   "version": "4.1"
 }
