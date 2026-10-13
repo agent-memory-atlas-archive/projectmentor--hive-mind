@@ -23,7 +23,8 @@ HV="${HIVE_HOME:-$HOME/projects/hive-mind}/hv"
 
 # Pull cwd + session id out of the hook's stdin JSON (best-effort; python3 is
 # always present since hv itself is python). Two lines so a cwd with spaces is safe.
-parsed=$(python3 -c 'import sys, json
+# python3 runs with -I: the session cwd is an arbitrary project directory and must never supply a module.
+parsed=$(python3 -I -c 'import sys, json
 try:
     d = json.load(sys.stdin)
     print(d.get("cwd", ""))

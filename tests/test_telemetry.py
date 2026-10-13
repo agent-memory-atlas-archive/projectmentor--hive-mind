@@ -149,3 +149,23 @@ def test_api_telemetry_reads_a_store_under_a_home_with_uri_special_characters(tm
     t = _api(home)
     assert t["available"] and t["totals"]["sessions"] == 2
     assert [r["tokens_in"] for r in t["recent"]] == [9, 3]      # newest first
+
+
+def test_session_hook_never_imports_a_module_planted_in_the_session_cwd(tmp_path):
+    """The hook runs in whatever project the session opened: a json.py there must not run."""
+    home = tmp_path / "home"
+    home.mkdir()
+    log = tmp_path / "argv.txt"
+    fake_hv = home / "hv"
+    fake_hv.write_text(f"#!/bin/sh\nprintf '%s\\n' \"$@\" > {log}\n")
+    fake_hv.chmod(0o755)
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    marker = tmp_path / "planted-ran.txt"
+    (proj / "json.py").write_text(f"open({str(marker)!r}, 'a').write('json')\n")
+    r = subprocess.run(["bash", str(PROJECT / "scripts" / "common" / "session_hook.sh"), "start"],
+                       env=dict(os.environ, HIVE_HOME=str(home)), cwd=proj, input='{"cwd": "/tmp", "session_id": "s1"}',
+                       capture_output=True, text=True)
+    assert r.returncode == 0
+    assert not marker.exists()
+    assert "s1" in log.read_text().split()

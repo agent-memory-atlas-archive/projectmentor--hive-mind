@@ -1,0 +1,1 @@
+- Session hook: the `python3` call now runs with `-I`, so a `json.py` in the session's project directory is never imported.
