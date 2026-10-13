@@ -48,7 +48,7 @@ _verify_commit() {
   _t="$(mktemp -d)" || { echo unknown; return; }
   if git clone -q --no-checkout "$HIVE_DIR" "$_t/tree" >/dev/null 2>&1 \
      && git -C "$_t/tree" checkout -q --detach "$1" >/dev/null 2>&1; then
-    _out="$(PYTHONDONTWRITEBYTECODE=1 python3 - "$HIVE_DIR" "$_t/tree" 2>/dev/null <<'PY'
+    _out="$(PYTHONDONTWRITEBYTECODE=1 python3 -I -B - "$HIVE_DIR" "$_t/tree" 2>/dev/null <<'PY'
 import importlib.util, sys
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
@@ -76,7 +76,7 @@ PY
 
 # The signing sequence of a verify.json read on stdin, parsed by the INSTALLED hv (0 when absent or malformed).
 _manifest_sequence() {
-  PYTHONDONTWRITEBYTECODE=1 python3 -c '
+  PYTHONDONTWRITEBYTECODE=1 python3 -I -B -c '
 import importlib.util, sys
 from importlib.machinery import SourceFileLoader
 loader = SourceFileLoader("hv_update_seq", sys.argv[1] + "/hv")
@@ -91,7 +91,7 @@ print(hv._manifest_sequence(sys.stdin.buffer.read()))' "$HIVE_DIR" 2>/dev/null |
 # command that settles it, `hive-mind migrate forget`. Exit 3 means "print nothing more, fail the update"; 0 means
 # closed or no owner. Reads no stdin: the y/N belongs to `doctor --fix`, run by the owner.
 _forget_authz_gate() {
-  HIVE_HOME="$HIVE_DIR" python3 - "$HIVE_DIR" 2>/dev/null <<'PY'
+  HIVE_HOME="$HIVE_DIR" python3 -I - "$HIVE_DIR" 2>/dev/null <<'PY'
 import importlib.util, sys
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
@@ -129,7 +129,7 @@ PY
 # `init_db`, which migrates a 2.4-shaped store once (drop, rebuild, stamp `schema_version`, one transaction) and
 # leaves a current one alone. This prints the `entity-identity` line, and warns (never fails the update) when it is not ok.
 _entity_identity_report() {
-  HIVE_HOME="$HIVE_DIR" python3 - "$HIVE_DIR" 2>/dev/null <<'PY'
+  HIVE_HOME="$HIVE_DIR" python3 -I - "$HIVE_DIR" 2>/dev/null <<'PY'
 import importlib.util, sys
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
@@ -154,7 +154,7 @@ _contract_major() {
 
 # The daemon's configured port (.peers.json `port`, default 9876), read the way the daemon reads it.
 _daemon_port() {
-  python3 -c "import sys; sys.path.insert(0, sys.argv[1]); import sync_common; \
+  python3 -I -c "import sys; sys.path.insert(0, sys.argv[1]); import sync_common; \
 print(sync_common.load_peers().get('port', 9876))" "$HIVE_DIR" 2>/dev/null || echo 9876
 }
 
