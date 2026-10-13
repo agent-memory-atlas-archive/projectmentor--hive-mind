@@ -1,0 +1,5 @@
+# Pinned flake list for sign.yml (scripts/ci/flake_retry.py). One pytest test id per line, then `#` and the
+# issue that tracks the real fix. A line without an issue link is rejected. A failure in a listed test is
+# re-run once by the Sign release manifest run; any other failure fails it. Remove a line when its issue closes.
+# An id matches itself and its parametrized variants (`id[...]`).
+tests/test_update_gate.py::test_f_a_subject_that_is_not_this_updates_switch_is_never_rolled_back  # https://github.com/projectmentor/hive-mind/issues/463
