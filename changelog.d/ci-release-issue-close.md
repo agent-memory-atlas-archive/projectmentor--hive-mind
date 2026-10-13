@@ -1,1 +1,0 @@
-- CI (hive-mind#460): a new workflow `release-issue-close.yml` closes the issues a PR names with `Closes`/`Fixes`/`Resolves #N` when it merges into `release/*`, where GitHub does not; it only closes issues of this repository, never from `Part of`/`Refs` or another repo's `#N`. PR template now says when to write `Closes`.

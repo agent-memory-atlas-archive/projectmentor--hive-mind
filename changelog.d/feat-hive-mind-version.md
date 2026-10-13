@@ -1,1 +1,0 @@
-- `hive-mind version` (alias `--version`) prints the installed release (from `git describe`), full commit, contract version and verify state; `--json` and `--no-verify` supported. `hive-mind status` now starts with the same line plus one line per installed module (name, version, publisher key prefix). `hv version` is unchanged. (#468)
