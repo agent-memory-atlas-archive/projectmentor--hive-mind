@@ -192,6 +192,106 @@ _PR6_KNOB_DEFAULTS = {"halflife_fact": HALFLIFE_DAYS, "halflife_idea": HALFLIFE_
                       "w_links": CONF_W_LINKS, "w_volatile": CONF_W_VOLATILE}
 
 
+# 4.0 C1: the one table of core governed keys. `_config_set` takes its membership, coercion, choices and range
+# checks from it, and `config schema --json` prints it, so a key added here is a key `config set` accepts and the
+# schema shows, and nothing else is. `error` is the exact refusal line (the golden output). A module's `x-` key is
+# not here (its schema is the manifest's), and neither is a node key (`NODE_KEYS`, never a `set-config`).
+GOVERNED_KEYS = {
+    "same_device_lambda": {"type": "float", "default": CONF_SAME_DEVICE_LAMBDA,
+                           "description": "weight of each additional identity on the same device (1.0 = no discount)"},
+    "cap_self": {"type": "float", "default": CONF_CAP_SELF,
+                 "description": "confidence ceiling when all corroboration traces to one principal"},
+    "introspect_support_weight": {"type": "float", "default": CONF_INTROSPECT_SUPPORT_WEIGHT, "min": 0.0, "max": 1.0,
+                                 "error": "introspect_support_weight must be in [0, 1] (default 0: reasoning never moves confidence)",
+                                 "description": "weight of a supports/contradicts/resolves link on the introspect channel"},
+    "quorum_m": {"type": "int", "default": GOV_QUORUM_M, "min": 0,
+                 "error": "quorum_m must be >= 0 (0 disables elections)",
+                 "description": "admitted voter-units needed to elect a new owner (0 = elections off)"},
+    "quorum_by": {"type": "str", "default": GOV_QUORUM_BY, "choices": ["device", "principal"],
+                  "error": "quorum_by must be 'device' or 'principal'",
+                  "description": "count the election quorum by device or by principal"},
+    "dead_man_days": {"type": "float", "default": GOV_DEAD_MAN_DAYS,
+                      "description": "owner inactivity in days before an election can install a new owner"},
+    "capsule_putters": {"type": "str", "default": "owner", "choices": ["owner", "fertile"],
+                        "error": "capsule_putters must be 'owner' (default) or 'fertile' (any admitted device)",
+                        "description": "who may write capsules: the owner only, or any admitted device"},
+    "cell_writers": {"type": "str", "default": "owner", "choices": ["owner", "fertile"],
+                     "error": "cell_writers must be 'owner' (default) or 'fertile' (any admitted device)",
+                     "description": "who may write cells and combs: the owner only, or any admitted device"},
+    "forget_writers": {"type": "str", "default": "legacy", "choices": ["owner"],
+                       "error": "forget_writers must be 'owner' (only forgets signed by the owner as of their position count)",
+                       "description": "records that the hive is migrated to owner-signed forgets (legacy is no longer honoured)"},
+    "flood_per_minute": {"type": "int", "default": FLOOD_PER_MINUTE, "min": 1,
+                         "error": "flood_per_minute must be >= 1 entries",
+                         "description": "entries one device may stamp into a minute"},
+    "flood_per_day": {"type": "int", "default": FLOOD_PER_DAY, "min": 1,
+                      "error": "flood_per_day must be >= 1 entries",
+                      "description": "entries one device may stamp into a day"},
+    "trust_long_days": {"type": "float", "default": GOV_TRUST_LONG_DAYS, "min": 0.0, "min_exclusive": True,
+                        "error": "trust_long_days must be > 0 days",
+                        "description": "long window for per-signer reliability"},
+    "trust_short_days": {"type": "float", "default": GOV_TRUST_SHORT_DAYS, "min": 0.0, "min_exclusive": True,
+                         "error": "trust_short_days must be > 0 days",
+                         "description": "short window for per-signer reliability"},
+    "trust_drift_threshold": {"type": "float", "default": GOV_TRUST_DRIFT_THRESHOLD, "min": -1.0, "max": 0.0,
+                              "error": "trust_drift_threshold must be in [-1, 0] (a negative delta = reliability falling)",
+                              "description": "`doctor trust-drift` warns below this reliability delta (advisory)"},
+    "halflife_fact": {"type": "float", "default": HALFLIFE_DAYS, "min": 0.0, "min_exclusive": True,
+                      "error": f"halflife_fact must be > 0 days (defaults: fact {HALFLIFE_DAYS:g}, idea {HALFLIFE_IDEA_DAYS:g}, volatile {HALFLIFE_VOLATILE_DAYS:g})",
+                      "description": "confidence half-life in days of a fact"},
+    "halflife_idea": {"type": "float", "default": HALFLIFE_IDEA_DAYS, "min": 0.0, "min_exclusive": True,
+                      "error": f"halflife_idea must be > 0 days (defaults: fact {HALFLIFE_DAYS:g}, idea {HALFLIFE_IDEA_DAYS:g}, volatile {HALFLIFE_VOLATILE_DAYS:g})",
+                      "description": "confidence half-life in days of an idea"},
+    "halflife_volatile": {"type": "float", "default": HALFLIFE_VOLATILE_DAYS, "min": 0.0, "min_exclusive": True,
+                          "error": f"halflife_volatile must be > 0 days (defaults: fact {HALFLIFE_DAYS:g}, idea {HALFLIFE_IDEA_DAYS:g}, volatile {HALFLIFE_VOLATILE_DAYS:g})",
+                          "description": "confidence half-life in days of a volatile-tagged fact"},
+    "importance_self_cap": {"type": "float", "default": CONF_IMPORTANCE_SELF_CAP, "min": 0.0, "max": 1.0,
+                            "error": "importance_self_cap must be in [0, 1]",
+                            "description": "the most a writer's own --importance can claim"},
+    "w_links": {"type": "float", "default": CONF_W_LINKS, "min": 0.0, "max": 1.0,
+                "error": "w_links must be in [0, 1]",
+                "description": "weight of other-identity link in-degree in importance"},
+    "w_volatile": {"type": "float", "default": CONF_W_VOLATILE, "min": 0.0, "max": 1.0,
+                   "error": "w_volatile must be in [0, 1]",
+                   "description": "extra importance of a fresh volatile fact"},
+}
+
+# Node-local keys (`.peers.json`): read by `config schema` and (C2) `config node`; `_config_set` never consults
+# this table, so a node key can never become a `set-config` entry.
+NODE_KEYS = {
+    "port": {"type": "int", "default": 9876, "min": 1, "max": 65535,
+             "description": "the sync daemon's listen port (re-read at daemon restart)"},
+    "bind": {"type": "str", "default": None,
+             "description": "the sync daemon's bind address (unset = chosen automatically; re-read at daemon restart)"},
+    "sync_auth": {"type": "str", "default": "permissive", "choices": ["off", "permissive", "enforce"],
+                  "description": "what this node requires of a peer that reads from it"},
+    "sync_auth_outbound": {"type": "str", "default": "permissive", "choices": ["off", "permissive", "enforce"],
+                           "description": "what this node requires of a peer before it pushes to it"},
+    "dashboard_viewers": {"type": "list", "default": [],
+                          "description": "tailnet logins allowed to view the dashboard read-only"},
+    "dashboard_viewer_port": {"type": "int", "default": None, "min": 1, "max": 65535,
+                              "description": "the dashboard's read-only viewer listener port"},
+}
+
+
+def _governed_check(key, val):
+    """The refusal line for a coerced value of a `GOVERNED_KEYS` key, or None. Choices and range come from the table."""
+    spec = GOVERNED_KEYS[key]
+    ok = True
+    if "choices" in spec:
+        ok = val in spec["choices"]
+    if ok and "min" in spec:
+        ok = val > spec["min"] if spec.get("min_exclusive") else val >= spec["min"]
+    if ok and "max" in spec:
+        ok = val <= spec["max"]
+    return None if ok else spec["error"]
+
+
+def _config_key_record(key, spec):
+    """One `config schema --json` record: the table row without its refusal line."""
+    return {"id": key, **{k: v for k, v in spec.items() if k != "error"}}
+
+
 def _halflife(gov, cls):
     """Half-life in days for a salience class (`fact` | `idea` | `volatile`) under this hive's governed
     config; unknown class → fact. Decisions have no half-life of their own — their outcome evidence
@@ -614,7 +714,7 @@ def _governance_state_uncached(entries):
     gov = {"owner_id": None, "owner_pub": None, "owner_ts": "", "hive_id": "", "admitted": set(),
            "denied": set(), "purged": set(), "standbys": set(),
            "nominations": set(), "escrows": [], "elections": [], "owner_term": 0,
-           "principals": {}, "modules": {}, "module_config": {},
+           "principals": {}, "modules": {}, "module_config": {}, "config_by": {},
            "ts_tips": {}, "ts_markers": set(), "first_admit": {}, "revoked": set(),
            "keep": {}, "kept": set(), "uncarried": [], "member_spans": {}, "ended_at": {},
            "config": {"same_device_lambda": CONF_SAME_DEVICE_LAMBDA, "cap_self": CONF_CAP_SELF,
@@ -879,25 +979,33 @@ def _governance_state_uncached(entries):
                         gov["ts_tips"][tnid] = max(gov["ts_tips"].get(tnid, 0), tseq)
         elif action == "set-config":
             key, raw = p.get("key"), p.get("value")
+            _by = {"device_id": _nid, "ts": _ts, "sid": _short_id(_nid, _seq)}   # 4.0 C1: who set it last (`config show`)
             try:
                 if key in ("flood_per_minute", "flood_per_day"):
                     if int(raw) >= 1:
                         gov["config"][key] = int(raw)
+                        gov["config_by"][key] = _by
                 elif key in ("same_device_lambda", "cap_self", "dead_man_days", "introspect_support_weight",
                            "trust_long_days", "trust_short_days", "trust_drift_threshold") \
                         or key in _PR6_KNOB_DEFAULTS:
                     gov["config"][key] = float(raw)
+                    gov["config_by"][key] = _by
                 elif key == "quorum_m":
                     gov["config"][key] = int(raw)
+                    gov["config_by"][key] = _by
                 elif key == "quorum_by" and raw in ("device", "principal"):
                     gov["config"][key] = raw
+                    gov["config_by"][key] = _by
                 elif key in ("capsule_putters", "cell_writers") and raw in ("owner", "fertile"):
                     gov["config"][key] = raw
+                    gov["config_by"][key] = _by
                 elif key == "forget_writers" and raw in ("legacy", "owner"):   # #122 step 2; else ignored
                     gov["config"][key] = raw
+                    gov["config_by"][key] = _by
                 elif vocabulary.split_module_name(key) and isinstance(raw, str) \
                         and len(raw) <= vocabulary.MODULE_VALUE_MAX:
                     gov["module_config"][key] = raw   # 2.1 M3: `x-<module>:<key>`, a string core never interprets
+                    gov["config_by"][key] = _by
             except (TypeError, ValueError):
                 pass
 
@@ -1108,7 +1216,7 @@ _LINK_EVIDENCE_KINDS = dict(vocabulary.LINK_EVIDENCE_SIDES)
 
 _DEFAULT_GOV = {"owner_id": None, "owner_ts": "", "admitted": set(), "denied": set(), "purged": set(),
                 "standbys": set(), "nominations": set(), "escrows": [], "elections": [], "owner_term": 0,
-                "principals": {}, "modules": {}, "module_config": {}, "ts_tips": {}, "ts_markers": set(), "first_admit": {}, "revoked": set(),
+                "principals": {}, "modules": {}, "module_config": {}, "config_by": {}, "ts_tips": {}, "ts_markers": set(), "first_admit": {}, "revoked": set(),
                 "keep": {}, "kept": set(),
                 "config": {"same_device_lambda": CONF_SAME_DEVICE_LAMBDA, "cap_self": CONF_CAP_SELF,
                            "quorum_m": GOV_QUORUM_M, "quorum_by": GOV_QUORUM_BY,

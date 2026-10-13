@@ -1223,50 +1223,39 @@ def _group_retire(device_id, through=None, confirm=False):
 
 def _config_set(key, value):
     """Set a journaled, owner-signed tunable parameter (same on every node). Owner-only. Covers every
-    governed key, whichever `hv config` sub-namespace it is set from: the confidence knobs
-    (same_device_lambda, cap_self, introspect_support_weight), the salience/decay knobs
-    (importance_self_cap, w_links, w_volatile, halflife_fact/idea/volatile), the trust-velocity knobs
-    (trust_long_days, trust_short_days, trust_drift_threshold), the quorum-election knobs (quorum_m,
-    quorum_by, dead_man_days) and the write policies (capsule_putters, cell_writers, forget_writers). A key
-    `x-<module>:<key>` is a module's fleet-wide config (2.1): a string, stored and never interpreted."""
+    governed key (`GOVERNED_KEYS`, the one table: it decides membership, coercion, choices and range), whichever
+    `hv config` sub-namespace it is set from. A key `x-<module>:<key>` is a module's fleet-wide config (2.1): a
+    string, stored and never interpreted. Returns True when the key is set (or already was), False on every
+    refusal (unknown key, bad or out-of-range value, a guard, no owner key) with nothing journaled; `config_cmd`
+    turns False into exit 1 (4.0 C1). A node key (`NODE_KEYS`) is not in the table, so it is an unknown key."""
     if vocabulary.split_module_name(key):      # 2.1 M3: a module's fleet-wide config, `x-<module>:<key>`, a string
         if not isinstance(value, str) or len(value) > vocabulary.MODULE_VALUE_MAX:
             print(f"bad value for {key}: a string of at most {vocabulary.MODULE_VALUE_MAX} characters")
-            return
+            return False
         if _governance_state(merkle.read_all_entries(JOURNAL_DIR)).get("module_config", {}).get(key) == value:
             print(f"{key} is already {value!r}: nothing to sign")
-            return
+            return True
         if _append_governance({"action": "set-config", "key": key, "value": value}):
             print(f"set {key} = {value}")
-        return
-    coercers = {"same_device_lambda": float, "cap_self": float,
-                "quorum_m": int, "quorum_by": str, "dead_man_days": float,
-                "capsule_putters": str, "cell_writers": str, "forget_writers": str,
-                "introspect_support_weight": float, "flood_per_minute": int, "flood_per_day": int,
-                "trust_long_days": float, "trust_short_days": float, "trust_drift_threshold": float,
-                **{k: float for k in _PR6_KNOB_DEFAULTS}}
-    if key not in coercers:
-        print(f"unknown config key {key!r} (known: {', '.join(sorted(coercers))}, or a module's x-<module>:<key>)")
-        return
+            return True
+        return False
+    if key not in GOVERNED_KEYS:
+        print(f"unknown config key {key!r} (known: {', '.join(sorted(GOVERNED_KEYS))}, or a module's x-<module>:<key>)")
+        return False
     try:
-        val = coercers[key](value)
+        val = {"float": float, "int": int, "str": str}[GOVERNED_KEYS[key]["type"]](value)
     except (TypeError, ValueError):
         print(f"bad value for {key}: {value!r}")
-        return
-    if key == "quorum_by" and val not in ("device", "principal"):
-        print("quorum_by must be 'device' or 'principal'")
-        return
-    if key in ("capsule_putters", "cell_writers") and val not in ("owner", "fertile"):
-        print(f"{key} must be 'owner' (default) or 'fertile' (any admitted device)")
-        return
+        return False
+    if key == "forget_writers" and val == "legacy":
+        print("forget_writers=legacy is no longer honoured (3.0): a forget no owner signed as of its position "
+              "never hides a fact. Nothing was set. `owner` is accepted and records that the hive is migrated.")
+        sys.exit(1)           # a refusal sets nothing: a caller that trusts the exit code must not read it as done
+    refusal = _governed_check(key, val)
+    if refusal:
+        print(refusal)
+        return False
     if key == "forget_writers":
-        if val == "legacy":
-            print("forget_writers=legacy is no longer honoured (3.0): a forget no owner signed as of its position "
-                  "never hides a fact. Nothing was set. `owner` is accepted and records that the hive is migrated.")
-            sys.exit(1)           # a refusal sets nothing: a caller that trusts the exit code must not read it as done
-        if val != "owner":
-            print("forget_writers must be 'owner' (only forgets signed by the owner as of their position count)")
-            return
         # #122 step 2 guard, no flag: recording `owner` must not leave a 2.x peer hiding facts this node shows. A
         # fact still kept forgotten (by 2.x) only by an unsigned pre-genesis forget needs an explicit owner decision
         # first. The 3.0 projection does not read the key; it is kept so `migrate forget` and old runbooks work.
@@ -1279,28 +1268,8 @@ def _config_set(key, value):
             for f in _grandfather_facts(entries, hides):
                 sid = f["sid"]
                 print(f"  {sid}   keep it forgotten: hive-mind retract {sid} --owner   |   let it back: hive-mind unforget {sid} --reason …")
-            return
-    if key in ("flood_per_minute", "flood_per_day") and val < 1:
-        print(f"{key} must be >= 1 entries")
-        return
-    if key == "quorum_m" and val < 0:
-        print("quorum_m must be >= 0 (0 disables elections)")
-        return
-    if key == "introspect_support_weight" and not (0.0 <= val <= 1.0):
-        print("introspect_support_weight must be in [0, 1] (default 0: reasoning never moves confidence)")
-        return
-    if key in ("trust_long_days", "trust_short_days") and val <= 0:
-        print(f"{key} must be > 0 days")
-        return
-    if key == "trust_drift_threshold" and not (-1.0 <= val <= 0.0):
-        print("trust_drift_threshold must be in [-1, 0] (a negative delta = reliability falling)")
-        return
-    if key.startswith("halflife_") and not (val > 0):
-        print(f"{key} must be > 0 days (defaults: fact {HALFLIFE_DAYS:g}, idea {HALFLIFE_IDEA_DAYS:g}, "
-              f"volatile {HALFLIFE_VOLATILE_DAYS:g})")
-        return
-    if key in ("importance_self_cap", "w_links", "w_volatile") and not (0.0 <= val <= 1.0):
-        print(f"{key} must be in [0, 1]")
-        return
+            return False
     if _append_governance({"action": "set-config", "key": key, "value": val}):
         print(f"set {key} = {val}")
+        return True
+    return False

@@ -802,9 +802,38 @@ def _config_set(key, value):
     raise NotOnDataPlane(("config", "set"))
 
 
+def _config_schema_doc():
+    """`config schema --json`: the two tables, governed (`GOVERNED_KEYS`) and node-local (`NODE_KEYS`), one record per key."""
+    return {"schema": 1,
+            "governed": [_config_key_record(k, v) for k, v in GOVERNED_KEYS.items()],
+            "node": [_config_key_record(k, v) for k, v in NODE_KEYS.items()]}
+
+
+def _config_show_doc():
+    """`config show --json`: every governed key's merged value, its source (`default` | `fleet`) and `set_by`
+    ({device_id, ts, sid} of the last honoured `set-config` for it), plus the operator-only `governance` block (the
+    owner, the admitted devices with their principals, `quorum_m`) that explains the values. Reads the journal only."""
+    gov = _governance_state(merkle.read_all_entries(JOURNAL_DIR))
+    cfg, by = gov.get("config") or {}, gov.get("config_by") or {}
+    keys = [{"id": k, "value": cfg.get(k, spec["default"]), "default": spec["default"],
+             "source": "fleet" if k in by else "default", "set_by": by.get(k)} for k, spec in GOVERNED_KEYS.items()]
+    return {"schema": 1, "governed": keys,
+            "governance": {"owner_id": gov.get("owner_id"),
+                           "admitted": [{"device_id": d, "principal": gov["principals"].get(d)}
+                                        for d in sorted(gov["admitted"])],
+                           "quorum_m": cfg.get("quorum_m", GOV_QUORUM_M)}}
+
+
+def _config_show_text(doc):
+    w = max(len(k["id"]) for k in doc["governed"])
+    for k in doc["governed"]:
+        who = f"  (set by {k['set_by']['device_id']} {k['set_by']['sid']})" if k["set_by"] else ""
+        print(f"{k['id']:<{w}}  {k['value']}  [{k['source']}]{who}")
+
+
 def config_cmd(args):
-    """Settings: `hv config identity show|init` (this device's key) and
-    `hive-mind config set <param> <value>` (owner-signed hive params).
+    """Settings: `hv config identity show|init` (this device's key), `config schema|show` (the governed keys,
+    read-only) and `hive-mind config set <param> <value>` (owner-signed hive params; exit 1 on every refusal).
     `hive-mind config set …` is kept as a silent alias for `config confidence set`."""
     action = getattr(args, "config_action", None)
     if action == "identity":
@@ -815,20 +844,32 @@ def config_cmd(args):
             _key_announce()
         else:
             _identity_show()
+    elif action in ("schema", "show"):
+        doc = _config_schema_doc() if action == "schema" else _config_show_doc()
+        if getattr(args, "json", False):
+            print(json.dumps(doc, indent=2))
+        elif action == "show":
+            _config_show_text(doc)
+        else:
+            for k in doc["governed"] + doc["node"]:
+                print(f"{k['id']}  {k['type']}  default {k['default']!r}  {k['description']}")
     elif action == "confidence":
         if getattr(args, "config_confidence_action", None) == "set":
-            _config_set(args.key, args.value)
+            if _config_set(args.key, args.value) is False:
+                sys.exit(1)
         else:
             print("usage: hive-mind config set <same_device_lambda|cap_self> <value>")
     elif action == "quorum":
         if getattr(args, "config_quorum_action", None) == "set":
-            _config_set(args.key, args.value)
+            if _config_set(args.key, args.value) is False:
+                sys.exit(1)
         else:
             print("usage: hive-mind config set <quorum_m|quorum_by|dead_man_days> <value>")
     elif action == "set":            # silent back-compat alias for `config confidence set`
-        _config_set(args.key, args.value)
+        if _config_set(args.key, args.value) is False:
+            sys.exit(1)
     else:
-        print("usage: hv config identity show|init  |  hive-mind config set <key> <value>  |  "
+        print("usage: hv config identity show|init  |  hv config schema|show [--json]  |  "
               "hive-mind config set <key> <value>")
 
 
