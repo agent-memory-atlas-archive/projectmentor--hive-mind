@@ -27,6 +27,10 @@ echo ""
 echo -e "${BLD}hive-mind status${RST}"
 echo "────────────────────────────────────"
 
+# Release, commit, contract and installed modules (#468); the verify check is `hive-mind version`.
+python3 "$HIVE_DIR/hivemind_ctl.py" version --brief 2>/dev/null || warn "Version: could not read (try 'hive-mind version')"
+echo ""
+
 # Daemon
 if command -v service_is_active >/dev/null 2>&1 && service_is_active "$SERVICE" 2>/dev/null; then
   ok "Daemon: running"

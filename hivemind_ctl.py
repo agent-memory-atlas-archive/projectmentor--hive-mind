@@ -124,6 +124,9 @@ def main(argv=None):
     if not argv:
         print(__doc__.strip().splitlines()[0])
         return 2
+    if argv[0] in ("version", "--version"):      # #468: read-only, no owner key; `hv version` stays the contract version
+        import hive_version
+        return hive_version.main(hv(), argv[1:], ROOT)
     if not _is_control_plane(argv):
         print(f"hive-mind: `{' '.join(argv)}` is not a control-plane command.\n"
               f"  The agent data plane is `hv`; try `hv {' '.join(argv)}`.", file=sys.stderr)
