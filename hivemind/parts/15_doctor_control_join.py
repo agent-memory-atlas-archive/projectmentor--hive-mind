@@ -679,10 +679,13 @@ def _join_request_url(device_id):
     return _join_request_urls().get(device_id, "")
 
 
-def _add_peer(url, label):
+def _add_peer(url, label, device_id=None):
     """Idempotently add {url} to this node's .peers.json (skips self + duplicates). Returns True if
     added. This is how admission SEEDS reciprocal peering — connectivity stays a separate concern
-    from the trust grant (admit confers no governance), and the peer list remains editable."""
+    from the trust grant (admit confers no governance), and the peer list remains editable. `device_id` is
+    recorded beside the label as the node-local `device` field, so a revoke drops the entry by device and not
+    by guessing from the principal label (no wire-format change). An entry already at the URL is re-pointed
+    at a different device id (a re-admit at the same address) and otherwise left alone."""
     if not _peer_url_ok(url) or url.rstrip("/") == _self_sync_url().rstrip("/"):
         return False
     label = label if _plain_text(label, _PEER_LABEL_MAX) else None     # a bad label falls back to the url
@@ -692,9 +695,17 @@ def _add_peer(url, label):
     except Exception:
         cfg = {}
     peers = cfg.get("peers") or []
-    if any(str(p.get("url", "")).rstrip("/") == url.rstrip("/") for p in peers):
-        return False
-    peers.append({"url": url, "id": label or url})
+    entry = {"url": url, "id": label or url}
+    if device_id and _is_device_id(device_id):
+        entry["device"] = device_id
+    for p in peers:
+        if str(p.get("url", "")).rstrip("/") == url.rstrip("/"):
+            if not (entry.get("device") and p.get("device") and p["device"] != entry["device"]):
+                return False
+            p["device"] = entry["device"]
+            break
+    else:
+        peers.append(entry)
     cfg["peers"] = peers
     cfg.setdefault("self", NODE_ID)
     cfg.setdefault("bind", "0.0.0.0")

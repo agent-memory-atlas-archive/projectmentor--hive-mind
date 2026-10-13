@@ -299,3 +299,30 @@ def test_a_re_admitted_device_is_not_ended(tmp_path, monkeypatch):
     assert hv._live_peers([entry], gov) == [entry]
     _run(a, "group", "purge", r_dev)
     assert hv._ended_devices(state()) == {r_dev}
+
+
+def test_an_entry_with_a_recorded_device_is_decided_on_that_device_alone(tmp_path, monkeypatch):
+    """`group admit --principal` records the device beside the principal; the revoke drops by it (private#79)."""
+    hv = _hvmod(tmp_path, monkeypatch)
+    r, n = "k1:" + "a" * 16, "k1:" + "b" * 16
+    seen = {"127.0.0.1": {"first_seen": 1, "last_seen": 2}}
+    url = "http://10.9.9.9:1"                       # no host history, no join-request: only the field can match
+    assert hv._peer_ended_device({"id": "bob", "device": r, "url": url}, {r}, {}, {}) == r
+    assert hv._peer_ended_device({"id": "bob", "device": n, "url": url}, {r}, {r: seen}, {}) is None
+    # an old entry without the field still loads and is judged as before
+    assert hv._peer_ended_device({"id": "bob", "url": url}, {r}, {}, {}) is None
+    assert hv._peer_ended_device({"id": "bob", "device": "not-a-device", "url": url}, {r}, {}, {}) is None
+
+
+def test_add_peer_records_the_device_and_re_points_a_re_admit(tmp_path, monkeypatch):
+    hv = _hvmod(tmp_path, monkeypatch)
+    r, n = "k1:" + "a" * 16, "k1:" + "b" * 16
+    url = "http://100.0.0.5:9876"
+    assert hv._add_peer(url, "bob", r) is True
+    path = tmp_path / ".peers.json"
+    assert [p for p in json.loads(path.read_text())["peers"] if p["url"] == url] == [{"url": url, "id": "bob", "device": r}]
+    assert hv._add_peer(url, "bob", r) is False                  # same device: no-op
+    assert hv._add_peer(url, "bob", n) is True                   # another device at the address: re-pointed
+    assert [p["device"] for p in json.loads(path.read_text())["peers"]] == [n]
+    assert hv._add_peer("http://100.0.0.6:9876", "x") is True    # no device id: no field
+    assert "device" not in json.loads(path.read_text())["peers"][1]

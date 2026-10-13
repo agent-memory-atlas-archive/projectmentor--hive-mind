@@ -1107,7 +1107,7 @@ def admit_cmd(args):
     if module:
         return          # a module has no join-request and no sync address: no reciprocal peer
     url = _join_request_url(args.device_id)
-    if _add_peer(url, args.principal or args.device_id):
+    if _add_peer(url, args.principal or args.device_id, args.device_id):
         print("  + reciprocal peer added from its join-request URL — the owner now syncs to "
               "this device too (daemon picks it up next cycle, or `hv sync now`).")
     else:
