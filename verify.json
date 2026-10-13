@@ -1,5 +1,5 @@
 {
-  "digest": "fb7f9d1fb8be31fa1c112783103acc9ba45473d70632808a35a14146f65bc92c",
+  "digest": "c0f439c5b6583607b9cd6c181b50353657c8303e9a084925baf086e42b0aa56e",
   "files": {
     ".github/FUNDING.yml": "ca6c63d7539bb7d2f809b5068781c78de97c028a44c5ae252b11bc1695caf85d",
     ".github/ISSUE_TEMPLATE/bug_report.yml": "22df51b1e51c25f50726392c79811116b88c40370843ff2d4a3e76b643f1cb68",
@@ -22,6 +22,7 @@
     "chacha20poly1305.py": "6c3bb50dc126dab128184280b4d11cb1494800651e97aea941a821f31ff012fd",
     "changelog.d/agents-md.md": "a166ffe7c73b220d8b3fe9433058021c7fe746920226a251786ff924ef8feeb5",
     "changelog.d/ci-release-issue-close.md": "b1b64493fd10c1cde711239319e61a1188b92b8e0ab9418f4f4c88607793aa5b",
+    "changelog.d/implementer3-fake-seat-auth-probe.md": "d4c2d8ca0b5b47652f6b04559bb4477204f890718e39965e4fe98f9da1dca92c",
     "commandmap.py": "8bd409700a0667a15fa435d74cb3d48ae79a1d80b963b78e8791be12f9bc6e1b",
     "config/.peers.json.example": "e81eb4533b4e06969946a8fa1c977e0692bc047275101bcdbae1504355866674",
     "config/nudge.env.example": "b278edb191f6588316383f5c095f6332fc3ccaf695c595dccd9b21c4322d5cf3",
@@ -129,7 +130,7 @@
     "tests/integration/conftest.py": "cbee3b4cffb5965bf60048b26b1e7f4bd7a69fac572e78221349c6c7d2d188b7",
     "tests/integration/hivefleet/__init__.py": "dced6e5a32ac6e7f8600f3f472f972d01fdf6710ac2ec0150dd66b5c529171c7",
     "tests/integration/hivefleet/fakegh.py": "0193cda1aad642eb66bbd536cb852e1848c9911561f47aaabcdf2c32eaf87217",
-    "tests/integration/hivefleet/hwatch.py": "258cf58232448ef8d7f2d8698d957468adb4b6a8f8f99f962684352038f5376c",
+    "tests/integration/hivefleet/hwatch.py": "4c8842041e60a5078c84992d01cc4ed22a04a4d8ee12c5fa23e24168ba064dea",
     "tests/integration/hivefleet/mesh.py": "fb830fa15609280d43f6656c5b1a0d913841a78bd091b5f2b9a7cdf8d36d67a3",
     "tests/integration/hivefleet/modules.py": "f4e4ffd56828f0b1bec4461265edcb653171a7638d0b36a0e74226421ef26608",
     "tests/integration/hivefleet/proxy.py": "5dafa3194ed527ec975d65ff5a61ae03b06594a5a0e696b270c1c5d792a68030",
@@ -296,6 +297,6 @@
     "vocabulary.py": "3a6977fc89573561e6248748db90379acc810ff183556e220ce6bf1b2c0d0d3b",
     "x25519.py": "ec1967595a2306cde860afe4dffab40a3f833d089de6caf5c9c080df8fd45726"
   },
-  "sequence": 654,
+  "sequence": 656,
   "version": "4.0"
 }
