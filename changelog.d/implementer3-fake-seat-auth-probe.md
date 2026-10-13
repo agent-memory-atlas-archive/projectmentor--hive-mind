@@ -1,0 +1,1 @@
+- The integration fake seat runtime answers `auth status` / `models` (hwatch's auth probe, hive-mind-hwatch-dev#100) with exit 0 and does not count it as a session start.
