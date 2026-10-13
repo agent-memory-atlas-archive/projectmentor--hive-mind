@@ -125,6 +125,8 @@ def test_schema_json_lists_both_tables_and_no_refusal_text(tmp_path, monkeypatch
     assert by["cap_self"]["default"] == 0.7 and by["quorum_by"]["choices"] == ["device", "principal"]
     assert by["flood_per_minute"]["min"] == 1 and by["trust_drift_threshold"]["max"] == 0.0
     assert all("error" not in k and k["description"] for k in doc["governed"] + doc["node"])
+    assert all(isinstance(k["help"], str) and len(k["help"]) > 40 and k["help"] != k["description"]
+               for k in doc["governed"] + doc["node"])                      # every core key explains itself in plain text
     assert {k["id"]: k["choices"] for k in doc["node"] if "choices" in k}["sync_auth"] == ["off", "permissive", "enforce"]
     assert _run(home, "config", "schema").returncode == 0                  # the text form works too
 

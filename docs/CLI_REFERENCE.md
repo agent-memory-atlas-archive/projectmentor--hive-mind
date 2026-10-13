@@ -66,7 +66,7 @@ hv config identity announce            # publish this device's key as a signed j
 hv config identity show                # this device's device_id + pubkey
 hv config identity init [--force]      # mint a device key (fresh install)
 hv config node list|get <key>|set <key> <value> [--json]   # 4.0: the node-local keys of .peers.json, no owner key
-hv config schema [--json]              # 4.0: the governed and node-local key tables (type, default, range or choices)
+hv config schema [--json]              # 4.0: the governed and node-local key tables (type, default, range or choices, description, plain-language help)
 hv config show [--json]                # 4.0: every governed key's value, source and who set it last (`set_by`), plus the `governance` block
 ```
 
