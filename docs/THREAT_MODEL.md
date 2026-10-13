@@ -46,6 +46,10 @@ update this file.
    off|permissive|enforce`, default `permissive`, which only flags) makes a node push its journal only to
    a peer that proved itself, admitted, at the address it contacted; the signed answer is the boundary
    for *who this node writes to*.
+   The answer is not a signing oracle: the daemon signs only under the `hive-hello-v1` domain tag, only for
+   the two literal paths `/sync/hello` and `/hive/info`, and a caller supplies nothing but a 32-64 character
+   hex challenge; every other signed byte is the daemon's own. An unexpected daemon failure answers HTTP 500
+   with the fixed body `{"error": "internal error"}`; the exception goes to the daemon's own stderr only.
 
 ## Adversary model (what we actively defend against)
 
