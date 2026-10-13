@@ -333,10 +333,54 @@ at once). Concretely:
   sign and write nothing: no unlock, prompt, agent call, journal entry or peer. It adds no signing path, no wire byte and
   no journal format; the plan needs only the owner's public key, which every node holds. A plan is a statement, not an
   authority: nothing here binds the later run to it (that is the gated agent, slice A1, which compares the hash). A plan
-  never carries a secret (`--stdin`, `--file` and secret keys are refused). `module add --plan` leaves the module's device
+  never carries a secret (`--stdin`, `--file` and secret keys are refused, for `config set`, `config confidence|quorum set` and `module config set` alike). `module add --plan` leaves the module's device
   key (a device key, not owner material, mode 0600 in the 0700 key dir) so the real run can take its id over with
   `--device-id`. An abandoned plan leaves that key, and a real add without `--device-id` then refuses; remove
   `<key dir>/modules/<name>` by hand.
+- **Gated mode, approvers and delegations (4.0, owner approval slice A1, #481).** *Authority:* David's word for this
+  carve-out (D-7: ES256 verify in the agent, owner-signed node-local approver and delegation records under
+  `hive-approver-v1`), 2026-10-13, recorded in the hive as `k1:10f6b761dd1c2a90:1191`. No journal, entry, governance,
+  projection or sync byte changes, and no governance signature is made any other way: `ownerkey.sign_governance` and the
+  signer seam are as they were. What is new is `owner unlock --gated --rp-id HOST`, in which the agent signs a body only if
+  (a) its sha256 is in a ticket an enrolled approver's passkey approved (`present`, one ticket or a batch of up to 10 under
+  one assertion), once, within 15 minutes; or (b) it is inside a live delegation's scope, count and expiry. The agent
+  checks the assertion itself (`approvers.verify_assertion`: `rpIdHash`, UP and UV set, `BE` clear unless
+  `--allow-synced`, `webauthn.get`, challenge, origin, `crossOrigin`, ES256 through the pure-Python verify-only `p256.py`
+  pinned to RFC 6979 and OpenSSL vectors, or EdDSA, and a sign count that moves forward). The challenge binds the exact
+  act hashes (`sha256("hive-approval-v1" || sha256(sorted [ticket id, act-set hash] pairs))`), so one tap cannot approve a
+  different set. *Hard gate:* a run with `HIVE_APPROVAL_TICKET` set signs through the agent under that ticket or not at all.
+  `ChainSigner` has no fallback then, `_owner_seed()` refuses (no seed read, no passphrase prompt, `$HIVE_OWNER_KEY_PASSPHRASE`
+  ignored) and the verb exits 5 with nothing signed; the agent refuses a body that is not in the ticket, an act already
+  signed under it, an expired ticket and, in gated mode, any body with no ticket and no delegation. A ticket still passes
+  the agent's allowlist shape (the key set per action, canonical bytes, its own `owner_pub`), so `transfer`, `rotate`,
+  forgets, escrow, succession, links and a voting-device `admit` stay passphrase-only. A ticket may carry an arbitrary
+  `revoke` and a core `set-config` (a person tapped on those exact bytes); a delegation never can (module `x-<module>:`
+  keys and `admit` of a named module only). *Used-ticket set:* the agent now writes one file,
+  `<key dir>/used-tickets.json` (0600, ticket ids, act-set hashes, approver sign counts and per-delegation use times, no
+  secret), before the first signature of a ticket, so a restart or `owner lock` does not reopen a presented ticket; this
+  is the one stated exception to #295's "no file but the socket". It and `approvers.json` / `delegations.json` (owner-signed
+  records, 0600) are read back and every record's owner signature re-verified at start. *Membership:* approver and
+  delegation records are signed under the domain tag `hive-approver-v1` (never canonical JSON, so never a governance
+  signature) only by the agent's `member` op after the section 4.3 check (no approver: the owner passphrase; one: that
+  passkey's tap; two or more: two different approvers to add, one other approver to revoke; revoking the only approver is
+  passphrase-only, `--break-glass`), or by the verb's own break-glass path, where the passphrase is read from `/dev/tty`
+  (never the environment) and this process signs. No ticket, delegation or `sign` op reaches it. Any approver revoke
+  clears every delegation, delegations are capped at 30 days and 200 a day, and `approvers.min` (default 1, `--approvers-min`)
+  is a floor the agent will not revoke below. *Residuals:* (1) with one approver enrolled a thief holding the unlocked
+  phone (or its PIN or a biometric bypass) can enrol an attacker passkey or a delegation in one tap: accepted by David,
+  hardening is follow-up M1 with its reopen trigger (a second approver enrolled by default, or any sign of phone
+  compromise); **operator rule:** if the phone is lost, revoke it from the desktop passkey at once, then remove it in the
+  Tailscale admin console. (2) A gated agent holds the seed for the whole uptime (no idle timeout, no 12h cap, no lock on
+  suspend): the gate, not time, bounds it; a process of the same user on the owner node can still read root-only things
+  such as swap, and can delete or restore the state files (a deleted used-ticket set (it also holds the sign counts) lets a
+  captured assertion be presented again, which signs only the exact bodies that assertion approved; a restored `approvers.json` cannot un-revoke a record in a
+  running agent but can re-enrol a revoked approver after a restart: the attacker would need that approver's passkey, so
+  it is a B9-class same-uid residual). (3) An authenticator that always reports a sign count of zero gives the agent no counter, so replay protection for it rests
+  on the used-ticket set alone, which prunes at 24 h (the pending lifetime of a ticket). (3b) What the phone shows is what the approval page renders; the agent binds only
+  the hashes (design B9 residual). (4) A delegation lets a same-uid process on the owner node sign inside its scope
+  without a tap, by design (David approves each one). (5) The agent trusts the `rpId` and origin it was started with; a
+  renamed MagicDNS name kills every passkey (break-glass, then re-enrol). A plan is still a statement, not an authority:
+  the agent, not the plan, is the gate.
 
 - **`hv`'s code is in several files (3.1).** The body of `hv` runs from `hivemind/parts/*.py`, chosen by one list,
   `PARTS`, in `hv` itself (no glob, no config, nothing under `HIVE_HOME`), read as bytes and run into `hv`'s own

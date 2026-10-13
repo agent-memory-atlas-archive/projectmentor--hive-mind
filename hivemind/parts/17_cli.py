@@ -509,7 +509,8 @@ def _dispatch(args):
     elif args.command == "join":
         join_cmd(args)
     elif args.command == "config":
-        _plan_or_run(args, "config set", lambda: config_cmd(args))
+        _plan_or_run(args, "config set" if args.config_action == "set"
+                     else f"config {args.config_action} set", lambda: config_cmd(args))
     elif args.command == "discover":
         discover_cmd(args)
     elif args.command == "nudge":
