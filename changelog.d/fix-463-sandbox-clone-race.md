@@ -1,0 +1,1 @@
+- Tests: the update-script `Sandbox` fixture no longer races git's detached background maintenance when it clones its bare remote (it disables `maintenance.auto`/`gc.auto` on the sandbox repo and clones with `--no-local`), which made `Sign release manifest` fail intermittently (#463).
