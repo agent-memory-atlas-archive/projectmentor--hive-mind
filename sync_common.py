@@ -132,6 +132,22 @@ def atomic_write_text(path, text):
         raise
 
 
+def update_peers_file(updates, path=None):
+    """The one writer of node keys in `.peers.json` (`hv sync auth`, `config node set`): read the file as it is (a
+    missing or unreadable one counts as empty), set `updates`, keep every other key, write it back atomically as
+    `json.dumps(cfg, indent=2)` plus a newline. Returns the path written."""
+    path = Path(path) if path else hive_home() / ".peers.json"
+    try:
+        cfg = json.loads(path.read_text()) if path.exists() else {}
+    except Exception:
+        cfg = {}
+    if not isinstance(cfg, dict):
+        cfg = {}
+    cfg.update(updates)
+    atomic_write_text(path, json.dumps(cfg, indent=2) + "\n")
+    return path
+
+
 def peers_path():
     """The .peers.json that load_peers() reads: HIVE_HOME's, else the repo root's; None if neither
     exists. `hv doctor --fix` rewrites this same file (#7)."""

@@ -167,6 +167,7 @@ NOT_JOURNAL = {
         ("hive_modules.py", "config_value_problem"): "a manifest `config_schema` entry's value type (`string`, `int`, `bool`, `enum`)",
         ("hive_modules.py", "_check_config_entry"): "a manifest `config_schema` entry's value type (`string`, `int`, `bool`, `enum`)",
         ("hive_modules.py", "_prompt"): "a manifest `config_schema` entry's value type (`enum` lists its values in the prompt)",
+        ("hv", "_node_coerce"): "a `NODE_KEYS` row's value type (`int`, `list`, `str`), not an entry's type",
     },
     "kind": {
         ("hv", "_wire_one"): "a cell's kind (`agent` or `tool`), which `hv wire` dispatches on",

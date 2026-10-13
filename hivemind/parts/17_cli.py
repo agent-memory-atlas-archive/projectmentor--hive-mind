@@ -317,6 +317,9 @@ def build_parser(plane="data"):
         config_set.add_argument("key", help="a governed key, e.g. cap_self, importance_self_cap, capsule_putters "
                                             "(an unknown key lists them all)")
         config_set.add_argument("value", help="numeric value")
+        config_set.add_argument("--non-interactive", action="store_true",
+                                help="never ask for the owner passphrase or read stdin: exit 5 when the agent is "
+                                     "absent, locked or refuses")
     # canonical: identity (this device's key) + confidence (owner-signed hive params)
     config_id = config_sub.add_parser("identity", help="Show or mint this device's identity key")
     config_id_sub = config_id.add_subparsers(dest="config_identity_action")
@@ -327,6 +330,16 @@ def build_parser(plane="data"):
     for _name, _help in (("schema", "Print the governed and node-local key tables (types, defaults, ranges)"),
                          ("show", "Print every governed key's value, source and who set it last")):
         config_sub.add_parser(_name, help=_help).add_argument("--json", action="store_true", help="machine-readable output")
+    config_node = config_sub.add_parser("node", help="Node-local keys of .peers.json (port, bind, sync_auth, ...): no owner key")
+    config_node_sub = config_node.add_subparsers(dest="config_node_action")
+    for _name, _help in (("list", "every node key with its value and source"), ("get", "one node key"),
+                         ("set", "set one node key (the daemon re-reads at restart)")):
+        _p = config_node_sub.add_parser(_name, help=_help)
+        if _name != "list":
+            _p.add_argument("key", help="port | bind | sync_auth | sync_auth_outbound | dashboard_viewers | dashboard_viewer_port")
+        if _name == "set":
+            _p.add_argument("value")
+        _p.add_argument("--json", action="store_true", help="machine-readable output")
     if control:
         config_conf = config_sub.add_parser("confidence", help="Set an owner-signed confidence parameter")
         config_conf_sub = config_conf.add_subparsers(dest="config_confidence_action")

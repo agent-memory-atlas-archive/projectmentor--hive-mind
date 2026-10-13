@@ -65,9 +65,17 @@ cd ~/projects/hive-mind
 hv config identity announce            # publish this device's key as a signed journal entry
 hv config identity show                # this device's device_id + pubkey
 hv config identity init [--force]      # mint a device key (fresh install)
+hv config node list|get <key>|set <key> <value> [--json]   # 4.0: the node-local keys of .peers.json, no owner key
 hv config schema [--json]              # 4.0: the governed and node-local key tables (type, default, range or choices)
 hv config show [--json]                # 4.0: every governed key's value, source and who set it last (`set_by`), plus the `governance` block
 ```
+
+`config node` reads and writes the node-local keys (`port`, `bind`, `sync_auth`, `sync_auth_outbound`, `dashboard_viewers`,
+`dashboard_viewer_port`) with the same writer `hv sync auth` uses, so every other key in `.peers.json` is kept; an
+environment override (`HIVE_BIND`, `HIVE_SYNC_AUTH`, `HIVE_SYNC_AUTH_OUTBOUND`) shows as `source: env` with its value masked,
+and the daemon re-reads the file at restart. `hive-mind config set <key> <value> --non-interactive` never asks for the
+owner passphrase and never reads stdin: when the unlock agent is absent, locked or refuses the act it exits 5 with nothing
+signed (a passphrase in `$HIVE_OWNER_KEY_PASSPHRASE` is not a prompt).
 
 `config schema` and `config show` are reads (any device). `config show --json` is `{schema: 1, governed: [{id, value,
 default, source: "default"|"fleet", set_by: {device_id, ts, sid}|null}], governance: {owner_id, admitted: [{device_id,
@@ -1374,10 +1382,12 @@ hive-mind module install <name> [--from <repo>] [--publisher KEY] [--principal P
                           [--non-interactive] [--json] [--require-healthy]       # (3.1) the idempotent form of add/update
 hive-mind module remove <name>
 hive-mind module update <name> [--from <repo>] [--publisher KEY] [--require-healthy] [--set ...] [--set-fleet ...] [--set-env ...] [--non-interactive]
-hive-mind module list
+hive-mind module list [--json]                                   # (4.0) --json: {schema: 1, modules: [{name, version, publisher, signature, service, device, trust, quota_use, problem, config_schema}]}
 hive-mind module check <dir> [--run] [--deny TERM] [--json]       # (3.1)
-hive-mind module config <name> set <key> [<value>] [--fleet | --fleet-node DEVICE] [--stdin | --file PATH] | unset <key> | list [--merged] | get <key> | validate   # get, validate, --fleet*, --stdin: (3.1)
-                          # list, get, validate take --json
+hive-mind module config <name> set <key> [<value>] [--fleet | --fleet-node DEVICE] [--stdin | --file PATH] | unset <key> | list [--merged] | get <key> | validate | schema   # get, validate, --fleet*, --stdin: (3.1); schema, --non-interactive: (4.0)
+                          # list, get, validate take --json; schema prints the installed manifest's config_schema block as JSON
+                          # set --non-interactive: never ask for the owner passphrase or read stdin to unlock; exit 5 when the unlock agent is absent,
+                          #   locked or would not sign the act (a --fleet / --fleet-node value; a node value needs no key and is unchanged)
                           # a secret key (token, password, ...) is never taken from argv: --stdin, --file PATH or a hidden prompt
 hive-mind module quota <name> [--per-hour N] [--per-day N] [--entry-bytes N] [--lifetime N]
 hive-mind module run <name> [--] <args>...             # (3.1) the module's cli command, without its launcher
