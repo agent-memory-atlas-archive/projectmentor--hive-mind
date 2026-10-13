@@ -1,5 +1,5 @@
 {
-  "digest": "db24d705396bbd7304c7cc2042ba03c7a16451e62b44255f7bbccf209c92998b",
+  "digest": "032096d8198d8d9cd15bc069f52f1e9ffe7827192f5e6c0dc7b2fa90f21c2f52",
   "files": {
     ".github/FUNDING.yml": "ca6c63d7539bb7d2f809b5068781c78de97c028a44c5ae252b11bc1695caf85d",
     ".github/ISSUE_TEMPLATE/bug_report.yml": "22df51b1e51c25f50726392c79811116b88c40370843ff2d4a3e76b643f1cb68",
@@ -10,7 +10,7 @@
     ".github/workflows/ci.yml": "5fad713bdf671c5c5049ede62cd55c75cdd8dd7a47fd711c0cf2b334c1beccd7",
     ".github/workflows/cla.yml": "09e9c23c9183758cf86ccf10ed8975b3660bd59c8e90846866c96ac723a7e40f",
     ".github/workflows/sign.yml": "ce497aa2a81d7218813774ba4a0f4defa21516ef60b9dafa42140d2184237c67",
-    "CHANGELOG.md": "f1147eebb8520645644962a85c7e188301eb7ed4844e32dab040bc853f910c86",
+    "CHANGELOG.md": "70f27765b2781d80050f331509281e9d9e75567a5147d3eef29bbaf831e9b7b0",
     "CLA.md": "78a00158ab3090dbb1a4de6ed03b150f22b5a0e99bcbba139a6244728780cc7b",
     "CONTRIBUTING.md": "5e7a2d6ef107fa22275447bc82f4dd037e4b4a2ec64d29bdd6134fe46ae1b1e3",
     "README.md": "aa423306773603da1901dbebe32b7bf7c051b44edde70a019fdde33c67f889ef",
@@ -18,24 +18,6 @@
     "advisories.json": "e1f7246819257c9cdcb8118aaee972ed89f22fb056d67230320d5ea7fdce6703",
     "cells/example-tool.json": "1ef1bb649f6805631bb6c20940baefb4a4bd867122b2c9e9b565c69aac30f060",
     "chacha20poly1305.py": "6c3bb50dc126dab128184280b4d11cb1494800651e97aea941a821f31ff012fd",
-    "changelog.d/admit-device-field.md": "7dba7ab32e6881b8e0cc4d0d259b6adf89648b4ddf23685549cd3f0365ebef3e",
-    "changelog.d/atomic-peers-key.md": "f77da26d1b02651f7b48fa412514ad3fb2020867b01a26447ae4b90a3714965b",
-    "changelog.d/docs-419-3.1-followups.md": "f9d12ab2cea30a4b08486a9f9886d22db5a11fcbdf7ca01626488736a6dae67c",
-    "changelog.d/docs-hcns-threat-model.md": "3062c020aceda2af62fd410c54e0243beb493d724d81b3318570eeae13e9815b",
-    "changelog.d/fix-ck3-key-dir-pointer.md": "48f82469a1d084b5b00aa9e29d0310527577e8f6c215f6e437f5485cdcb6ebab",
-    "changelog.d/fix-gm10-nonobject-gov.md": "4adca64ed275e241fac0949263aa748eb1eaff06eec507641a334b2194f755f5",
-    "changelog.d/implementer-integration-slice-c.md": "608548891beadd76c3955035694e7587b75cad13d0cacd22e34616f1881af3b1",
-    "changelog.d/implementer2-ck7-small-order-keys.md": "f346da65fa46b423cfd4daf05e1ce78c39fedb3eed7fd58d4b96249a7f6b692f",
-    "changelog.d/implementer2-integration-slice-a.md": "58dc0da4d13e70a228238c574178aee4150251e3d95fecd14f60e3dae8a39b7a",
-    "changelog.d/implementer2-integration-slice-e.md": "0627ed49de568d8f1f27880c3f64c755ce0300b2ac8dd596c2c5f248a9f0081f",
-    "changelog.d/implementer2-integration-slice-g.md": "881fdf5d87164e2773cca938ed1baa096f81dd5233d27ceb2971219e514a6175",
-    "changelog.d/implementer3-b10-passphrase-never-daemon.md": "355be728356a7662d21e113fed0e85ed05cf4ff0d0c96e5eb0aacadf45087537",
-    "changelog.d/implementer3-ci01-cla-least-privilege.md": "107a33298cedf1e1050c6604bc2fc0451d3bbba145b84d760c40a8f69598c274",
-    "changelog.d/implementer3-fix-hook-python-isolated.md": "0fd5e5e677d25a9606d94ca1175821497dc2f1ebd1b39b1cfdba763c63d7923c",
-    "changelog.d/implementer3-integration-slice-b.md": "0fd4e7897e37c88ef46b27e5c4a0f5032e41ff4e7c801248c8c9175d6c5fc47f",
-    "changelog.d/implementer3-sn12-ck6-http.md": "0a694b25d065b05d351657d242ed56c3c6e8f981cdba43756a1c34a575346c0f",
-    "changelog.d/implementer3-sn14-genesis-pin.md": "ec8b8855ad840f88c3eadb91a86819159fda7e62cf9b71a49c3aaa53f3607915",
-    "changelog.d/sec-57-confined-units.md": "0649ec6957b087c0403eb30f4e96b35695d2f7396e2b39b56705dc4915dde102",
     "commandmap.py": "e2b88825cd5e37e16fed082cf6c8dc736b9edffea31c51d997db2d6ac6e47498",
     "config/.peers.json.example": "e81eb4533b4e06969946a8fa1c977e0692bc047275101bcdbae1504355866674",
     "config/nudge.env.example": "b278edb191f6588316383f5c095f6332fc3ccaf695c595dccd9b21c4322d5cf3",
@@ -304,6 +286,6 @@
     "vocabulary.py": "3a6977fc89573561e6248748db90379acc810ff183556e220ce6bf1b2c0d0d3b",
     "x25519.py": "ec1967595a2306cde860afe4dffab40a3f833d089de6caf5c9c080df8fd45726"
   },
-  "sequence": 625,
+  "sequence": 627,
   "version": "3.1"
 }
