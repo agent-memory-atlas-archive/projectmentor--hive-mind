@@ -73,7 +73,6 @@ def test_a_session_that_exited_before_the_service_died_is_not_relaunched(hwatch_
     assert _settled(hw)
 
 
-@pytest.mark.xfail(strict=True, reason="hwatch-dev#94: a draining service never reaps a session that exited, so it waits out stop_grace")
 def test_a_graceful_restart_waits_for_the_session_and_gives_one_session(hwatch_node, fakegh, pr):
     hw = hwatch_node
     _addressed(hw, fakegh, pr)
