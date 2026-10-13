@@ -2,7 +2,7 @@
 without coreutils). The hook is best-effort and non-blocking: it exits 0, still records telemetry (here: still calls the
 module through `hive-mind module run hwatch`), and keeps the child bounded at 12 s. On Linux the test strips both from PATH.
 
-Red on main until hive-mind#440 / private#121 merges: `timeout 12 ...` is "command not found" there, `|| true` hides it, and
+Red on main until the `timeout`/`gtimeout` fallback of hive-mind#440 (merged into release/4.0) is ported to main: `timeout 12 ...` is "command not found" there, `|| true` hides it, and
 the telemetry call is silently skipped. strict xfail, so the fix flips this test to a failure that tells us to delete the mark."""
 import json
 import shutil
@@ -17,8 +17,8 @@ from hivefleet import CORE
 HOOK = CORE / "scripts" / "common" / "session_hook.sh"
 TOOLS = ("bash", "python3", "sed", "hostname", "id", "dirname", "env", "sh", "printf", "sleep", "cat", "touch")
 pytestmark = [pytest.mark.integration,
-              pytest.mark.xfail(strict=True, reason="session_hook.sh needs `timeout` until the fix for hive-mind#440 "
-                                                    "(private#121) merges")]
+              pytest.mark.xfail(strict=True, reason="session_hook.sh needs `timeout` until the #440 fallback "
+                                                    "(release/4.0) is ported to main")]
 
 
 def _node_without_timeout(fleet, stub_body):
