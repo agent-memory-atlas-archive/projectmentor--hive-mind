@@ -339,3 +339,28 @@ def test_identity_is_saved_from_and_restored_into_the_key_directory(tmp_path):
     assert (_key_dir(dst) / "device-key").exists()
     assert (dst / ".device-id").read_text().strip() == device_id
     assert _hv(dst, "whoami").stdout.splitlines()[0].split()[1] == device_id
+
+
+# ── SECREV C CK-3: the .key-dir pointer is never resolved relative to the cwd or a home ──────────────
+
+@pytest.mark.parametrize("value", ["keys-here", "./keys", "../keys", "~/keys"])
+def test_a_relative_or_tilde_pointer_is_refused(tmp_path, monkeypatch, value):
+    home = tmp_path / "h"
+    home.mkdir()
+    (home / ".key-dir").write_text(value + "\n")
+    elsewhere = tmp_path / "cwd"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    m = _lib(home, monkeypatch, "hv_ck3_rel")
+    assert m.KEY_DIR.is_absolute() and m.KEY_DIR == m._default_key_dir()
+    assert not (elsewhere / value).exists()
+
+
+def test_a_pointer_to_a_file_is_refused(tmp_path, monkeypatch):
+    home = tmp_path / "h"
+    home.mkdir()
+    f = tmp_path / "afile"
+    f.write_text("x")
+    (home / ".key-dir").write_text(str(f) + "\n")
+    m = _lib(home, monkeypatch, "hv_ck3_file")
+    assert m.KEY_DIR == m._default_key_dir()
