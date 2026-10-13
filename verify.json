@@ -1,5 +1,5 @@
 {
-  "digest": "15e6ba1786bbca4d9fcb112696eaa49f452f56311df1f8d8e296dd58f69e5162",
+  "digest": "8ef4d26aa16246e66d4f54be450c037a00f6fc85ed379b1e33cdfe533f97f5ed",
   "files": {
     ".github/FUNDING.yml": "ca6c63d7539bb7d2f809b5068781c78de97c028a44c5ae252b11bc1695caf85d",
     ".github/ISSUE_TEMPLATE/bug_report.yml": "22df51b1e51c25f50726392c79811116b88c40370843ff2d4a3e76b643f1cb68",
@@ -7,7 +7,7 @@
     ".github/dependabot.yml": "42652acf58277a489b63308f8f32e68ec5b8ef14a1e422e0fee22c73f85defe3",
     ".github/pull_request_template.md": "64c9099d2857119c8d471c6cc6f7982232bdc4e4263a7a357a21ee58b433c054",
     ".github/workflows/ci-macos.yml": "ac535ec2bc1fc2ae69c2a039044122e713ef9094e60212b397d94fa63e3f1265",
-    ".github/workflows/ci.yml": "fb3dcaa8a9ed6583f4e2a738fd915ed744c7970144f0334d8197c13f6ca5f228",
+    ".github/workflows/ci.yml": "94f0a39c8dc55f43ca66320a9aa2dddc47cabe108e9c14f70fe5948db7ad8ad0",
     ".github/workflows/cla.yml": "09e9c23c9183758cf86ccf10ed8975b3660bd59c8e90846866c96ac723a7e40f",
     ".github/workflows/sign.yml": "ce497aa2a81d7218813774ba4a0f4defa21516ef60b9dafa42140d2184237c67",
     "CHANGELOG.md": "f1147eebb8520645644962a85c7e188301eb7ed4844e32dab040bc853f910c86",
@@ -22,6 +22,7 @@
     "changelog.d/atomic-peers-key.md": "f77da26d1b02651f7b48fa412514ad3fb2020867b01a26447ae4b90a3714965b",
     "changelog.d/docs-419-3.1-followups.md": "f9d12ab2cea30a4b08486a9f9886d22db5a11fcbdf7ca01626488736a6dae67c",
     "changelog.d/docs-hcns-threat-model.md": "3062c020aceda2af62fd410c54e0243beb493d724d81b3318570eeae13e9815b",
+    "changelog.d/implementer2-integration-slice-a.md": "58dc0da4d13e70a228238c574178aee4150251e3d95fecd14f60e3dae8a39b7a",
     "changelog.d/implementer3-b10-passphrase-never-daemon.md": "355be728356a7662d21e113fed0e85ed05cf4ff0d0c96e5eb0aacadf45087537",
     "changelog.d/implementer3-ci01-cla-least-privilege.md": "107a33298cedf1e1050c6604bc2fc0451d3bbba145b84d760c40a8f69598c274",
     "changelog.d/implementer3-sn12-ck6-http.md": "0a694b25d065b05d351657d242ed56c3c6e8f981cdba43756a1c34a575346c0f",
@@ -126,8 +127,13 @@
     "tests/_planes.py": "6fc6b2ade955de836479967f00af2fccd81971c56c6a3df01fb9745bacf62c6a",
     "tests/_realhome.py": "cf33f6e9945d14bd355c4e251b7750772a804b1f35e896660c362b7c3a7b6cfc",
     "tests/_source.py": "734792ca579c14555ec08b9e1e9110a8f2f252c8ef2b9e5f7e6cbcfe65f509bf",
-    "tests/conftest.py": "4f57d7937c82118093007be3dd5bde7fafdf5ecc994d0b5c7c04950aaf962411",
+    "tests/conftest.py": "64b160fda96d56df6d2f25d04dd7fd003d6e68c4c34f005311dd89350d39518a",
     "tests/forget_corpus.py": "3cc8ae3de17926bb01412f9066ec570297a3ec1cd17bddb614f90010925f5ccb",
+    "tests/integration/__init__.py": "b7a6377fdfea1642b468a1ebe278a13ae21c1dd2580086ac0ddea0452ade32ce",
+    "tests/integration/conftest.py": "f071b5be00404efa880f72c6abdd6ef53c7f2a2ebf50013807d92eb68e788fb4",
+    "tests/integration/hivefleet/__init__.py": "24d467d44b09ff07caf8f8210685625a1912f88c891cd30ab80e6baeade3f865",
+    "tests/integration/test_hivefleet.py": "93d6810c63802a06b015776e266557beb4a65e00ec80b17c7e627dec7b971901",
+    "tests/integration/test_s6_session_hook_no_timeout.py": "45302af4d7912ccddb921d709ad0b75206544ab5946ee39e1c57ba3565a8f3fd",
     "tests/oracles/content_evidence_2_4.py": "5672bb990072f1233ac3d8d88b9695dbcfd085c6847efb709d777eeddf43dcab",
     "tests/oracles/init_db_2_4.py": "e65a93cfd1adb97bab71cb051b4ba98b61d49c78f34ce6076d013f44fb7b742e",
     "tests/oracles/persist_entity_2_4.py": "2749043a2d7385f2e2cb6d91f4f50646448dfbd9fb543168c62b035d49d8b2e1",
@@ -274,6 +280,6 @@
     "vocabulary.py": "3a6977fc89573561e6248748db90379acc810ff183556e220ce6bf1b2c0d0d3b",
     "x25519.py": "ec1967595a2306cde860afe4dffab40a3f833d089de6caf5c9c080df8fd45726"
   },
-  "sequence": 600,
+  "sequence": 604,
   "version": "3.1"
 }
