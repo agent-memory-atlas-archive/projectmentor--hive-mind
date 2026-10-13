@@ -38,7 +38,7 @@ PARTS_DIR = PROJECT / "hivemind" / "parts"
 SIZE_CAP = 1500          # lines per part (the plan's acceptance: files a reviewer can hold)
 # The names pyflakes cannot see in the single-file form: placeholders the control plane binds at install time
 # (`hivemind_ctl.install`) and `unforget`, resolved at run time. Nothing else may be undefined.
-EXPECTED_UNDEFINED = {"admit_cmd", "unforget", "migrate_cmd"}
+EXPECTED_UNDEFINED = {"admit_cmd", "unforget", "migrate_cmd", "plan_verb"}
 
 
 def _load(root, name):

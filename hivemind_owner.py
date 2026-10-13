@@ -15,6 +15,8 @@ library name, so importing this file on its own is harmless, but calling anythin
 `install` is not supported.
 """
 
+import contextlib
+import hashlib
 import base64          # noqa: F401  (the moved bodies use the library's names; these are this file's own)
 import os              # noqa: F401
 
@@ -422,9 +424,63 @@ def _heal_genesis_pin(entries, dry):
 
 # ---- governance: every owner-signed act -----------------------------------------------------------------
 
+# ---- --plan --json: the bodies a verb would sign, signing nothing (owner approval slice A0) --------------
+
+_PLAN = None            # a list while a verb is being planned: `_append_governance` records into it instead of signing
+
+
+class PlanRefused(Exception):
+    """The verb cannot be planned (no owner declared here, or a body would carry a secret): nothing is printed."""
+
+
+def _plan_owner_pub():
+    """The governance owner's public key (raw bytes): what `signer.public_key()` is for a signer of the owner's key.
+    A plan needs no seed, so it never unlocks, prompts or reaches the agent."""
+    pub = _governance_state(merkle.read_all_entries(JOURNAL_DIR)).get("owner_pub")
+    try:
+        raw = base64.b64decode(pub or "", validate=True)
+    except Exception:
+        raw = b""
+    if len(raw) != 32:
+        raise PlanRefused("no governance owner is declared here: plan on the owner machine")
+    return raw
+
+
+def _plan_record(action_payload):
+    """Record the exact canonical body `_sign_governance_payload` would sign for `action_payload`."""
+    body, canonical = ownerkey.governance_body(action_payload, _plan_owner_pub())
+    _PLAN.append({"act": body.get("action"), "body": body, "canonical": canonical.decode(),
+                  "sha256": hashlib.sha256(canonical).hexdigest()})
+
+
+def plan_verb(verb, fn, replay=None):
+    """Run `fn()` (an owner verb's body) in plan mode and print `{schema, verb, bodies, replay}` as JSON. Every
+    `_append_governance` inside records its canonical body and signs and writes nothing; the verb's own output goes to
+    stderr so stdout is the JSON alone. `replay` is a callable returning the extra argv that fixes what the verb minted
+    or derived (the executor appends it, so the run produces the same bodies). A refusal exits as the verb does."""
+    global _PLAN
+    if _PLAN is not None:
+        raise RuntimeError("plan mode does not nest")
+    _PLAN = []
+    try:
+        with contextlib.redirect_stdout(sys.stderr):
+            fn()
+        bodies = list(_PLAN)
+    except PlanRefused as e:
+        print(f"{verb}: cannot plan: {e}", file=sys.stderr)
+        sys.exit(1)
+    finally:
+        _PLAN = None
+    print(json.dumps({"schema": 1, "verb": verb, "bodies": bodies,
+                      "replay": {"extra_argv": list(replay() if replay else [])}}, indent=1, sort_keys=True))
+
+
 def _append_governance(action_payload):
     """Owner-sign and append a governance entry, then rebuild so confidence reflects it. Requires
     the owner key on this device. Returns the entry, or None if this device isn't the owner."""
+    if _PLAN is not None:
+        _plan_record(action_payload)
+        return {"planned": True}
     sg = _owner_signer()
     if sg is None:
         print("This device does not hold the owner key — run governance commands on the owner machine.")
@@ -1118,8 +1174,8 @@ def admit_cmd(args):
         sys.exit(1)           # no owner key here: the message is already printed, and no act was written
     print(f"Admitted {args.device_id}" + (f" (principal: {args.principal})" if args.principal else "")
           + (f" (module: {module}; it does not vote)" if module else ""))
-    if module:
-        return          # a module has no join-request and no sync address: no reciprocal peer
+    if module or _PLAN is not None:
+        return          # a module has no join-request and no sync address: no reciprocal peer; a plan writes nothing
     url = _join_request_url(args.device_id)
     if _add_peer(url, args.principal or args.device_id, args.device_id):
         print("  + reciprocal peer added from its join-request URL — the owner now syncs to "

@@ -327,6 +327,16 @@ at once). Concretely:
   shortest `--for` that fits; unlock with `--module <name>` for an install; keep swap encrypted; lock before
   hibernating; do not unlock on a machine that runs code you do not trust. `HIVE_OWNER_KEY_PASSPHRASE` is ignored by
   `owner unlock`. Windows has no agent yet.
+- **`--plan --json` on the owner verbs (4.0, owner approval slice A0, #475).** `config set`, `group admit|revoke`,
+  `module add|remove` and `module config set --fleet|--fleet-node` print the canonical governance bodies they would sign
+  (`ownerkey.governance_body`, the function `sign_governance` itself uses, so a plan and a signature cannot drift) and
+  sign and write nothing: no unlock, prompt, agent call, journal entry or peer. It adds no signing path, no wire byte and
+  no journal format; the plan needs only the owner's public key, which every node holds. A plan is a statement, not an
+  authority: nothing here binds the later run to it (that is the gated agent, slice A1, which compares the hash). A plan
+  never carries a secret (`--stdin`, `--file` and secret keys are refused). `module add --plan` leaves the module's device
+  key (a device key, not owner material, mode 0600 in the 0700 key dir) so the real run can take its id over with
+  `--device-id`. An abandoned plan leaves that key, and a real add without `--device-id` then refuses; remove
+  `<key dir>/modules/<name>` by hand.
 
 - **`hv`'s code is in several files (3.1).** The body of `hv` runs from `hivemind/parts/*.py`, chosen by one list,
   `PARTS`, in `hv` itself (no glob, no config, nothing under `HIVE_HOME`), read as bytes and run into `hv`'s own
