@@ -169,3 +169,26 @@ def test_session_hook_still_runs_the_module_where_timeout_is_missing(tmp_path):
     r = _hook(env, "start")
     assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
     assert log.read_text().split()[:3] == ["module", "run", "hwatch"]
+
+
+@pytest.mark.parametrize("no_timeout", [False, True])
+def test_session_hook_never_imports_a_module_planted_in_the_session_cwd(tmp_path, no_timeout):
+    """The hook runs in whatever project the session opened: a json.py / subprocess.py there must not run."""
+    import shutil
+    env, log = _env(tmp_path, installed=True, rc=0)
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    for name in ("bash", "python3", "sed", "hostname", "id", "dirname", "env", "sh", "printf") + (("timeout",) if not no_timeout else ()):
+        found = shutil.which(name)
+        if found:
+            (tools / name).symlink_to(found)
+    env["PATH"] = f"{tmp_path / 'bin'}:{tools}"
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    marker = tmp_path / "planted-ran.txt"
+    for mod in ("json", "subprocess"):
+        (proj / f"{mod}.py").write_text(f"open({str(marker)!r}, 'a').write({mod!r})\n")
+    r = subprocess.run(["bash", str(HOOK), "start"], env=env, cwd=proj, input="{}", capture_output=True, text=True)
+    assert r.returncode == 0
+    assert not marker.exists()
+    assert log.read_text().split()[:3] == ["module", "run", "hwatch"]

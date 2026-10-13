@@ -29,7 +29,8 @@ fi
 
 # Pull cwd + session id out of the hook's stdin JSON (best-effort; python3 is
 # always present since hv itself is python). Two lines so a cwd with spaces is safe.
-parsed=$(python3 -c 'import sys, json
+# python3 runs with -I: the session cwd is an arbitrary project directory and must never supply a module.
+parsed=$(python3 -I -c 'import sys, json
 try:
     d = json.load(sys.stdin)
     print(d.get("cwd", ""))
@@ -52,7 +53,7 @@ if command -v timeout >/dev/null 2>&1; then
 elif command -v gtimeout >/dev/null 2>&1; then
     cap() { gtimeout 12 "$@"; }
 else
-    cap() { python3 -c 'import subprocess, sys
+    cap() { python3 -I -c 'import subprocess, sys
 try:
     sys.exit(subprocess.run(sys.argv[1:], timeout=12).returncode)
 except Exception:
