@@ -51,4 +51,4 @@ def test_every_documented_hv_config_verb_exists():
 
 def test_removed_commands_are_named_with_their_replacements():
     text = (PROJECT / "docs" / "MODULES.md").read_text()
-    assert "Removed in 4.0" in text and "`hdash dash`" in text and "`hwatch telemetry`" in text
+    assert "are removed in 4.0" in text and "`hdash dash`" in text and "`hwatch telemetry`" in text

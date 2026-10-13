@@ -393,14 +393,14 @@ hive-mind module config <name> set <key> <value> --fleet|--fleet-node <device> -
   is absent, locked or refuses the act, nothing is signed and the exit status is **5**.
 - Every refusal of `hive-mind config set` exits 1 (it exited 0 before 4.0).
 
-## Removed in 4.0: `hv dash` and `hv telemetry`
+## `hv dash` and `hv telemetry` are removed in 4.0
 
 Both exit 2 with one line naming the module command that replaced them, whatever arguments follow, and run nothing:
 
-| Removed | Use |
+| Command | Use instead |
 |---|---|
-| `hv dash` | `hdash dash` ([hdash](#hdash)) |
-| `hv telemetry` | `hwatch telemetry` ([hwatch](#hwatch)) |
+| `hv dash` was removed | `hdash dash` ([hdash](#hdash)) |
+| `hv telemetry` was removed | `hwatch telemetry` ([hwatch](#hwatch)) |
 
 ## Not in 4.0
 
