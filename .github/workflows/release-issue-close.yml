@@ -1,0 +1,41 @@
+name: Close issues on release-branch merge
+# GitHub closes an issue from `Closes #N` only when the PR merges into the default branch. Feature work
+# merges into release/*, so this workflow closes the issues such a PR names (hive-mind#460).
+#
+# Why this is safe (CI-01 class; it holds a write scope): the trigger is plain `pull_request`, so a fork PR
+# gets a read-only token and the job simply cannot close anything. The PR title and body reach the script
+# only through `env:`; no `${{ github.event.pull_request.* }}` is interpolated into a `run:` script. The one
+# checkout is of the BASE branch (reviewed code already merged), never the PR head, with credentials not
+# persisted and only scripts/ci present. Do not add a checkout of the head, or a `run:` that interpolates
+# PR text; a change that must do so has to be reviewed as a security change.
+on:
+  pull_request:
+    types: [closed]
+    branches: ['release/**']
+
+permissions: {}
+
+jobs:
+  close-issues:
+    if: github.event.pull_request.merged == true
+    permissions:
+      contents: read        # fetch scripts/ci from the base branch
+      issues: write         # close the named issues
+      pull-requests: read   # look up whether a number is a PR
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.ref }}
+          sparse-checkout: scripts/ci
+          persist-credentials: false
+      - name: Close referenced issues
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+        run: python3 -I scripts/ci/release_issue_close.py
