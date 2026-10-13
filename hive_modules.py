@@ -651,6 +651,11 @@ def _confirm_publisher(manifest, expected, pinned=None):
 
 # ── the owner steps ─────────────────────────────────────────────────────────────────────────────────
 
+def _planning(lib):
+    """Whether a `--plan --json` run is recording bodies instead of signing them."""
+    return getattr(lib, "_PLAN", None) is not None
+
+
 def _gov(lib):
     import merkle
     return lib._governance_state(merkle.read_all_entries(lib.JOURNAL_DIR))
@@ -663,6 +668,8 @@ def _require_owner(lib, acts=(), prompt=True):
     `prompt=False` (`module install --non-interactive|--json`) a key that would need a prompt is `OwnerLocked`."""
     if not lib._owner_key_exists():
         raise ModuleError("this device does not hold the owner key: run module commands on the owner machine")
+    if _planning(lib):
+        return              # `--plan --json` signs nothing: no unlock, no prompt, no agent
     if not prompt and not lib._owner_usable_quietly(acts):
         raise OwnerLocked("the owner key is locked: run `hive-mind owner unlock`, then install again")
     if not lib._owner_gate(acts):
@@ -1672,6 +1679,8 @@ def store_fleet(lib, name, key, value, spec, tag=None):
     full = f"x-{name}:" + (f"node.{tag}.{key}" if tag else key)
     if _gov(lib)["module_config"].get(full) == value:
         return False
+    if _planning(lib) and ((spec and spec.get("secret")) or (spec is None and _is_secret_key(key))):
+        raise ModuleError(f"{key} is a secret: a plan prints the value, so it cannot be planned; set it on the owner machine")
     if spec and spec.get("identifying"):
         print(f"note: {key} is marked identifying; a fleet value is journaled and visible to every admitted device "
               "for good", file=sys.stderr)
@@ -1679,7 +1688,7 @@ def store_fleet(lib, name, key, value, spec, tag=None):
         lib._config_set(full, value)
     except SystemExit:
         pass
-    if _gov(lib)["module_config"].get(full) != value:
+    if not _planning(lib) and _gov(lib)["module_config"].get(full) != value:
         raise ModuleError(f"{full} was not stored (the owner key is locked or the entry was refused)")
     return True
 
@@ -1695,6 +1704,8 @@ def store_fleet_values(lib, name, schema, fleet_vals):
 
 def _config_value_arg(args, key, spec):
     secret = bool(spec and spec.get("secret")) or (spec is None and _is_secret_key(key))
+    if getattr(args, "plan", False) and (getattr(args, "stdin", False) or getattr(args, "file", None)):
+        raise ModuleError("--plan prints the value it would sign: give it as an argument, not with --stdin or --file")
     if getattr(args, "stdin", False) and getattr(args, "file", None):
         raise ModuleError("give the value with --stdin or --file, not both")
     if getattr(args, "stdin", False):
@@ -1863,12 +1874,14 @@ def cmd_add(lib, args):
         _confirm_publisher(manifest, args.publisher)
         plan = contract_plan(name, manifest, state)
         node_vals, fleet_vals = install_config(lib, args, manifest, owner=True)
+        if _planning(lib):
+            return _plan_add(lib, args, name, principal, manifest, fleet_vals)
         root.mkdir(parents=True, exist_ok=True)
         os.chmod(root, 0o700)
         staging = root / f".{name}.staging"
         try:
             _stage(src, manifest, staging)
-            device_id, _pub = lib.mint_module_key(name)
+            device_id = _module_key(lib, name, getattr(args, "device_id", None))
         except (ModuleError, FileExistsError, OSError, ValueError, RuntimeError) as e:
             shutil.rmtree(staging, ignore_errors=True)
             raise ModuleError(str(e))
@@ -1902,6 +1915,46 @@ def cmd_add(lib, args):
              if manifest.get("service") else "no service")
           + (f" ({note})" if note else "") + "; hooks: " + (", ".join(manifest.get("hooks") or []) or "none"))
     return _healthy_rc(args, doctor_after(lib, name, "install"))
+
+
+def _key_device_id(lib, name):
+    """The device id of module `name`'s key in the key dir, or None if there is none or it is unreadable."""
+    key = Path(lib._ensure_key_dir()) / "modules" / name / "device-key"
+    try:
+        return lib._device_id_for_pub(ed25519.pub_from_seed(base64.b64decode(key.read_text().strip())))
+    except Exception:
+        return None
+
+
+def _module_key(lib, name, given):
+    """The module's device id: a fresh key, or with `--device-id` (a plan's replay) the key the plan minted, which
+    must be there and must be the one that id names."""
+    if not given:
+        return lib.mint_module_key(name)[0]
+    if _key_device_id(lib, name) != given:
+        raise ModuleError(f"--device-id {given}: no module key of that id is here (run `module add {name} --plan --json` again)")
+    return given
+
+
+def _plan_add(lib, args, name, principal, manifest, fleet_vals):
+    """`module add --plan --json`: the bodies the add would sign (the module's admit, then each `--set-fleet` value) and
+    the argv that makes the real run produce the same ones. The one minted field, the module's device id, comes from a
+    module key this mints (or finds, from an earlier plan) in the key dir: it is a device key, not owner material, and
+    the real run takes it over with `--device-id`. Nothing is staged, installed or signed."""
+    given = getattr(args, "device_id", None)
+    try:
+        device_id = given and _module_key(lib, name, given) or _key_device_id(lib, name) or lib.mint_module_key(name)[0]
+    except (FileExistsError, OSError, ValueError, RuntimeError) as e:
+        raise ModuleError(str(e))
+    args._replay = ["--device-id", device_id] + ([] if args.principal else ["--principal", principal])
+    try:
+        lib.admit_cmd(argparse.Namespace(device_id=device_id, principal=principal, module=name))
+    except SystemExit:
+        raise ModuleError("the owner could not admit the module's device: nothing to plan")
+    try:
+        store_fleet_values(lib, name, manifest["config_schema"], fleet_vals)
+    except ModuleError as e:
+        raise ModuleError(str(e).split(". Set it with")[0])
 
 
 def _healthy_rc(args, worst):
@@ -1944,6 +1997,8 @@ def cmd_remove(lib, args):
     _require_owner(lib, [("revoke", device_id)] if _device_state(lib, device_id) == "admitted" else [])
     if _device_state(lib, device_id) == "admitted":
         lib._group_change("revoke", device_id)
+    if _planning(lib):
+        return
     if _device_state(lib, device_id) == "admitted":
         raise ModuleError("the owner could not revoke the module's device: nothing removed")
     remove_units(args.name)                       # stop it before its files and key go
@@ -2888,9 +2943,14 @@ def build_parser():
     a.add_argument("--abort", action="store_true", help="drop a staged add that is waiting for the owner's admit")
     a.add_argument("--publisher", help="the publisher key you checked (base64); pins it without a prompt")
     a.add_argument("--principal", help="the operator's principal for the module's device (default: this device's)")
+    a.add_argument("--device-id", help="the device id a `--plan --json` run minted (the executor passes it): use that key, mint none")
+    a.add_argument("--plan", action="store_true", help="print the exact canonical governance bodies this would sign, and sign nothing (needs --json)")
+    a.add_argument("--json", action="store_true", help="with --plan: print the plan as JSON")
     _install_flags(a)
     r = sub.add_parser("remove", help="revoke the module's device and delete it (its entries stay in the journal)")
     r.add_argument("name")
+    r.add_argument("--plan", action="store_true", help="print the exact canonical governance bodies this would sign, and sign nothing (needs --json)")
+    r.add_argument("--json", action="store_true", help="with --plan: print the plan as JSON")
     u = sub.add_parser("update", help="re-verify and swap atomically; the publisher key must match the pin")
     u.add_argument("name")
     u.add_argument("--from", dest="source", help="a different repository (default: where it came from)")
@@ -2924,7 +2984,8 @@ def build_parser():
     c.add_argument("--fleet", action="store_true", help="the fleet value: owner-signed, journaled, seen by every admitted device")
     c.add_argument("--fleet-node", metavar="DEVICE", help="the value for one device (k1:<16 hex>): owner-signed, journaled")
     c.add_argument("--merged", action="store_true", help="a module without a config_schema: list/get across the layers too")
-    c.add_argument("--json", action="store_true", help="list, get and validate print JSON (a secret is masked)")
+    c.add_argument("--json", action="store_true", help="list, get and validate print JSON (a secret is masked); with --plan, the plan")
+    c.add_argument("--plan", action="store_true", help="set --fleet|--fleet-node: print the exact canonical governance body this would sign, and sign nothing (needs --json)")
     c.add_argument("--stdin", action="store_true", help="set: read the value from standard input (the way to give a secret in a script)")
     c.add_argument("--file", metavar="PATH", help="set: read the value from a file (the way to give a secret in a script)")
     c.add_argument("--non-interactive", action="store_true", help="set: never ask for the owner passphrase and never read stdin to unlock: exit 5 when the unlock agent is absent, locked or would not sign the act")
@@ -2971,7 +3032,23 @@ def main(lib, argv):
         if extra is not None or (takes_key and args.key is None):
             print(f"hive-mind module: config {args.action} takes the wrong arguments", file=sys.stderr)
             return 2
+    plan = getattr(args, "plan", False)
+    if plan and (not args.json or (args.verb == "config" and not (args.action == "set" and (args.fleet or args.fleet_node)))):
+        print("hive-mind module: --plan needs --json, and on `config` applies to `set --fleet|--fleet-node`", file=sys.stderr)
+        return 2
+    if plan and not lib._owner_key_exists():
+        print("hive-mind module: --plan needs the owner key: plan on the owner machine", file=sys.stderr)
+        return 2
+    if getattr(args, "device_id", None) and not lib._owner_key_exists():
+        print("hive-mind module: --device-id replays a plan and needs the owner key", file=sys.stderr)
+        return 2
     try:
+        if plan:
+            args.non_interactive = True          # the executor has no terminal; a plan never asks
+            args._replay = []
+            lib.plan_verb("module config set" if args.verb == "config" else f"module {args.verb}",
+                                     lambda: VERBS[args.verb](lib, args), replay=lambda: args._replay)
+            return 0
         rc = VERBS[args.verb](lib, args)
         return (rc or 0) if args.verb in ("check", "config", "run", "status", "add", "update", "install") else 0
     except OwnerLocked as e:

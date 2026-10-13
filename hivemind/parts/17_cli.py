@@ -2,6 +2,23 @@
 # CLI
 # --------------------------------------------------------------------------
 
+def _add_plan_flags(parser):
+    """`--plan --json` on an owner verb a ticket can carry: print the canonical bodies it would sign, sign nothing."""
+    parser.add_argument("--plan", action="store_true",
+                        help="print the exact canonical governance bodies this would sign, and sign nothing (needs --json)")
+    parser.add_argument("--json", action="store_true", help="with --plan: print the plan as JSON on stdout")
+
+
+def _plan_or_run(args, verb, fn):
+    """Run `fn`, or with `--plan` print its plan (owner approval slice A0). `--plan` without `--json` is a usage error."""
+    if not getattr(args, "plan", False):
+        return fn()
+    if not getattr(args, "json", False):
+        print(f"{verb}: --plan prints JSON: add --json", file=sys.stderr)
+        sys.exit(2)
+    return plan_verb(verb, fn)
+
+
 def build_parser(plane="data"):
     """The command line. `plane="data"` is `hv`: it has no owner-signed verb and no owner flag, so a command
     that lives on the control plane is argparse's own unknown command (exit 2, nothing written). `plane="control"`
@@ -275,6 +292,7 @@ def build_parser(plane="data"):
         admit_parser.add_argument("device_id", nargs="?", help="The peer's device_id (k1:…). Omit to list devices awaiting admission")
         admit_parser.add_argument("--principal", help="Tag the person or agent who owns this device")
         admit_parser.add_argument("--module", help="Mark the device as module NAME's (2.1): it never votes in an election")
+        _add_plan_flags(admit_parser)
 
         migrate_parser = subparsers.add_parser("migrate", help="Owner only: one-time migrations (3.0): `migrate forget`")
         migrate_sub = migrate_parser.add_subparsers(dest="migrate_action", required=True)
@@ -289,8 +307,10 @@ def build_parser(plane="data"):
         g_admit.add_argument("device_id", nargs="?", help="The peer's device_id (k1:…). Omit to list pending")
         g_admit.add_argument("--principal", help="Tag the person or agent who owns this device")
         g_admit.add_argument("--module", help="Mark the device as module NAME's (2.1): it never votes in an election")
+        _add_plan_flags(g_admit)
         g_revoke = group_sub.add_parser("revoke", help="Un-admit a device (reversible) → returns to STERILE")
         g_revoke.add_argument("device_id")
+        _add_plan_flags(g_revoke)
         g_deny = group_sub.add_parser("deny", help="Reject a pending join-request (a later admit overrides)")
         g_deny.add_argument("device_id")
         g_change = group_sub.add_parser("change", help="Re-tag a device's principal (admission unchanged)")
@@ -320,6 +340,7 @@ def build_parser(plane="data"):
         config_set.add_argument("--non-interactive", action="store_true",
                                 help="never ask for the owner passphrase or read stdin: exit 5 when the agent is "
                                      "absent, locked or refuses")
+        _add_plan_flags(config_set)
     # canonical: identity (this device's key) + confidence (owner-signed hive params)
     config_id = config_sub.add_parser("identity", help="Show or mint this device's identity key")
     config_id_sub = config_id.add_subparsers(dest="config_identity_action")
@@ -347,11 +368,13 @@ def build_parser(plane="data"):
         config_conf_set.add_argument("key", help="e.g. same_device_lambda, cap_self, introspect_support_weight, "
                                                  "importance_self_cap, halflife_fact (an unknown key lists them all)")
         config_conf_set.add_argument("value", help="numeric value")
+        _add_plan_flags(config_conf_set)
         config_quorum = config_sub.add_parser("quorum", help="Set an owner-signed quorum-election parameter")
         config_quorum_sub = config_quorum.add_subparsers(dest="config_quorum_action")
         config_quorum_set = config_quorum_sub.add_parser("set", help="Set quorum_m, quorum_by or dead_man_days")
         config_quorum_set.add_argument("key", help="quorum_m | quorum_by | dead_man_days")
         config_quorum_set.add_argument("value", help="value (quorum_m=int, quorum_by=device|principal, dead_man_days=float)")
+        _add_plan_flags(config_quorum_set)
 
     discover_parser = subparsers.add_parser("discover", help="Scan the tailnet for hives (Tailscale + /hive/info probe)")
     discover_parser.add_argument("--format", choices=["text", "json"], default="text")
@@ -476,17 +499,17 @@ def _dispatch(args):
     elif args.command == "owner":
         owner_cmd(args)
     elif args.command == "admit":
-        admit_cmd(args)
+        _plan_or_run(args, "group admit", lambda: admit_cmd(args))
     elif args.command == "migrate":
         return migrate_cmd(args)
     elif args.command == "group" and args.group_action == "retire":
         group_retire_cmd(args)
     elif args.command == "group":
-        group_cmd(args)
+        _plan_or_run(args, f"group {args.group_action}", lambda: group_cmd(args))
     elif args.command == "join":
         join_cmd(args)
     elif args.command == "config":
-        config_cmd(args)
+        _plan_or_run(args, "config set", lambda: config_cmd(args))
     elif args.command == "discover":
         discover_cmd(args)
     elif args.command == "nudge":

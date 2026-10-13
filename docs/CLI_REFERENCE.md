@@ -643,6 +643,29 @@ changes nothing — not admission, not purge, not link authority.
 hv peers
 ```
 
+### `--plan --json` — what an owner verb would sign *(4.0, owner approval slice A0)*
+
+```
+hive-mind config set <key> <value> --plan --json           # also config confidence|quorum set
+hive-mind group admit <device_id> [--principal P] [--module M] --plan --json     # also the `admit` alias
+hive-mind group revoke <device_id> --plan --json
+hive-mind module add <name> --from <repo> ... --plan --json
+hive-mind module remove <name> --plan --json
+hive-mind module config <name> set <key> <value> --fleet | --fleet-node DEVICE --plan --json
+hive-mind module add <name> ... --device-id <id>           # replay of a plan: use the module key the plan minted
+```
+
+`--plan` prints `{schema: 1, verb, bodies: [{act, body, canonical, sha256}], replay: {extra_argv}}` on stdout and signs
+and writes nothing: no unlock, no passphrase prompt, no agent call, no journal entry, no peer. `canonical` is the exact
+byte string the owner signature would cover (`body` is the same object, `owner_pub` included, `owner_sig` not) and
+`sha256` is its hash; the real run signs those bytes. `--plan` needs `--json`, and the owner key on this device. A verb that
+would refuse (an unknown key, a bad value, an unknown device) exits as it does without `--plan` and prints no plan; one with
+nothing to sign (the value is already set, the device is not admitted) prints `bodies: []`. The verb's own messages go to
+stderr. A secret value, and `--stdin`/`--file`, cannot be planned: the plan would print the value. `module add --plan`
+mints the module's device key in the key dir (a device key, not owner material) and puts its id in `replay.extra_argv`
+(`--device-id`, and `--principal` when it was derived); a second plan reuses that key, and the real run takes it over. Run the
+verb with the argv plus `replay.extra_argv` to sign the same bodies. `quota` has no signed body and is not planned.
+
 ### `hv group` and `hive-mind group` — Membership lifecycle
 
 By default any device can corroborate. Once you have an owner, only **admitted**

@@ -1,0 +1,1 @@
+- `hive-mind config set`, `group admit|revoke`, `module add|remove` and `module config set --fleet|--fleet-node` take `--plan --json`: it prints the exact canonical governance bodies the verb would sign (the same bytes the real run signs, minted fields fixed, replay argv included) and signs and writes nothing. Owner approval slice A0 (#475).
