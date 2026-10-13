@@ -552,6 +552,17 @@ at once). Concretely:
   access could still reference it. Only an admitted party (a repository writer) can do that; accepted for
   3.x. `SIGN_APP_ID` and `SIGN_APP_KEY` are read from the `signing` Environment once added there, and from
   the repository until then. Operator rule: keep write access to the repository to the people who may sign.
+- **The integration tests sign fixture modules with a throwaway publisher (`tests/integration/hivefleet/publisher.py`).**
+  The publisher's Ed25519 seed is made from `os.urandom` when the test starts and lives only in that process: it is
+  never written to a file, an environment variable or a command line, and the real publisher seed is never read or
+  used. The public key is pinned (`module add --publisher`) only in the `.modules.json` of the test node that
+  installed the fixture, under the run's temp directory; it is not in any genesis, and a second test node does not
+  trust it by default. Tests assert that the seed (raw, base64, hex) appears in no file the run wrote, that the key
+  is absent from the other test node and from the real account's hive, identity stash and key directories, and the
+  fixture's real-account guard fails the test if anything outside the node directories changed. The residual is a
+  test run that deliberately pins the throwaway key in a real hive by hand, which needs that operator's own
+  `--publisher` and owner key (an admitted party). Operator rule: never run `pytest -m integration` with `HIVE_HOME`,
+  `HOME` or `HIVE_IDENTITY_STASH` pointed at a hive you use; the harness sets its own and ignores yours.
 - **Credentials handed to a cell run in the operator's uid.** A tool cell's secrets travel in the child
   environment, not the command line. Any process with the operator's uid can read `/proc/<pid>/environ`,
   ptrace the shell or run `hv capsule get`; that is the design. A secret is inherited by every grandchild,

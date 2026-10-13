@@ -1,0 +1,1 @@
+- Tests: a throwaway in-memory test publisher, `module add` of a signed fixture module, and scenario S3 for fixtures (install, check, doctor, remove, and the documented refusals), with assertions that the publisher's seed and key stay out of every non-test hive; a THREAT_MODEL note on test isolation.
