@@ -555,6 +555,17 @@ at once). Concretely:
   access could still reference it. Only an admitted party (a repository writer) can do that; accepted for
   3.x. `SIGN_APP_ID` and `SIGN_APP_KEY` are read from the `signing` Environment once added there, and from
   the repository until then. Operator rule: keep write access to the repository to the people who may sign.
+- **The integration tests sign fixture modules with a throwaway publisher (`tests/integration/hivefleet/publisher.py`).**
+  The publisher's Ed25519 seed is made from `os.urandom` when the test starts and lives only in that process: it is
+  never written to a file, an environment variable or a command line, and the real publisher seed is never read or
+  used. The public key is pinned (`module add --publisher`) only in the `.modules.json` of the test node that
+  installed the fixture, under the run's temp directory; it is not in any genesis, and a second test node does not
+  trust it by default. Tests assert that the seed (raw, base64, hex) appears in no file the run wrote, that the key
+  is absent from the other test node and from the real account's hive, identity stash and key directories, and the
+  fixture's real-account guard fails the test if anything outside the node directories changed. The residual is a
+  test run that deliberately pins the throwaway key in a real hive by hand, which needs that operator's own
+  `--publisher` and owner key (an admitted party). Operator rule: never run `pytest -m integration` with `HIVE_HOME`,
+  `HOME` or `HIVE_IDENTITY_STASH` pointed at a hive you use; the harness sets its own and ignores yours.
 - **Credentials handed to a cell run in the operator's uid.** A tool cell's secrets travel in the child
   environment, not the command line. Any process with the operator's uid can read `/proc/<pid>/environ`,
   ptrace the shell or run `hv capsule get`; that is the design. A secret is inherited by every grandchild,
@@ -629,6 +640,31 @@ viewer port only through the tailnet front end on its own HTTPS port, never enab
 hdash's operator port and the daemon's port range (`hdash doctor` checks all three). A viewer is a tailnet login, not an admitted
 device: it is served the dashboard's read-only subset and nothing of sync.
 
+### A module listener on the tailnet (`hcns`, optional module)
+
+The `hcns` module (an ephemeral event bus; not part of the base) adds one listener when installed. These lines state
+what it changes; the module ships its own threat model with the bounds.
+
+- **A module listener on the tailnet.** Port `x-hcns:port` on the node's tailnet address serves signed
+  `GET /events` streams and nothing else to admitted devices, and proves itself to each subscriber with a responder
+  signature in the stream's first frame. It reads the hive through `/v1` and never writes it, and holds no owner
+  material. Its manifest is `trust: confined`.
+- **Residual, admitted device only, accepted for 3.x and 4.x.** `/v1/peers` does not say which module device is which
+  node's hcns, and the envelope's `node` field is the origin's own claim. An admitted hcns key may therefore say
+  "this happened on node N" for any N, publish any event about its own node, and flood within its bucket. It cannot
+  forge another `origin`, which is bound to the proved responder of the stream it arrived on. The worst case is an
+  early look at a durable source, one sync pass at most every 15 s for the node, or a wasted wake inside hwatch's
+  budget; never a decision, because consumers act on the source, not on the event. Operator rule: revoke the device;
+  a revoked device's open stream ends at the next good admission read, within 5 minutes.
+- **Presence disclosure.** Admitted devices learn which nodes run hcns and when they come and go.
+- **Local processes (B9).** Any process of the operator's own user can publish, subscribe and, through
+  `hcns wait --wake`, be woken or cause a wake inside the allowlist and budgets. Operator rule as for seats: run no
+  code you do not trust as the operator on a node that runs seats.
+- **Nothing on the bus is journaled, synced, searched or weighed, and an event is never evidence.** The bus carries no
+  body, so a public comment cannot reach a seat through it.
+- **Operator rule: admit the genesis device** (`hive-mind admit <its device id>` on the owner node). `owner init` does
+  not, and without it that node has no row in `/v1/peers`, so no peer dials it.
+
 ## Seat steering (agent seats driven by GitHub and the hive)
 
 A seat is an agent session that the runner wakes on a GitHub event or a hive entry. Text a seat reads can steer
@@ -683,6 +719,12 @@ second login or collaborator admitted by the gate. Tracked in hive-mind-private 
   the fleet for good, since ingest keeps the first copy of a `(node_id, seq)` and `sig` is inside the entry
   hash. No forgery was possible. The cofactorless equation stays, since RFC 8032 permits it. A node that
   has not updated to v2.0.3 still accepts malleated copies, so update every node.
+- **Small-order keys (3.1.x, CK-7).** `verify` also refuses a public key of small order (the identity and the
+  seven other points of order dividing 8), and `_canon_pub` will not take one as an owner key. Such a key
+  verified a signature nobody had made: for the identity key, `R = identity, S = 0` verified for every
+  message. A node that has not updated still accepts them, so a mixed fleet can disagree about such an
+  entry until every node updates. Keys with a torsion component but not of small order are not refused: the
+  cofactorless equation stays (RFC 8032), and an honest key is never one.
 - **Signer seam (3.1).** Every signature core makes (journal entries, owner governance, Hive-Auth envelopes,
   hello proofs) goes through `hivemind/crypto/signer.py`, and `tests/test_signer_seam.py` fails on a call to
   `ed25519.sign` anywhere else in core. Callers hold `sign(bytes)`, never the seed. With the one backend

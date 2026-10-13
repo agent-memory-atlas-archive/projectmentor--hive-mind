@@ -569,8 +569,9 @@ def _self_signed_owner_acts(entries):
     byte-identical to the pre-pin behaviour on every node."""
     out = [e for e in entries
            if e.get("type") == "governance"
-           and (e.get("payload") or {}).get("action") == "owner"
-           and _verify_governance(e.get("payload") or {}) == (e.get("payload") or {}).get("owner_id")]
+           and isinstance(e.get("payload"), dict)   # a non-object payload carries no act (SECREV C GM-10)
+           and e["payload"].get("action") == "owner"
+           and _verify_governance(e["payload"]) == e["payload"].get("owner_id")]
     out.sort(key=lambda e: (e.get("timestamp", ""), str(e.get("node_id", "")), e.get("seq", 0)))
     return out
 

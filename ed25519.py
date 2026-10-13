@@ -18,6 +18,14 @@ with `h` never reduced below the group order. `sign` is unchanged and byte-ident
 `tests/test_ed25519.py` checks both against the frozen reference in `tests/_ed25519_reference.py`.
 Any further narrowing is a consensus change: a separate, versioned decision.
 
+SMALL-ORDER KEYS (CK-7). Since v3.1.1 `verify` also refuses a public key A of small order (the identity and the
+seven other points of order dividing 8). For such an A, [h]A takes one of at most eight values, so a signature
+(R, S=0) verifies for a fraction of all messages with no secret at all (for the identity, for every message).
+No honest key is small-order (a derived key is [a]B with a a multiple of 8 plus 2**254, of order l), so this
+narrows the accept set only for keys nobody can hold. A node older than this release still accepts them, so
+`is_small_order` is also exported for the places that admit a key. Keys with a torsion component but not small
+order are not refused here.
+
 NOT SIDE-CHANNEL HARDENED (neither was the reference): Python big-integer arithmetic is not constant time,
 so do not sign on hardware whose timing an attacker can measure closely.
 
@@ -154,6 +162,15 @@ def _decodepoint(s):
     return (x, y, 1, x * y % _q)
 
 
+def is_small_order(pub):
+    """True iff `pub` is 32 bytes decoding to a point of order dividing 8 (including the identity). Anything
+    that does not decode as a canonical point is not 'small order' here: `verify` refuses it on its own."""
+    try:
+        return _pt_eq(_pt_dbl(_pt_dbl(_pt_dbl(_decodepoint(bytes(pub))))), _ZERO)
+    except Exception:
+        return False
+
+
 def _secret_scalar(seed):
     h = hashlib.sha512(seed).digest()
     a = (int.from_bytes(h[:32], "little") & ((1 << 254) - 8)) | (1 << 254)
@@ -187,6 +204,8 @@ def verify(message, sig, pub):
         sig, pub = bytes(sig), bytes(pub)
         R = _decodepoint(sig[:32])
         A = _decodepoint(pub)
+        if _pt_eq(_pt_dbl(_pt_dbl(_pt_dbl(A))), _ZERO):        # CK-7: small-order key
+            return False
         S = int.from_bytes(sig[32:], "little")
         if S >= _l:                                            # RFC 8032 §5.1.7
             return False

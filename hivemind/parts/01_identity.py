@@ -21,15 +21,39 @@ def _default_key_dir():
 def _resolve_key_dir():
     env = os.environ.get("HIVE_KEY_DIR")
     if env:
-        return Path(env).expanduser()
+        return Path(os.path.abspath(Path(env).expanduser()))
     try:
         if KEY_DIR_POINTER.exists():
             recorded = KEY_DIR_POINTER.read_text().strip()
             if recorded:
-                return Path(recorded)
+                d = _checked_pointer_dir(recorded)
+                if d is not None:
+                    return d
     except OSError:
         pass
     return _default_key_dir()
+
+
+def _checked_pointer_dir(recorded):
+    """The directory a `.key-dir` pointer names, or None (with a stderr line) if it is refused. The pointer
+    is written absolute by _ensure_key_dir, so a relative or `~` value is never resolved against the cwd or
+    a home directory (SECREV C CK-3); an existing target must be a directory this user owns."""
+    why = None
+    if not os.path.isabs(recorded):
+        why = "is not an absolute path"
+    else:
+        try:
+            st = os.stat(recorded)
+            if not stat.S_ISDIR(st.st_mode):
+                why = "is not a directory"
+            elif hasattr(os, "geteuid") and st.st_uid != os.geteuid():
+                why = "is not owned by this user"
+        except OSError:
+            pass  # not created yet: _ensure_key_dir makes it 0700
+    if why is None:
+        return Path(recorded)
+    print(f"hv: ignoring {KEY_DIR_POINTER}: {recorded!r} {why}; using the default key directory.", file=sys.stderr)
+    return None
 
 
 def _effective_key_path(name, legacy):
@@ -324,7 +348,9 @@ def _canon_pub(b64):
     regardless of base64 whitespace/padding differences."""
     try:
         raw = base64.b64decode(b64)
-        return base64.b64encode(raw).decode() if len(raw) == 32 else None
+        if len(raw) != 32 or (_ed25519 is not None and _ed25519.is_small_order(raw)):
+            return None                  # CK-7: a small-order key verifies messages nobody signed
+        return base64.b64encode(raw).decode()
     except Exception:
         return None
 

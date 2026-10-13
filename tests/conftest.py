@@ -162,6 +162,21 @@ def isolation(tmp_path_factory, monkeypatch, _service_stub_bin):
     return ns
 
 
+def pytest_configure(config):
+    config.addinivalue_line("markers", "integration: real multi-process tests under tests/integration (run with -m integration; "
+                                       "never part of the default offline run)")
+
+
+def pytest_collection_modifyitems(config, items):
+    """The offline suite stays offline and fast: integration tests run only when -m names `integration`."""
+    if "integration" in (config.getoption("-m") or ""):
+        return
+    kept = [i for i in items if i.get_closest_marker("integration") is None]
+    if len(kept) != len(items):
+        config.hook.pytest_deselected(items=[i for i in items if i not in kept])
+        items[:] = kept
+
+
 def pytest_unconfigure(config):
     shutil.rmtree(SANDBOX_HIVE, ignore_errors=True)
     shutil.rmtree(SANDBOX_HOME, ignore_errors=True)
