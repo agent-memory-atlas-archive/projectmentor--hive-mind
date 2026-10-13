@@ -1,0 +1,1 @@
+- Docs: README Modules section and `docs/MODULES.md` brought to module contract 1 and the 4.0 release (trust model, `trust`, config schema, `module install`, the 4.0 config verbs, the removed `hv dash` and `hv telemetry`, the four modules, a contract-1 worked example), with a doc-sync test for the commands they show (#296).

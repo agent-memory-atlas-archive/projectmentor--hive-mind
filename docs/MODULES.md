@@ -1,11 +1,11 @@
 # Modules: developer guide
 
-Contract **2.3**. This is how you write, sign, and install a HiveMind module today. The
+Module contract **1** (manifest field `contract: 1`, core 3.1), as of the **4.0** release. This is how you write, sign, and install a HiveMind module today. The
 route-by-route API is [`MODULE_API.md`](MODULE_API.md). The names a module may introduce are
 [`NAMESPACES.md`](NAMESPACES.md). The verbs are [`CLI_REFERENCE.md`](CLI_REFERENCE.md#hive-mind-module--install-and-manage-modules-21-linux-only).
 
-A one-command, platform-independent install, extra supervisor backends, and dashboard UX are
-[planned](#planned). Documented here is what 2.3 ships.
+Modules run on Linux with a user systemd manager. Documented here is what 4.0 ships; what it does not do is under
+[Not in 4.0](#not-in-40).
 
 ## What a module is
 
@@ -15,8 +15,9 @@ device as a module under the operator's principal. The module reaches the hive o
 loopback `/v1` API, never through the owner key. It reads the hive, and writes `fact`, `decision`,
 `idea`, `entity` and `link` entries that it signs itself; the core verifies, gates and appends them.
 
-Install with `hive-mind module install <name> --from <repo>` (3.1; the idempotent form, with fixed exit codes and `--json`,
-see `docs/CLI_REFERENCE.md`) or its 3.0 form `hive-mind module add`. There is no `hv module`.
+Install with `hive-mind module install <name> --from <repo>`: one idempotent command that installs, updates or
+leaves alone, with fixed exit codes and `--json` (see [`CLI_REFERENCE.md`](CLI_REFERENCE.md#hive-mind-module--install-and-manage-modules-21-linux-only)).
+`hive-mind module add` is its older, non-idempotent form. There is no `hv module`.
 
 ## Trust model
 
@@ -263,7 +264,7 @@ signed `set-config` in the journal. The module reads the projected keys on `GET 
 
 ## Install, update, remove
 
-Platform check first. 2.3 supports modules on **Linux with a user systemd manager** only.
+Platform check first. Modules are supported on **Linux with a user systemd manager** only.
 Elsewhere `add` says `module management is not supported on this platform yet (2.1 ships on Linux
 only)` and exits non-zero before it fetches, mints or installs anything. Termux is refused too.
 
@@ -280,9 +281,10 @@ hive-mind module add <name> --from <repo> [--publisher KEY] [--principal P]
 hive-mind module add --abort <name>
 hive-mind module update <name> [--from <repo>]
 hive-mind module remove <name>
-hive-mind module list
+hive-mind module list [--json]                                     # (4.0) --json
 hive-mind module check <dir> [--run] [--deny TERM] [--json]       # (3.1)
-hive-mind module config <name> set <key> <value> | unset <key> | list
+hive-mind module config <name> set <key> <value> | unset <key> | list | get <key> | validate | schema
+hive-mind module run <name> [--] <args>... | status <name> [--json] | runtime <name> <program> <dir> | trust <name> [confined|trusted]
 hive-mind module quota <name> [--per-hour N] [--per-day N] [--entry-bytes N] [--lifetime N]
 ```
 
@@ -323,62 +325,95 @@ prompt): that update fails as in step 3, and `hive-mind module update <name> --s
 signed manifest **fails**. An absent or stopped unit, a revoked device, missing config, a down
 listener and quota past 80% **warn**.
 
-## hwatch
+## The four modules
 
-**hwatch** is the first module. It watches GitHub and the hive, routes addressed posts and holds
-to agent seats, and launches those seat sessions. This is a public overview; the module's own
-repository is private.
+hwatch and hcns are public overviews: their repositories are private, so there are no links here and access is on
+request. hconfig and hdash are public.
 
-Install it the same way as any other module, with `hive-mind module add hwatch --from <repo>`.
-Its fleet keys are `x-hwatch:…`, set by the owner. Its per-node keys are
-`hive-mind module config hwatch …`.
+### hwatch
 
-## hwatch telemetry
+**hwatch** is the seat watcher. It watches GitHub and the hive, routes addressed posts and holds to agent seats, and
+launches those seat sessions, so a team of agents picks up the work addressed to it without anyone polling. It runs in
+our own fleet. Its manifest is contract 1 (`min_core` 3.1, a `config_schema`, `cli: hwatch`, `runtimes` for the agent
+programs). Install it as any other module: `hive-mind module install hwatch --from <repo>`. Its fleet keys are
+`x-hwatch:…`, set by the owner; its per-node keys are `hive-mind module config hwatch …`.
 
-Session telemetry is **hwatch's** since 3.1 (`hwatch telemetry record|report|list`). The module declares `cli: hwatch`, so
-the core writes a `hwatch` launcher (§ the `cli` slot) and the session hook calls `hive-mind module run hwatch --
-telemetry record …` (`hv telemetry` was removed in 4.0). It keeps the store core wrote, `$HIVE_HOME/.telemetry/telemetry.db`, so nothing is copied or migrated. A
-node without hwatch records nothing and the hooks stay silent. hwatch's manifest is contract 1 from this release
-(`min_core` 3.1, a `config_schema` for the keys it already knew, no `config` block), so it needs a 3.1 core.
+Session telemetry is hwatch's (`hwatch telemetry record|report|list`). The session hook calls `hive-mind module run
+hwatch -- telemetry record …`; it keeps the store core used to write, `$HIVE_HOME/.telemetry/telemetry.db`, so nothing
+was copied or migrated. A node without hwatch records nothing and the hooks stay silent.
 
-## hconfig
+### hcns
+
+**hcns** is an ephemeral event bus. Processes on one node, and admitted nodes over the tailnet, publish and subscribe to
+short events that say where to look, so a seat or tool learns of a new hive entry within a second instead of on its
+next poll. An event is a reference and a few structured fields; nothing is journaled, and the consumer always reads the
+durable source, so the bus can only make a wake sooner, never replace polling. It is contract 1, `trust: confined`,
+declares `reads` of `overview` and `peers`, and writes nothing to the hive. Its CLI is `hcns` (`serve`, `publish`,
+`wait`, `status`, `doctor`). hwatch uses it as a trigger when it is running and behaves as before when it is not.
+
+### hconfig
 
 **hconfig** is the configuration module ([`projectmentor/hive-mind-config`](https://github.com/projectmentor/hive-mind-config), MIT).
 It is a `cli` module (`hconfig`) with no service, no hooks, no runtimes, `reads: []` and `trust: confined`: one registry of every
 setting a node has (`node:` keys, a module's `x-<module>:` keys, and the governed `core:` keys), each with its schema, merged value,
 source, and who may change it and how. Every verb takes `--json`; the protocol is
 [`docs/CLI.md`](https://github.com/projectmentor/hive-mind-config/blob/main/docs/CLI.md) in that repository, and hdash calls it as a subprocess.
-It reads and writes only through this core's own verbs (`hv config schema|show|node`, `hive-mind module list|config … --json`,
-`module config set --non-interactive`) and holds no key: a signed write is the core's, through the owner-unlock agent, or it
-exits 5 and hconfig reports `owner-locked`. It needs a 4.0 core. hdash needs hconfig; install hconfig first with
-`hive-mind module install hconfig --from https://github.com/projectmentor/hive-mind-config`.
+It reads and writes only through this core's own verbs (the [4.0 config verbs](#config-verbs-added-in-40)) and holds no key: a
+signed write is the core's, through the owner-unlock agent, or it exits 5 and hconfig reports `owner-locked`. It needs a 4.0 core.
+hdash needs hconfig; install hconfig first with `hive-mind module install hconfig --from https://github.com/projectmentor/hive-mind-config`.
 
-## hdash
+### hdash
 
-**hdash** is the dashboard as a module ([`projectmentor/hive-mind-dash`](https://github.com/projectmentor/hive-mind-dash)),
+**hdash** is the read-only dashboard ([`projectmentor/hive-mind-dash`](https://github.com/projectmentor/hive-mind-dash)),
 extracted unchanged from core in 3.1. It is a `service` module (a loopback listener, config key `port`, default 9896)
 with a `cli` (`hdash dash`), and `reads` `overview`, `tags`, `related`, `audit`, `peers` and `verify`. Its `/api/*`
 calls go to the core's signed `/v1` routes, or, for `status`, `telemetry`, `entities` and a peer's `?node=` view, to the
-sync daemon's loopback `/api/*`. `hv dash` forwarded to it in 3.1 and was removed in 4.0 (exit 2, naming `hdash dash`); the sync daemon no longer
-serves the page. Install it with `hive-mind module install hdash --from https://github.com/projectmentor/hive-mind-dash`.
+sync daemon's loopback `/api/*`. The sync daemon no longer serves the page. Install it with
+`hive-mind module install hdash --from https://github.com/projectmentor/hive-mind-dash`.
 
-## Planned
+## Config verbs added in 4.0
 
-These are **not** in 2.3:
+These are the core verbs hconfig and hdash are built on; any module or script may use them.
 
-- One idempotent, platform-independent install command, extra supervisor backends (launchd,
-  Windows), and dashboard UX for install / admit / configure:
-  [Standard module install + configuration (#294)](https://github.com/projectmentor/hive-mind/issues/294).
-- One owner-key unlock per session, and batch-signed config so an install does not prompt for
-  the passphrase on every command:
-  [Owner key: one unlock per session, batch-signed config (#295)](https://github.com/projectmentor/hive-mind/issues/295).
+```
+hv config schema [--json]                         # the governed (set-config) and node-local key tables: type, default, range
+hv config show [--json]                           # each governed key's value, source, and set_by (device_id, ts, sid)
+hv config node list|get <key>|set <key> <value> [--json]   # node-local keys of .peers.json; no owner key
+hive-mind module list --json
+hive-mind module config <name> schema             # the installed manifest's config_schema as JSON
+hive-mind config set ... --non-interactive
+hive-mind module config <name> set <key> <value> --fleet|--fleet-node <device> --non-interactive
+```
 
-Until those land, the verbs and the two-step C6 path above are the contract.
+- `hv config schema` and `show` are read-only. `show` adds an operator-only `governance` block.
+- `config node` reads and writes `port`, `bind`, `sync_auth`, `sync_auth_outbound`, `dashboard_share`,
+  `dashboard_viewers` and `dashboard_viewer_port`. They are never a `set-config` and never journaled; an environment
+  override shows as `source: env`, masked. The daemon re-reads them at restart.
+- `--non-interactive` never asks for the owner passphrase and never reads stdin to unlock. When the unlock agent
+  is absent, locked or refuses the act, nothing is signed and the exit status is **5**.
+- Every refusal of `hive-mind config set` exits 1 (it exited 0 before 4.0).
+
+## `hv dash` and `hv telemetry` are removed in 4.0
+
+Both exit 2 with one line naming the module command that replaced them, whatever arguments follow, and run nothing:
+
+| Command | Use instead |
+|---|---|
+| `hv dash` was removed | `hdash dash` ([hdash](#hdash)) |
+| `hv telemetry` was removed | `hwatch telemetry` ([hwatch](#hwatch)) |
+
+## Not in 4.0
+
+- Supervisor backends other than a Linux user systemd manager (launchd, Windows). On other platforms `module add` and
+  `install` say so and change nothing.
+- Raising a module's `trust` above what its publisher signed. A node can only lower a tier.
 
 ## A minimal worked example
 
-A timer module named `pulse` that writes one volatile fact a minute. Copy these files into a git
-repository, sign the manifest, and `hive-mind module add pulse --from <that repo>`.
+A contract-1 timer module named `pulse` that writes one volatile fact a minute, with one typed config key, a
+`status` and a `doctor`. Copy these files into a git repository, sign the manifest, and `hive-mind module install pulse --from <that repo>`.
+It is `trusted` (the default tier) because it imports the reference client from the HiveMind checkout; a module that
+carries its own copy of the client can sign `"trust": "confined"`.
 
 ### `pulse.py`
 
@@ -388,8 +423,15 @@ The unit sets `HIVE_MODULE_KEY_DIR`. The reference client lives in the HiveMind 
 
 ```python
 #!/usr/bin/env python3
-import base64, os, sys
+import base64, json, os, sys
 from pathlib import Path
+
+if sys.argv[1:] == ["status"]:                     # the manifest's `status` argv: print the envelope, exit 0
+    print(json.dumps({"schema": 1, "state": "ok", "version": "0.1.0", "problems": []}))
+    sys.exit(0)
+if sys.argv[1:] == ["doctor"]:                     # the manifest's `doctor` argv: print the answer, exit 0 unless a fail
+    print(json.dumps({"schema": 1, "results": [{"level": "ok", "check": "pulse", "message": "nothing to check"}]}))
+    sys.exit(0)
 
 sys.path.insert(0, os.environ.get("HIVE_HOME", str(Path.home() / "projects" / "hive-mind")))
 import hive_module_client as client
@@ -421,11 +463,14 @@ files = {"pulse.py": hashlib.sha256(body).hexdigest()}
 manifest = {
     "name": "pulse",
     "version": "0.1.0",
-    "min_core": "2.3",
+    "contract": 1,
+    "min_core": "3.1",
     "publisher": base64.b64encode(ed25519.pub_from_seed(seed)).decode(),
     "files": files,
     "service": {"command": ["python3", "-I", "pulse.py"], "restart": "on-failure", "interval": 60},
-    "config": {"note": "pulse"},
+    "status": ["python3", "-I", "pulse.py", "status"],
+    "doctor": ["python3", "-I", "pulse.py", "doctor"],
+    "config_schema": {"note": {"type": "string", "description": "Free text for the operator", "default": "pulse"}},
     "quota": {"per_hour": 60, "per_day": 200},
 }
 raw = json.dumps(manifest, indent=1, sort_keys=True).encode()
@@ -436,14 +481,15 @@ Path("module.json.sig").write_text(base64.b64encode(ed25519.sign(raw, seed)).dec
 Commit `pulse.py`, `module.json` and `module.json.sig`. Then:
 
 ```bash
-hive-mind module add pulse --from /path/to/pulse --publisher '<the base64 publisher key>'
-hive-mind module list
-hive-mind module config pulse list
+hive-mind module check /path/to/pulse --run
+hive-mind module install pulse --from /path/to/pulse --publisher '<the base64 publisher key>'
+hive-mind module status pulse
+hive-mind module config pulse list --merged
 ```
 
-On a member node the first `add` prints the owner's `hive-mind group admit … --module pulse`
-line. Run that on the owner machine, wait until the admit has reached the member, and run the
-same `add` again.
+`install` is idempotent: run it again and it says `nothing to do`. On a member node the first `install` prints the
+owner's `hive-mind group admit … --module pulse` line and exits 3. Run that on the owner machine, wait until the admit
+has reached the member, and run the same `install` again.
 
 A Python module that cannot see the HiveMind checkout copies `hive_module_client.py` plus
 `ed25519.py`, `merkle.py` and `sync_common.py` into its own tree and lists them in `files`. A
