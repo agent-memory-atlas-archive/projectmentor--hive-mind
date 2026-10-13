@@ -118,6 +118,10 @@ class Node:
             log.close()
         return self._procs[service]
 
+    def pid(self, service):
+        p = self._procs.get(service)
+        return p.pid if p is not None else None
+
     def alive(self, service):
         p = self._procs.get(service)
         return p is not None and p.poll() is None
@@ -137,6 +141,16 @@ class Node:
         except subprocess.TimeoutExpired:
             os.killpg(p.pid, signal.SIGKILL)
             return p.wait(timeout=10)
+
+    def signal(self, service, sig):
+        """Signal the service's main process only (not its group), without waiting: `systemctl restart` sends SIGTERM to the main PID."""
+        p = self._procs.get(service)
+        if p is not None and p.poll() is None:
+            p.send_signal(sig)
+
+    def wait(self, service, timeout=30):
+        """The service's exit status once it ends on its own (negative = signal); TimeoutExpired if it does not."""
+        return self._procs[service].wait(timeout=timeout)
 
     def stop(self, service):
         rc = self.kill(service, signal.SIGTERM)

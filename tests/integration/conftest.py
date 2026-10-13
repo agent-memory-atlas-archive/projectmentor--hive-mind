@@ -9,6 +9,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import _realhome                                    # noqa: E402  (tests/_realhome.py)
 from hivefleet import Fleet                          # noqa: E402
+from hivefleet.fakegh import FakeGitHub              # noqa: E402
+from hivefleet.hwatch import TREE as HWATCH_TREE, HwatchNode   # noqa: E402
 from hivefleet.publisher import ThrowawayPublisher   # noqa: E402
 
 
@@ -50,3 +52,20 @@ def fleet(fleet_factory):
 def publisher(tmp_path):
     """A fresh throwaway module publisher whose seed lives in memory only; its fixture repos go under this test's temp dir."""
     return ThrowawayPublisher(tmp_path / "publisher")
+
+
+@pytest.fixture
+def fakegh():
+    """A stateful fake GitHub on loopback; its event log is `fakegh.requests`."""
+    gh = FakeGitHub()
+    yield gh
+    gh.close()
+
+
+@pytest.fixture
+def hwatch_node(fleet, fakegh):
+    """hwatch from `HWATCH_TREE` configured on a fresh node against `fakegh`, seat `implementer` backed by a fake runtime that
+    holds until released. Not started: the test starts it. Skips without a tree (hwatch is a private repository)."""
+    if not HWATCH_TREE:
+        pytest.skip("HWATCH_TREE is not set: hwatch is a private repository; hive-mind-hwatch-dev's CI runs these against its own tree")
+    return HwatchNode(fleet[0], fakegh)
