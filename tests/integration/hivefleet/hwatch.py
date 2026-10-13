@@ -22,6 +22,8 @@ import json, os, sys, time
 d = os.environ["FAKE_SEAT_DIR"]
 if "--version" in sys.argv:
     print("fake-claude 0"); raise SystemExit(0)
+if sys.argv[1:2] in (["auth"], ["models"]):     # hwatch's auth probe (hive-mind-hwatch-dev#100): logged in, not a start
+    raise SystemExit(0)
 prompt = sys.stdin.read()
 n = len([f for f in os.listdir(d) if f.startswith("start-")])
 open(os.path.join(d, "start-%d.json" % n), "w").write(json.dumps({"argv": sys.argv[1:], "pid": os.getpid(), "cwd": os.getcwd(), "prompt": prompt}))
