@@ -1,5 +1,5 @@
 {
-  "digest": "4428fe438ad6444af2d923fa64b9d300ccfe62e530640f0462b3286a2512bbef",
+  "digest": "59850288f153dbe8eec1644a1853bffa0e556080dd241084d85e319b5bcbd144",
   "files": {
     ".github/FUNDING.yml": "ca6c63d7539bb7d2f809b5068781c78de97c028a44c5ae252b11bc1695caf85d",
     ".github/ISSUE_TEMPLATE/bug_report.yml": "22df51b1e51c25f50726392c79811116b88c40370843ff2d4a3e76b643f1cb68",
@@ -147,7 +147,7 @@
     "tests/integration/test_fakegh.py": "57f1710230b0af809ab07ec325076f9da73f9427f74ede8ea6383498841bc4c5",
     "tests/integration/test_g_loopback_sync.py": "6645bd96665c901ab642062e385d6b55c1a156170b8243b9b6f9b5c7c957af08",
     "tests/integration/test_hivefleet.py": "93d6810c63802a06b015776e266557beb4a65e00ec80b17c7e627dec7b971901",
-    "tests/integration/test_s1_restart_exactly_once.py": "c4d971635a9d70641259d417c3e8898989de9f7fd134389ae97e2f3f58d17510",
+    "tests/integration/test_s1_restart_exactly_once.py": "f1c32fcd12155df1a635aba1fc92eab421e86d1090553a88fb762c11b2181677",
     "tests/integration/test_s2_stacked_pr_merge.py": "17fc263ece9302cb7a581346a38a31f1e4def5e7dd72fe5e46aab3254259c7b7",
     "tests/integration/test_s3_module_install_fixture.py": "2831d8d554749d2429f98665853e6c4bb822f2095f0deb39f9e85ea6f55e288a",
     "tests/integration/test_s4_sync_three_nodes.py": "e5edfe2fba0f2a603df7b4ddd16b79d52dc464c2ca115b8f77400b0e1aca7fd1",
@@ -300,6 +300,6 @@
     "vocabulary.py": "3a6977fc89573561e6248748db90379acc810ff183556e220ce6bf1b2c0d0d3b",
     "x25519.py": "ec1967595a2306cde860afe4dffab40a3f833d089de6caf5c9c080df8fd45726"
   },
-  "sequence": 619,
+  "sequence": 621,
   "version": "3.1"
 }
