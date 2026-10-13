@@ -1,0 +1,1 @@
+- Security (SECREV C MCP-01): the MCP server passes `--` before the positional of `hive_remember`, `hive_propose`, `hive_decide`, `hive_retract` and `hive_search`, so a value starting with `-` is never read by `hv` as a flag.
