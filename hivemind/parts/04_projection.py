@@ -492,18 +492,24 @@ def _auto_pin_genesis(entries):
 
 
 def _genesis_pin_lost(entries):
-    """SN-14: True when this device is a MEMBER of the hive its journal shows (it wrote the genesis, or the
-    owner admitted it) and holds no valid pin. Members got there through `owner init` or a join, and both pin,
-    so a member without a pin has lost it (deleted, truncated, restored from a backup)."""
+    """SN-14: True when this device WROTE the genesis its journal shows and holds no valid pin. `owner init`
+    pins as it claims, so a genesis writer without a pin has lost it (deleted, truncated, restored from a backup).
+
+    Membership rests on evidence an outside party cannot put in the journal: the genesis must carry a valid
+    DEVICE signature, which binds its `node_id` to a key only this device holds. A bare `node_id` match, or an
+    `admit` naming us, is something any peer we pull from can write while we are unpinned, so neither counts."""
     if _load_genesis_pin() is not None:
         return False
     gov = _governance_state(entries)
-    return bool(gov.get("owner_id")) and (NODE_ID in gov.get("admitted", set()) or NODE_ID == gov.get("genesis_device"))
+    if not gov.get("owner_id") or NODE_ID != gov.get("genesis_device"):
+        return False
+    return any(e.get("node_id") == NODE_ID and "sig" in e and _verify_entry(e)
+               for e in _self_signed_owner_acts(entries))
 
 
 def _restore_genesis_pin(entries=None):
     """SN-14: re-pin a LOST pin from the genesis in this node's own journal, with no network input: the
-    batch being ingested never reaches this. Only for a member (`_genesis_pin_lost`) and only when the
+    batch being ingested never reaches this. Only for the genesis writer (`_genesis_pin_lost`) and only when the
     journal holds exactly ONE candidate, so a stored rival leaves the choice to the operator. Returns the
     pin it wrote, or None."""
     if entries is None:

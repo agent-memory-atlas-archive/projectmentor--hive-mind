@@ -226,11 +226,13 @@ at once). Concretely:
   pinned serves no journal to a remote caller and accepts no push (403 on `/sync/hello`, `/sync/chunk`
   and `/sync/ingest`; `/hive/info` and `/sync/merkle-root` stay open; loopback is never gated), which
   closes the window in which a joiner could be captured and then relay a rival onward.
-  A member that LOSES its pin (deleted, truncated, restored from an older backup) re-pins itself from its own
+  A genesis writer that LOSES its pin (deleted, truncated, restored from an older backup) re-pins itself from its own
   journal's single genesis at the next ingest or the 15-minute `hv doctor --fix`, never from the batch being
-  ingested, and `hv doctor` reports the `genesis` check as `fail` (LOST) until it has. A member is a device that
-  wrote the genesis or that the owner admitted. A device that was never a member keeps today's rule: the first pin
-  is the operator's act. Residual: a lost pin still leaves a window until the next ingest or doctor run, and two
+  ingested, and `hv doctor` reports the `genesis` check as `fail` (LOST) until it has. The writer is recognised by a genesis
+  carrying this device's own valid signature, never by a `node_id` or an `admit` naming it, because an unpinned
+  node ingests those from whoever it pulls from. An admitted device that loses its pin is not restored
+  automatically: `hv doctor` shows `warn` and the re-pin is the operator's act (`hive-mind owner pin --set`).
+  A device that never wrote the genesis keeps today's rule: the first pin is the operator's act. Residual: a lost pin still leaves a window until the next ingest or doctor run, and two
   stored candidates are never auto-pinned (the operator chooses).
 - **Loopback is trusted by source address, `Host` and, on a POST, a token.** A request from a loopback
   address skips the signed-request gate, so the daemon no longer trusts the address alone: the `Host`

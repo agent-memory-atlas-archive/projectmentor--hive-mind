@@ -267,7 +267,7 @@ def _doctor_status():
             checks.append({"name": "genesis", "status": "fail", "detail": detail})
         elif not g.get("pinned") and _genesis_pin_lost(entries):
             checks.append({"name": "genesis", "status": "fail", "detail": (
-                f"the genesis pin is LOST on this device (it is a member of this hive, and members pin). Until it is "
+                f"the genesis pin is LOST on this device (this device wrote the genesis, and `owner init` pins). Until it is "
                 f"re-pinned another `owner` declaration with an earlier timestamp would replace the owner {g.get('ref')}. "
                 "The next ingest or `hv doctor --fix` re-pins it from this journal; or `hive-mind owner pin --set`")})
         elif not g.get("pinned"):

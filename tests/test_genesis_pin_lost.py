@@ -12,7 +12,8 @@ from test_genesis_pin import (T_BACKDATED, T_GENESIS, _device_key, _gov, _loadhv
 def _genesis_here(hv, key=None):
     """A journal whose single genesis was written by THIS device, and its pin."""
     key = key or _owner_key(hv)
-    g = _owner_act(hv, key, T_GENESIS, nid=hv.NODE_ID)
+    dseed, dpub, hv.NODE_ID = _device_key(hv)                        # this device's own key
+    g = _owner_act(hv, key, T_GENESIS, nid=hv.NODE_ID, dev=(dseed, dpub))
     entries = _on_disk(hv, [g])
     return key, g, entries
 
@@ -38,13 +39,37 @@ def test_a_corrupt_pin_file_counts_as_lost(hv):
     assert hv._restore_genesis_pin(entries) == want
 
 
-def test_an_admitted_device_restores_too(hv):
-    key, dev = _owner_key(hv), _device_key(hv)
-    g = _owner_act(hv, key, T_GENESIS)                              # written elsewhere
+def test_an_admitted_device_is_not_restored(hv):
+    key = _owner_key(hv)
+    g = _owner_act(hv, key, T_GENESIS)
     admit = _gov(hv, {"action": "admit", "device_id": hv.NODE_ID, "principal": "p"}, key[0], key[1],
                  "2026-01-02T00:00:00Z", seq=2)
     entries = _on_disk(hv, [g, admit])
-    assert hv._restore_genesis_pin(entries)["genesis_ref"] == "ownerdev:1"
+    assert not hv._genesis_pin_lost(entries) and hv._restore_genesis_pin(entries) is None
+
+
+def test_network_batch_makes_a_non_member_pin_the_attackers_genesis(hv):
+    assert hv._load_genesis_pin() is None
+    atk = _owner_key(hv)
+    g = _owner_act(hv, atk, T_GENESIS, nid="atkdev")
+    admit = _gov(hv, {"action": "admit", "device_id": hv.NODE_ID, "principal": "p"}, atk[0], atk[1],
+                 "2026-01-02T00:00:00Z", seq=2, nid="atkdev")
+    hv.append_foreign_entries([g, admit])
+    hv.append_foreign_entries([])
+    assert hv._load_genesis_pin() is None
+
+
+def test_a_genesis_signed_by_another_device_is_not_ours(hv):
+    dseed, dpub, did = _device_key(hv)
+    g = _owner_act(hv, _owner_key(hv), T_GENESIS, nid=did, dev=(dseed, dpub))
+    entries = _on_disk(hv, [g])
+    assert not hv._genesis_pin_lost(entries)
+
+
+def test_an_unsigned_genesis_claiming_our_node_id_is_not_ours(hv):
+    g = _owner_act(hv, _owner_key(hv), T_GENESIS, nid=hv.NODE_ID)       # no device signature: anyone can write this
+    entries = _on_disk(hv, [g])
+    assert not hv._genesis_pin_lost(entries) and hv._restore_genesis_pin(entries) is None
 
 
 def test_a_device_that_is_not_a_member_is_never_pinned(hv):
