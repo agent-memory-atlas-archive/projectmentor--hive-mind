@@ -1,0 +1,1 @@
+- Tests: integration slice G adds the macOS platform subset (`integration-subset` in `ci-macos.yml`: S6 and a two-node loopback sync), `tests/integration/test_g_loopback_sync.py`, and the release dogfood checklist `docs/INTEGRATION_DOGFOOD.md`.

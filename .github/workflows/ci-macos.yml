@@ -33,6 +33,8 @@ on:
       - 'scripts/common/sync_smoke.sh'        # the two-daemon smoke hung #159's macOS run (#161)
       - 'scripts/common/_smoke_daemon.sh'
       - 'tests/test_sync.py'
+      - 'tests/integration/**'                # the platform subset below (private docs/design/integration_tests_4x.md §3)
+      - 'scripts/common/session_hook.sh'
       - '.github/workflows/ci.yml'
       - '.github/workflows/ci-macos.yml'
 
@@ -54,6 +56,26 @@ jobs:
         run: pip install -r requirements.txt pytest pytest-xdist==3.8.0 pyflakes==4.0.0
       - name: Run offline test suite
         run: python3 -m pytest -q -n auto   # pytest-xdist: every core (the sign gate runs the same)
+
+  # The integration platform subset (plan §3): only the scenarios whose meaning is platform-specific. S6 is the `timeout`
+  # regression, which exists only where coreutils is absent; sync runs on loopback trust because `lo0` aliases need root (an
+  # admitted-device residual of the harness; the Linux job covers the Hive-Auth path). S1 (restart exactly-once) joins this
+  # list once slice C lands. Add a scenario here only with a boundary, a proof and a failure meaning in the plan.
+  integration-subset:
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest pyflakes==4.0.0
+      - name: Run the macOS integration subset
+        run: |
+          python3 -m pytest -q -m integration -rs \
+            tests/integration/test_s6_session_hook_no_timeout.py \
+            tests/integration/test_g_loopback_sync.py
 
   # macOS-only: exercise the installer/launchd path as far as an ephemeral, headless
   # runner allows. Branch protection requires no check, so a soft step here never blocks
