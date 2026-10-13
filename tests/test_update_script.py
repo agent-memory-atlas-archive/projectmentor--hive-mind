@@ -132,11 +132,17 @@ class Sandbox:
                 (self.src / rel).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(p, self.src / rel)
         _git(tmp, "init", "-q", "-b", "main", str(self.src))
+        # `git commit` spawns a detached `git maintenance run --auto`; with the ~300 loose objects of a
+        # sandbox commit (over its 100 threshold) it repacks and prunes src's loose objects in the
+        # background, while the bare clone below is still hard-linking/copying them (#463: "failed to copy
+        # file to remote.git/objects/..: No such file"). Nothing in the sandbox needs maintenance.
+        _git(self.src, "config", "maintenance.auto", "false")
+        _git(self.src, "config", "gc.auto", "0")
         _git(self.src, "add", "-A")
         (_fix_manifest_digest if fresh_manifest else _stale_manifest_digest)(self.src)
         _git(self.src, "add", "-A")
         _git(self.src, "commit", "-q", "-m", "sandbox base")
-        _git(tmp, "clone", "-q", "--bare", str(self.src), str(self.bare))
+        _git(tmp, "clone", "-q", "--bare", "--no-local", str(self.src), str(self.bare))
         _git(self.src, "remote", "add", "origin", str(self.bare))
         _git(tmp, "clone", "-q", str(self.bare), str(self.hive))
         # HOME with a Claude Code dir, so the updater wires hooks into the sandbox, not the real ~/.claude.
