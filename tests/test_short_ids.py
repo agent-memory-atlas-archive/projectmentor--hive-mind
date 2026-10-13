@@ -211,7 +211,7 @@ def test_retract_by_sid_survives_renumbering_and_a_local_id_is_refused(hive):
     assert r.returncode != 0 and "does not resolve" in r.stderr
     # MCP forwards the sid string unchanged (source-level; the live tool needs the `mcp` package)
     src = (PROJECT / "integrations" / "mcp" / "hive_mcp.py").read_text()
-    assert "def hive_retract(fact_id: str" in src and '["retract", str(fact_id).strip()' in src
+    assert "def hive_retract(fact_id: str" in src and '["retract", "--source", "claude-ai"]' in src and 'args += ["--", str(fact_id).strip()]' in src
     assert "fact_id: str | None = None" in src                          # 2.0: no int, so no local id
 
 
