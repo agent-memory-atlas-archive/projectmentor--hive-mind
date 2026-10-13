@@ -195,7 +195,9 @@ them; a unified entity identity across module and shared entities (3.0, public #
 
 ## Versioning
 
-**4.0** is a MAJOR for the adapter surface (the `hv dash` and `hv telemetry` forwarders are removed, `config set` refusals exit 1, see `AGENT_INTEGRATION.md` §7) and changes nothing a module relies on. `GET /v1/` reports `contract: "4.0"`; `min_core` is a `>=` compare, so a manifest declaring `min_core: 3.x` still installs and runs. No journal, projection, signing or sync format changes (`PROTOCOL_VERSION` stays 3). `CONTRACT_HISTORY.md` has the full entry.
+**4.1** is additive: a `config_schema` entry may carry an optional `help` string (see `MODULES.md`); a module that ships `help` sets `min_core` 4.1, because a 4.0 core refuses the field. `GET /v1/` reports `contract: "4.1"`. `CONTRACT_HISTORY.md` has the entry.
+
+**4.0** is a MAJOR for the adapter surface (the `hv dash` and `hv telemetry` forwarders are removed, `config set` refusals exit 1, see `AGENT_INTEGRATION.md` §7) and changes nothing a module relies on. `GET /v1/` reported `contract: "4.0"` then; `min_core` is a `>=` compare, so a manifest declaring `min_core: 3.x` still installs and runs. No journal, projection, signing or sync format changes (`PROTOCOL_VERSION` stays 3). `CONTRACT_HISTORY.md` has the full entry.
 
 **3.1** is a MINOR. A signed `module.json` may declare `"contract": 1` and the optional fields `cli`, `runtimes`, `config_schema`, `status`, `doctor`, `reads`, `ui` and `trust`; a manifest without `contract` keeps its 2.1/3.0 meaning. `GET /v1/` reports `contract: "3.1"` and gains a `reads` key for a module that declares read routes, which are new. `min_core` is a `>=` compare, so `min_core: 3.0` and below still install; a contract-1 manifest needs `min_core` 3.1, and a 3.0 node refuses it as unknown fields. No journal, projection, signing or sync format changes (`PROTOCOL_VERSION` stays 3). The release tag `v3.1.0` marks the commit that completed it; `CONTRACT_HISTORY.md` has the full entry.
 

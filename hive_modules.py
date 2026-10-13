@@ -284,7 +284,7 @@ def reads_summary(manifest):
     return "reads (/v1, read-only): " + ", ".join(marks)
 CONFIG_TYPES, CONFIG_SCOPES = ("string", "int", "bool", "enum"), ("node", "fleet", "fleet-node")
 CONFIG_SPEC_KEYS = {"type", "default", "scope", "description", "max", "min", "values", "required_at_install",
-                    "secret", "identifying"}
+                    "secret", "identifying", "help"}
 MAX_SCHEMA_KEYS, MAX_DESCRIPTION, MAX_ENUM_VALUES, MAX_ENUM_VALUE = 128, 400, 64, 80
 _SEGMENT_WORD = re.compile(r"\{[a-z][a-z0-9_]{0,31}\}\Z")
 _INT_TEXT = re.compile(r"-?[0-9]{1,18}\Z")
@@ -365,6 +365,10 @@ def _check_config_entry(module, key, spec):
     desc = spec.get("description")
     if not isinstance(desc, str) or not desc.strip() or len(desc) > MAX_DESCRIPTION or _has_control(desc):
         raise ModuleError(f"{where}: description is required (a string of at most {MAX_DESCRIPTION} characters)")
+    if "help" in spec:
+        text = spec["help"]
+        if not isinstance(text, str) or not text.strip() or len(text) > MAX_DESCRIPTION or _has_control(text):
+            raise ModuleError(f"{where}: help must be a string of at most {MAX_DESCRIPTION} characters")
     for flag in ("required_at_install", "secret", "identifying"):
         if flag in spec and not isinstance(spec[flag], bool):
             raise ModuleError(f"{where}: {flag} must be true or false")

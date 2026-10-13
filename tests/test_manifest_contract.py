@@ -653,3 +653,19 @@ def test_trust_verb_lowers_without_owner_and_raise_needs_it(tmp_path, monkeypatc
     state["demo"] = {"version": "1", "trust": "confined"}
     hive_modules.cmd_trust(Lib(), ns("trusted"))
     assert hive_modules.effective_trust(state["demo"]) == "confined"
+
+
+# ── config_schema help (4.1) ──────────────────────────────────────────────────────────────────────────
+
+def test_a_config_entry_may_carry_help_text():
+    m = manifest(config_schema={"k": spec(help="Plain words about the setting.")})
+    assert check(m)["config_schema"]["k"]["help"] == "Plain words about the setting."
+
+
+@pytest.mark.parametrize("bad", ["", "   ", "x" * 401, "two\nlines", "bell\x07", 5, ["a"], None, True])
+def test_a_bad_help_is_refused(bad):
+    refused(manifest(config_schema={"k": spec(help=bad)}), "help")
+
+
+def test_help_may_be_exactly_the_description_length():
+    assert check(manifest(config_schema={"k": spec(help="x" * 400)}))

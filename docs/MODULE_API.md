@@ -66,7 +66,7 @@ A path under a version this node does not serve (`/v2/…`) is `404` naming the 
 ### `GET /v1/`
 
 ```json
-{"api": ["v1"], "contract": "4.0", "hive_id": "…", "device_id": "k1:…", "module": "hwatch",
+{"api": ["v1"], "contract": "4.1", "hive_id": "…", "device_id": "k1:…", "module": "hwatch",
  "node_id": "k1:…", "node_devices": 1,
  "quota": {"limits": {…}, "used": {…}, "remaining": {…}}, "config": {"x-hwatch:poll": "30"}}
 ```
@@ -336,7 +336,7 @@ A module is a git repository with a signed manifest. `hive-mind module add` chec
 |---|---|
 | `name` | The module name (a valid module name; it prefixes `x-<name>:`). Required. |
 | `version` | A string, up to 64 characters. Required. |
-| `min_core` | The oldest core contract it runs on, a dotted version; refused on an older node. Default `0`. |
+| `min_core` | The oldest core contract it runs on, a dotted version; refused on an older node. Default `0`. A module whose `config_schema` entries carry `help` *(4.1)* sets `min_core` 4.1: an older core refuses the field. |
 | `publisher` | The publisher's Ed25519 public key, base64. Required. |
 | `files` | `{relative path: sha256 hex}` for every file, 1 to 500 of them. The fetched tree must hold exactly these files and no others. Required. |
 | `service` | Optional. `{"command": [argv…], "restart": "no" \| "on-failure" \| "always", "interval": seconds ≥ 60, "stop_grace": seconds 1–3600}`. `interval` makes it a timer. `stop_grace` *(2.3)* renders `TimeoutStopSec` and `KillMode=mixed`: on stop only the main process gets SIGTERM and may drain a long one-shot for that many seconds; systemd then SIGKILLs the whole group. Without it systemd's default stop timeout applies. |
