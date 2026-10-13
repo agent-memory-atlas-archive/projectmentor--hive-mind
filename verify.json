@@ -1,5 +1,5 @@
 {
-  "digest": "032096d8198d8d9cd15bc069f52f1e9ffe7827192f5e6c0dc7b2fa90f21c2f52",
+  "digest": "bec4eaaa794392e712bc3cc4b7732330b83392116c43e22c3c210ebcde1c87f0",
   "files": {
     ".github/FUNDING.yml": "ca6c63d7539bb7d2f809b5068781c78de97c028a44c5ae252b11bc1695caf85d",
     ".github/ISSUE_TEMPLATE/bug_report.yml": "22df51b1e51c25f50726392c79811116b88c40370843ff2d4a3e76b643f1cb68",
@@ -18,6 +18,7 @@
     "advisories.json": "e1f7246819257c9cdcb8118aaee972ed89f22fb056d67230320d5ea7fdce6703",
     "cells/example-tool.json": "1ef1bb649f6805631bb6c20940baefb4a4bd867122b2c9e9b565c69aac30f060",
     "chacha20poly1305.py": "6c3bb50dc126dab128184280b4d11cb1494800651e97aea941a821f31ff012fd",
+    "changelog.d/implementer2-d10-pin-requests.md": "c05a16342941a7abf1ad4340625e28873d673e2d829050bd6a60c6b4507b1ceb",
     "commandmap.py": "e2b88825cd5e37e16fed082cf6c8dc736b9edffea31c51d997db2d6ac6e47498",
     "config/.peers.json.example": "e81eb4533b4e06969946a8fa1c977e0692bc047275101bcdbae1504355866674",
     "config/nudge.env.example": "b278edb191f6588316383f5c095f6332fc3ccaf695c595dccd9b21c4322d5cf3",
@@ -78,7 +79,7 @@
     "merkle.py": "7eef10599d391f12b0790ccbf70fa373bef25bf406f34e38688959dad81df83a",
     "owner_agent.py": "d20c6052509bc4c07a74ecf153fd83d68b2ed9f621f0decf1e1e1a9a6df249ac",
     "ownerkey.py": "f788557585ece6a5e1ea37b95c6f0100da5bf02370175a980b029ab04feafaa2",
-    "requirements.txt": "7cc4959877dbe6b6c63a8eb1bfe3bfb545fa8fe5b28b1b2c13e4a7c1c0d1c4d4",
+    "requirements.txt": "272ff81551f0350c3feea5d7b134ce5ecd49c2d88c4e14167ddd2933858fb16a",
     "scripts/README.md": "b5b8ac787f54bbed620d65f30cb21c334b4e628713e7a977b932a366ad628beb",
     "scripts/common/_smoke_daemon.sh": "596c41c202e5e49d14a88df525b421d42fc13143ec0636e9eda4c7ccf712723a",
     "scripts/common/_smoke_isolate.sh": "038ce36dd9da922a0ec9d6c5f0965d6b78b2af2f909e31f34c157e7a2901cdeb",
@@ -94,7 +95,7 @@
     "scripts/common/sync_auth_smoke.sh": "cd056766cbceb41a0feae5057f7acc04ec196be18881748388780980c6b14730",
     "scripts/common/sync_smoke.sh": "d42772dfd705fb08cdc9be87cd011efbdba11bb3529d6893918456649586504b",
     "scripts/installer/_identity.sh": "47648f08b0aaf950415e07010d98ad78359aa69f2f59f11702c5b130fc30f0c7",
-    "scripts/installer/_install_node.sh": "f14151772e1ecbc05ac469a14a6a729eb723e9298d78e6d02a35337f88cfdca7",
+    "scripts/installer/_install_node.sh": "f86ebdfcc6fdb535cd624e2119fb57fa89d32d2dcd5976f1a0169907f13c5601",
     "scripts/installer/_invite.sh": "74d630c04c92695888f4da83e69d4895cbe086beab013c06e90431fc08f7cb58",
     "scripts/installer/_reset.sh": "5f4d94026b73f656271f6783602eb1ba3a898a5f1a6c85b900bd035d06639207",
     "scripts/installer/_service.sh": "b782d82090b309b122d141b58fa9225f13a22bd7afdc52afe40cd04b682f2ae8",
@@ -196,7 +197,7 @@
     "tests/test_informed.py": "e9abd2a4f279cde6dfdaf0fb0cda2334c8a8b88cebb10e6086d44e0126b559e0",
     "tests/test_ingest_sweep.py": "5f929eabe4dec7421ef7556f93a7a2eec78be75542c10a945e14e4e991ff9676",
     "tests/test_installer_help.py": "129f9574b4adcb946933db0b25a29f1c2d043d842e1eb6bb9b50b585ea12f7d4",
-    "tests/test_installer_python_isolated.py": "d23e116356edccc25d65e1225c74810071a705d83b6fd99e12e4eed96f34b423",
+    "tests/test_installer_python_isolated.py": "dacb8607e7f3eb6361b324e3835fa70d07bc298374ed640ef10032242ded61f1",
     "tests/test_journal_lock_fails_loudly.py": "e17b7727a87cb3457ae30725458622ab2e39c9014d88f6b116e16d03876cd038",
     "tests/test_journal_timestamps.py": "b01cf2480deb08795b0cb4776ba48202d70d41a030654aa5dcf8690228c41701",
     "tests/test_keep_identity.py": "cd52f58d33e9c431221e2d3534dae26e0fcaa126f33859cc3010a9e9d0a117b4",
@@ -286,6 +287,6 @@
     "vocabulary.py": "3a6977fc89573561e6248748db90379acc810ff183556e220ce6bf1b2c0d0d3b",
     "x25519.py": "ec1967595a2306cde860afe4dffab40a3f833d089de6caf5c9c080df8fd45726"
   },
-  "sequence": 627,
+  "sequence": 629,
   "version": "3.1"
 }
