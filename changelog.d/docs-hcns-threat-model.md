@@ -1,1 +1,0 @@
-- Docs: THREAT_MODEL gains the lines for the optional `hcns` module (a `GET`-only tailnet listener, the admitted-device `node`-field residual, presence, local processes, no journaling, and the genesis-admit rule).

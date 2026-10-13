@@ -1,1 +1,0 @@
-- Security (SECREV C CK-3): a relative, `~` or non-directory/foreign-owned path in `.key-dir` is no longer followed; hv ignores it with a stderr line and uses the default key directory. `HIVE_KEY_DIR` is made absolute.

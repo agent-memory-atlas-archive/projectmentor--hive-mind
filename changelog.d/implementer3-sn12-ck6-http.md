@@ -1,1 +1,0 @@
-- **Security: HTTP 500 bodies are generic, and the hello signature is pinned to its fixed paths (SN-12, CK-6).** An unexpected failure in the sync daemon answers `{"error": "internal error"}` and logs the exception locally instead of echoing it to the caller; `/sync/hello` and `/hive/info` sign only under the hello domain tag, over a server-chosen path and a hex challenge.
