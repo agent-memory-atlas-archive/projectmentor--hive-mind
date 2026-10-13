@@ -50,3 +50,27 @@ def test_the_positional_follows_a_double_dash_and_ends_the_argv(mcp_mod, tool, k
     argv = seen[-1]
     assert argv[-2:] == ["--", HOSTILE], argv
     assert argv.count("--") == 1 and HOSTILE not in argv[:-1]
+
+
+@pytest.mark.parametrize("tool,kwargs", [
+    ("hive_decide", {"content": "c", "informed_by": "h:a,--source=manual"}),
+    ("hive_decide", {"content": "c", "informed_by": "-v"}),
+    ("hive_decide", {"content": "c", "supersedes": "--source=manual"}),
+    ("hive_decide", {"revoke": "--revoke=h:victim", "rationale": "r"}),
+    ("hive_remember", {"content": "c", "supports": "--source=manual"}),
+    ("hive_remember", {"content": "c", "contradicts": "-x"}),
+    ("hive_remember", {"content": "c", "extends": "-x"}),
+    ("hive_remember", {"content": "c", "resolves": "-x"}),
+    ("hive_remember", {"content": "c", "outcome_of": "-x"}),
+])
+def test_a_reference_that_looks_like_a_flag_is_refused(mcp_mod, tool, kwargs):
+    mod, seen = mcp_mod
+    with pytest.raises(ValueError):
+        getattr(mod, tool)(**kwargs)
+    assert not seen
+
+
+def test_a_well_formed_reference_still_passes(mcp_mod):
+    mod, seen = mcp_mod
+    mod.hive_decide(content="c", informed_by="h:a, 3:7", supersedes="h:b")
+    assert seen[-1][seen[-1].index("--informed") + 1:][:2] == ["h:a", "3:7"]

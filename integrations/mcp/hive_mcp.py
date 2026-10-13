@@ -114,6 +114,15 @@ def _run_hv(args: list[str], timeout: int = 30, stdin_text: str | None = None,
 
 
 # ── Tools ────────────────────────────────────────────────────────────────────
+def _ref(value: str) -> str:
+    """A reference (`h:…`, `node_id:seq`) never starts with `-`: refuse one that does, so a caller cannot end a
+    nargs="+" list (--informed) or an option value and have argparse read the rest as hv flags (SECREV C MCP-01)."""
+    value = value.strip()
+    if value.startswith("-"):
+        raise ValueError(f"reference must not start with '-': {value!r}")
+    return value
+
+
 @mcp.tool()
 def hive_lookup(id: str) -> dict:
     """Look up ONE entry by its stable id, to verify an id before you cite it.
@@ -207,17 +216,17 @@ def hive_remember(content: str, tags: str = "", epistemic_status: str = "observa
     if tag_list:
         args += ["--tags", ",".join(tag_list)]
     if outcome_of:
-        args += ["--outcome-of", outcome_of.strip(), "--polarity", str(int(polarity))]
+        args += ["--outcome-of", _ref(outcome_of), "--polarity", str(int(polarity))]
     if channel:
         args += ["--channel", channel]
     if resolves:
-        args += ["--resolves", resolves.strip()]
+        args += ["--resolves", _ref(resolves)]
     if supports:
-        args += ["--supports", supports.strip()]
+        args += ["--supports", _ref(supports)]
     if contradicts:
-        args += ["--contradicts", contradicts.strip()]
+        args += ["--contradicts", _ref(contradicts)]
     if extends:
-        args += ["--extends", extends.strip()]
+        args += ["--extends", _ref(extends)]
     args += ["--", content]   # SECREV C MCP-01: a positional is never read as a flag
     return _run_hv(args)
 
@@ -252,13 +261,13 @@ def hive_decide(content: str = "", rationale: str = "", tags: str = "", informed
     tag_list = [t.strip() for t in tags.split(",") if t.strip()]
     if tag_list:
         args += ["--tags", ",".join(tag_list)]
-    refs = [r.strip() for r in informed_by.split(",") if r.strip()]
+    refs = [_ref(r) for r in informed_by.split(",") if r.strip()]
     if refs:
         args += ["--informed", *refs]
     if supersedes.strip():
-        args += ["--supersedes", supersedes.strip()]
+        args += ["--supersedes", _ref(supersedes)]
     if revoke.strip():
-        args += ["--revoke", revoke.strip()]
+        args += ["--revoke", _ref(revoke)]
     if content.strip():
         args += ["--", content]   # SECREV C MCP-01: a positional is never read as a flag
     return _run_hv(args)
