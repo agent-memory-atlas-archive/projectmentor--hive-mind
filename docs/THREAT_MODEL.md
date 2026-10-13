@@ -565,9 +565,15 @@ line quoted. Doctor only checks that the task exists; it does not check what the
 ### Module trust tier (3.1, B9)
 
 A signed manifest may carry `trust`: `trusted` or `confined`, absent meaning `trusted`. In this change the field is only
-validated, shown at `module add` / `update` / `list` and recorded; **no unit is hardened yet**, so a `confined` module
-runs exactly as a `trusted` one until the security pass adds the confined unit. Do not rely on `confined` for isolation
-before that lands. The tier can go down on a node (`module trust <name> confined`, node-local) and up only with the
+validated, shown at `module add` / `update` / `list` and recorded. **A unit whose effective tier is `confined`** (signed
+so, or lowered on the node) is rendered with `ProtectSystem=strict`, `ProtectHome=tmpfs`, `PrivateTmp=yes`,
+`NoNewPrivileges=yes` and an empty `CapabilityBoundingSet=`; the only things put back under the empty home are the
+module's own key directory (`HIVE_MODULE_KEY_DIR`, read-write: its state) and read-only the module's directory and the
+`PATH` entries its runtimes resolved to. A `trusted` unit renders as it always did. `module trust` re-renders and
+restarts the unit, and the doctor expects the effective tier's text. This is a filesystem and privilege sandbox, not a
+network one: a confined module can still reach the network and the node's local API with its own device key.
+Residual: a module that needs a directory outside these (a tool under the home that is not on its `PATH`) fails until
+the publisher declares it as a runtime; there is no operator override. The tier can go down on a node (`module trust <name> confined`, node-local) and up only with the
 owner key (clearing that lowering, or an update that signs a higher tier than the node last held), never above what the
 publisher signed. Residual, needing an admitted device or local access and so accepted for 3.x: a process running as the
 operator's own user can edit `.modules.json` and so change the node-local tier; the OS account is the boundary. A

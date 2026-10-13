@@ -254,6 +254,12 @@ def effective_trust(rec):
     return local if local in TRUST_TIERS and TRUST_TIERS.index(local) < TRUST_TIERS.index(signed) else signed
 
 
+def manifest_trust(manifest, rec):
+    """The tier a unit is rendered for: what the manifest signs, lowered by the record's node-local setting. The
+    manifest, not the record, supplies the signed tier, so an update's new tier takes effect in the same render."""
+    return effective_trust({"trust": signed_trust(manifest), "trust_local": (rec or {}).get("trust_local")})
+
+
 def _trust_record(manifest):
     """{"trust": "confined"} for a module signed `confined`, else {}: a `trusted` row is byte-for-byte what it was."""
     return {"trust": "confined"} if signed_trust(manifest) == "confined" else {}
@@ -895,7 +901,22 @@ def _env(key, value):
     return f'Environment="{esc}"'
 
 
-def render_units(name, manifest, module_dir, key_dir, path=None):
+def _unit_path_arg(p):
+    """A path as one systemd path word: whitespace escaped, `%` doubled against specifiers."""
+    return str(p).replace("\\", "\\x5c").replace(" ", "\\x20").replace("\t", "\\x09").replace("%", "%%")
+
+
+def _confined_lines(module_dir, key_dir, path):
+    """The sandbox of a `confined` unit: the filesystem read-only, the home directory replaced by an empty tmpfs, then
+    only what the module needs put back. Its own directory and the PATH entries under it are read-only (it must
+    still run); its key directory, the module's own state, is the one thing it may write."""
+    keep = [module_dir, *(d for d in (path or "").split(":") if d.startswith("/") and d not in SYSTEM_PATH)]
+    return ["ProtectSystem=strict", "ProtectHome=tmpfs", "PrivateTmp=yes", "CapabilityBoundingSet=",
+            "BindPaths=" + _unit_path_arg(key_dir),
+            *("BindReadOnlyPaths=-" + _unit_path_arg(d) for d in dict.fromkeys(map(str, keep)))]
+
+
+def render_units(name, manifest, module_dir, key_dir, path=None, trust=None):
     """{filename: text} for a module's unit(s), or {} when its manifest has no `service` block.
 
     It runs as the operator's user (a user unit), in the module's own directory, with the module's own key
@@ -905,7 +926,10 @@ def render_units(name, manifest, module_dir, key_dir, path=None):
     has no `ExecStartPre` that kills by command line (such a pattern could match another module).
 
     `path` (a contract-1 module's recorded PATH, see `unit_path`) becomes the unit's `PATH`; without it the unit has
-    none, as in 2.1."""
+    none, as in 2.1.
+
+    `trust` is the effective tier (`manifest_trust`); a `trusted` unit renders as it always did, a `confined` one
+    gets `_confined_lines`. Without it the manifest's own tier is used."""
     svc = manifest.get("service")
     if not svc:
         return {}
@@ -921,6 +945,8 @@ def render_units(name, manifest, module_dir, key_dir, path=None):
               _env("HIVE_MODULE_NAME", name), _env("HIVE_MODULE_DIR", module_dir),
               _env("HIVE_MODULE_KEY_DIR", key_dir), *([_env("PATH", path)] if path else []), "NoNewPrivileges=yes",
               "StandardOutput=journal", "StandardError=journal"]
+    if (trust or signed_trust(manifest)) == "confined":
+        lines += _confined_lines(module_dir, key_dir, path)
     grace = svc.get("stop_grace")
     if grace:                           # SIGTERM the main process only, let it drain, SIGKILL the group after `grace`
         lines += [f"TimeoutStopSec={grace}", "KillMode=mixed"]
@@ -939,7 +965,8 @@ def _write_units(lib, name, manifest, only_changed=False, path=None):
     """Stop whatever is installed, then write the module's unit files (and drop a timer it no longer declares).
     Returns the unit to enable and start (the timer when there is one), or None when there is nothing to start:
     no service block, or `only_changed` and the files are already what the manifest renders."""
-    keep = render_units(name, manifest, modules_dir() / name, Path(lib._ensure_key_dir()) / "modules" / name, path)
+    keep = render_units(name, manifest, modules_dir() / name, Path(lib._ensure_key_dir()) / "modules" / name, path,
+                        manifest_trust(manifest, load_state(lib).get(name)))
     if not keep:
         remove_units(name)
         return None
@@ -1965,6 +1992,7 @@ def cmd_trust(lib, args):
     elif rec.get("trust", "trusted") != "confined":
         rec["trust_local"] = "confined"
         save_state(lib, state)
+    _reapply_names(lib, [args.name])           # the unit is rendered for the tier: re-render, and restart if it changed
     print(f"{args.name}: {effective_trust(rec)}")
 
 

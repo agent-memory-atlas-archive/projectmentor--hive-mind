@@ -94,9 +94,10 @@ def _device(gov, name, dev):
     return []
 
 
-def _units(name, manifest, key_dir):
+def _units(name, manifest, key_dir, rec=None):
     """Problems with the module's unit files against what its manifest renders."""
-    expected = hive_modules.render_units(name, manifest, hive_modules.modules_dir() / name, key_dir)
+    expected = hive_modules.render_units(name, manifest, hive_modules.modules_dir() / name, key_dir,
+                                          hive_modules.recorded_path(rec or {}), trust=hive_modules.manifest_trust(manifest, rec))
     d, out = hive_modules.unit_dir(), []
     for f in hive_modules.unit_names(name):
         have = (d / f).read_text() if (d / f).exists() else None
@@ -254,7 +255,7 @@ def _module(hv, gov, name, rec, entries, listener, now):
     if not key_dir.exists():
         problems.append(("warn", "its device key directory is missing"))
     if manifest is not None and manifest["name"] == name:
-        problems += _units(name, manifest, key_dir)
+        problems += _units(name, manifest, key_dir, rec)
         problems += _hooks(moddir, manifest)
         problems += _config(moddir, manifest, gov, hv.NODE_ID)
     if manifest is not None and manifest["name"] == name:
@@ -347,7 +348,8 @@ def fix(hv, dry=False, now=None):
         if manifest["name"] != name or manifest["publisher"] != rec.get("publisher"):
             continue
         expected = hive_modules.render_units(name, manifest, hive_modules.modules_dir() / name,
-                                             Path(hv.KEY_DIR) / "modules" / name)
+                                             Path(hv.KEY_DIR) / "modules" / name,
+                                             hive_modules.recorded_path(rec), trust=hive_modules.manifest_trust(manifest, rec))
         if not expected:
             continue
         if manager is None:

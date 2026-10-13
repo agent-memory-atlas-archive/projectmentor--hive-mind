@@ -801,3 +801,55 @@ def test_stdin_and_file_apply_only_to_config_set(hive, tmp_path):
     for flag in (["--stdin"], ["--file", str(tmp_path / "f")]):
         r = _run(hive, "module", "config", "demo", "list", *flag, check=False)
         assert r.returncode == 2 and "only apply to config set" in r.stdout + r.stderr
+
+
+C1 = dict(contract=1, config=None, min_core="3.1")
+CONFINED_KEYS = ("ProtectSystem=strict", "ProtectHome=tmpfs", "PrivateTmp=yes", "CapabilityBoundingSet=\n", "BindPaths=")
+
+
+@LINUX_ONLY
+def test_a_trusted_unit_has_no_sandbox_lines_and_a_signed_confined_one_has_them(hive, tmp_path, units):
+    unit_dir, _ = units
+    pub = _publish(tmp_path / "t", name="plain", service=SERVICE, **C1)
+    _add(hive, tmp_path / "t", pub, "plain")
+    plain = (unit_dir / "hive-module-plain.service").read_text()
+    assert not any(k.split("=")[0] in plain for k in CONFINED_KEYS) and "NoNewPrivileges=yes" in plain
+    pub = _publish(tmp_path / "c", name="boxed", service=SERVICE, trust="confined", **C1)
+    _add(hive, tmp_path / "c", pub, "boxed")
+    text = (unit_dir / "hive-module-boxed.service").read_text()
+    assert all(k in text for k in CONFINED_KEYS) and "NoNewPrivileges=yes" in text
+    key_dir = _keys.key_dir(hive) / "modules" / "boxed"
+    assert f"BindPaths={key_dir}\n" in text and text.count("\nBindPaths=") == 1       # the state directory, and only it
+    assert f"BindReadOnlyPaths=-{tmp_path / 'modules' / 'boxed'}\n" in text
+
+
+@LINUX_ONLY
+def test_lowering_a_trusted_module_re_renders_its_unit_and_restarts_it(hive, tmp_path, units):
+    unit_dir, calls = units
+    pub = _publish(tmp_path / "t", service=SERVICE, **C1)
+    _add(hive, tmp_path / "t", pub)
+    f = unit_dir / "hive-module-demo.service"
+    assert "ProtectSystem" not in f.read_text()
+    n = len(calls())
+    _run(hive, "module", "trust", "demo", "confined")
+    assert "ProtectSystem=strict" in f.read_text() and "ProtectHome=tmpfs" in f.read_text()
+    assert "restart hive-module-demo.service" in calls()[n:]
+    # the doctor expects the lowered text, not the signed one
+    from hive_module_doctor import _units
+    assert not [p for p in _units("demo", hive_modules.check_tree(tmp_path / "modules" / "demo", "9", ignore=("config",)),
+                                  _keys.key_dir(hive) / "modules" / "demo", _state(hive)["demo"]) if p[1].startswith("unit ")]
+
+
+@LINUX_ONLY
+def test_a_confined_unit_can_still_write_its_state_directory(tmp_path):
+    if subprocess.run(["systemd-run", "--user", "--wait", "--quiet", "true"], capture_output=True).returncode:
+        pytest.skip("no user systemd manager")
+    state, mod = tmp_path / "state", tmp_path / "mod"
+    state.mkdir(), mod.mkdir()
+    props = hive_modules._confined_lines(mod, state, None)
+    args = [a for line in props for a in ("-p", line)
+            if line != "CapabilityBoundingSet="] + ["-p", "CapabilityBoundingSet="]
+    r = subprocess.run(["systemd-run", "--user", "--wait", "--quiet", "--collect", *args, "sh", "-c",
+                        f"echo ok > {state}/f && ! echo x > {mod}/g && ! echo x > /usr/g"], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    assert (state / "f").read_text() == "ok\n" and not (mod / "g").exists()
