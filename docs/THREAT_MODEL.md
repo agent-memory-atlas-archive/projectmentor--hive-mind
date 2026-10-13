@@ -547,6 +547,14 @@ at once). Concretely:
   so it cannot tell a sealed export from a plaintext one. A `--plaintext --out` under another name, or a
   copy outside those directories, is invisible to it. Operator rule: delete exports after moving them
   off-device.
+- **`sign.yml` retries itself once, never on its own output (#473).** The sign job signs only a commit that is
+  the current tip of `main` (checked before signing and again before the push). If `main` moved, or the push
+  lost a race, a separate `retry` job (`actions: write` only, no checkout, no secrets) dispatches `sign.yml`
+  once with `retry_of=<head sha>`; a run with `retry_of` set never dispatches again, so there is no loop. The
+  `test` job re-runs once a failure wholly inside `.github/flaky-tests.txt` (every line needs an issue link);
+  any other failure fails as before. A repository writer can edit that list, but the same writer can already
+  edit the workflow; accepted for 3.x (admitted party). Operator rule: keep the list short and remove a line
+  when its issue closes.
 - **The release key is a repository-level secret.** `sign.yml` runs the test suite in a job with no secrets
   and signs in a separate job (`needs: test`, `environment: signing`, deployable from `main` only), so a pull
   request's code never runs with the key in scope, and `tests/test_workflow_secrets.py` fails if a job that runs

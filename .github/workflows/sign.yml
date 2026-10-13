@@ -12,6 +12,11 @@ name: Sign release manifest
 on:
   workflow_dispatch:   # manual re-sign — e.g. after a history rewrite whose top commit touched only
                        # excluded paths (verify.json/*.json), which would otherwise skip the push trigger
+    inputs:
+      retry_of:        # set only by this workflow's own `retry` job: the head sha whose run lost a race.
+        description: 'Head sha this run retries (set by the workflow itself; leave empty)'   # A run with it set never retries.
+        required: false
+        default: ''
   push:
     branches: [main]
     paths:
@@ -67,11 +72,15 @@ jobs:
         run: python3 scripts/common/gen_verify.py
 
       - name: Run the full suite
-        run: python3 -m pytest -q -n auto
+        # A failure in a test on the pinned list .github/flaky-tests.txt (each line carries its issue) is re-run
+        # once; any other failure fails the run as before (#473).
+        run: python3 scripts/ci/flake_retry.py --list .github/flaky-tests.txt -- python3 -m pytest -q -n auto
 
   sign:
     needs: test
     runs-on: ubuntu-latest
+    outputs:
+      retry: ${{ steps.tip.outputs.retry == 'true' && 'true' || steps.push.outputs.retry }}
     # SIGN_APP_ID and SIGN_APP_KEY resolve from this Environment once they are added to it, and from the
     # repository secrets until then. HIVE_SIGNING_KEY stays a repository secret (its seed cannot be recovered
     # to move it). The Environment deploys from `main` only.
@@ -99,10 +108,20 @@ jobs:
         with:
           python-version: '3.12'        # gen_verify.py, sign_release.py and `hv verify` use the standard library only
 
+      # #473: only the current tip of main is ever signed. If main moved while `test` ran, stop here and let
+      # the `retry` job re-dispatch once for the new tip.
+      - name: Check this commit is the tip of main
+        id: tip
+        env:
+          RETRY_OF: ${{ github.event.inputs.retry_of }}
+        run: bash scripts/ci/sign_push.sh tip origin main
+
       - name: Regenerate manifest
+        if: steps.tip.outputs.state == 'current'
         run: python3 scripts/common/gen_verify.py
 
       - name: Sign and self-check
+        if: steps.tip.outputs.state == 'current'
         env:
           HIVE_SIGNING_KEY: ${{ secrets.HIVE_SIGNING_KEY }}
           HIVE_SIGN_SKIP_TESTS: '1'     # the `test` job above ran the full suite on this commit, with no secrets
@@ -120,16 +139,33 @@ jobs:
           fi
 
       - name: Commit if changed
+        id: push
+        if: steps.tip.outputs.state == 'current'
+        env:
+          RETRY_OF: ${{ github.event.inputs.retry_of }}
         run: |
           git config user.name  "hivemind-bot"
           git config user.email "bot@projectmentor.org"
-          git add verify.json
-          [ -f verify.json.sig ] && git add verify.json.sig
-          if git diff --cached --quiet; then
-            echo "manifest already current; nothing to commit"
-          else
-            # [skip ci] matters more now: unlike the default token, an App token's push DOES trigger
-            # workflows. The path filter above already keeps this commit from re-running sign.yml.
-            git commit -m "chore: re-sign source manifest [skip ci]"
-            git push
-          fi
+          # Re-checks the tip, commits, pushes. A push that loses a race to another merge is not a failure:
+          # it sets retry=true (once per head, see the `retry` job) and the new run signs the newest head.
+          bash scripts/ci/sign_push.sh push origin main
+
+  # #473: re-dispatch this workflow ONCE when the sign job found main moved (stale tip, or the push lost a race).
+  # The run it starts carries retry_of=<this head>, so it never dispatches again: one retry per head. This job
+  # checks out and runs nothing from the repo; its only power is actions:write on this repository, no secrets.
+  retry:
+    needs: sign
+    if: needs.sign.outputs.retry == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Re-dispatch for the new tip of main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          echo "main moved past $HEAD_SHA; re-dispatching once" | tee -a "$GITHUB_STEP_SUMMARY"
+          gh workflow run sign.yml --ref main -f retry_of="$HEAD_SHA"
