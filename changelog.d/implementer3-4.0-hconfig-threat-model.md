@@ -1,1 +1,0 @@
-- Docs: THREAT_MODEL gains the hconfig section (no listener, key or passphrase; local audit file; the viewer surface), and MODULES.md describes the hconfig module.

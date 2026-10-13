@@ -1,1 +1,0 @@
-- **Security: `group admit --principal` records the admitted device id in the `.peers.json` entry (private#79).** The node-local `device` field sits beside the principal, and a revoke or purge drops the entry by it, with no guessing from join-request URLs or host history. Entries written before the field existed load as before. No wire-format change.
