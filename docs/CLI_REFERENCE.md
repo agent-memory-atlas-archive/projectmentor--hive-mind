@@ -65,10 +65,17 @@ cd ~/projects/hive-mind
 hv config identity announce            # publish this device's key as a signed journal entry
 hv config identity show                # this device's device_id + pubkey
 hv config identity init [--force]      # mint a device key (fresh install)
+hv config schema [--json]              # 4.0: the governed and node-local key tables (type, default, range or choices)
+hv config show [--json]                # 4.0: every governed key's value, source and who set it last (`set_by`), plus the `governance` block
 ```
 
+`config schema` and `config show` are reads (any device). `config show --json` is `{schema: 1, governed: [{id, value,
+default, source: "default"|"fleet", set_by: {device_id, ts, sid}|null}], governance: {owner_id, admitted: [{device_id,
+principal}], quorum_m}}`; the `governance` block is for the operator, not for a viewer.
+
 `hive-mind config set` tunes the owner-signed, journaled knobs (identical on every
-device, which is what keeps confidence converging). It runs on the owner machine:
+device, which is what keeps confidence converging). Every refusal (unknown key, bad or out-of-range value, no owner key)
+prints its reason and exits 1 (before 4.0 most exited 0). It runs on the owner machine:
 
 ```
 hive-mind config set same_device_lambda 0.5              # weight of EACH extra agent on one device (default 0.5)

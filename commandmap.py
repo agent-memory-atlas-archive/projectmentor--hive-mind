@@ -73,6 +73,8 @@ STAYS = {
                                     "`vote-election` is the JOURNAL ACTION name, and using it here made "
                                     "the dead-man guard vacuous",
     ("group", "list"):              "a read",
+    ("config", "schema"):           "a read",
+    ("config", "show"):             "a read",
     ("retract",):                   "peer negative evidence; only --owner is governance",
     ("doctor",):                    "read-only checks, and the peer-address repoint is data-plane self-heal",
 }

@@ -354,7 +354,7 @@ def test_the_122_guard_still_refuses_where_a_fact_would_come_back(tmp_path):
     run = _cli(tmp_path)
     base = _legacy_hive(tmp_path, run)
     sid = _backdate_forget(tmp_path, run, "the backup runs at 02:00")
-    r = run("config", "set", "forget_writers", "owner")
-    assert "Not set" in r.stdout and sid in r.stdout
+    r = run("config", "set", "forget_writers", "owner", check=False)
+    assert r.returncode == 1 and "Not set" in r.stdout and sid in r.stdout          # 4.0 C1: a refusal exits 1
     assert f"hive-mind retract {sid} --owner" in r.stdout and f"hive-mind unforget {sid}" in r.stdout
     assert len(_policy_acts(tmp_path)) == base                            # nothing new written

@@ -133,8 +133,8 @@ def test_the_cli_accepts_a_prefixed_key_and_still_refuses_a_bare_unknown_one(tmp
     _run(tmp_path, "owner", "init")
     ok = _run(tmp_path, "config", "set", "x-hwatch:poll", "30s")
     assert "set x-hwatch:poll = 30s" in ok.stdout
-    bad = _run(tmp_path, "config", "set", "poll", "30s")
-    assert "unknown config key 'poll'" in bad.stdout
-    _run(tmp_path, "config", "set", "x-Hwatch:poll", "1")                            # malformed: the same refusal
+    bad = _run(tmp_path, "config", "set", "poll", "30s", check=False)
+    assert bad.returncode == 1 and "unknown config key 'poll'" in bad.stdout          # 4.0 C1: a refusal exits 1
+    _run(tmp_path, "config", "set", "x-Hwatch:poll", "1", check=False)                            # malformed: the same refusal
     gov = _gov_hv()._governance_state(merkle.read_all_entries(str(tmp_path / "journal")))
     assert gov["module_config"] == {"x-hwatch:poll": "30s"}

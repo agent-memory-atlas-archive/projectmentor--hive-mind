@@ -325,6 +325,9 @@ def build_parser(plane="data"):
     config_id_sub.add_parser("show", help="Show this device's device_id and pubkey")
     config_id_init = config_id_sub.add_parser("init", help="Mint a device key (fresh install)")
     config_id_init.add_argument("--force", action="store_true", help="Replace an existing key / skip the populated-journal guard")
+    for _name, _help in (("schema", "Print the governed and node-local key tables (types, defaults, ranges)"),
+                         ("show", "Print every governed key's value, source and who set it last")):
+        config_sub.add_parser(_name, help=_help).add_argument("--json", action="store_true", help="machine-readable output")
     if control:
         config_conf = config_sub.add_parser("confidence", help="Set an owner-signed confidence parameter")
         config_conf_sub = config_conf.add_subparsers(dest="config_confidence_action")
