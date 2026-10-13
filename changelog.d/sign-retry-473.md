@@ -1,1 +1,0 @@
-- CI (hive-mind#473): `sign.yml` signs only the current tip of `main`, and re-dispatches itself once when the push of the re-sign commit loses a race to another merge; a failure in a test on the pinned list `.github/flaky-tests.txt` (each line with its issue) is re-run once. Any other failure fails as before.

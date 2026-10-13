@@ -10,6 +10,18 @@ Git tags are `vMAJOR.MINOR.PATCH`. `vX.Y.0` marks the commit on `main` that comp
 without changing the contract are tagged `vX.Y.1`, `vX.Y.2`, … Dates are when each version was
 introduced (a contract) or tagged (a patch).
 
+## 4.1.0 (2026-10-13)
+
+- **4.1: contract 4.1.** A module's `config_schema` entry may carry an optional plain-language `help` string (at most 400 characters, text only); a module that ships it sets `min_core` 4.1. Additive, no signing, journal or sync change. `docs/CONTRACT_HISTORY.md` has the entry (Part of hive-mind-dash#18).
+- `config schema --json` and `config node list|get --json` rows carry a plain-language `help` text for every core key (additive optional field, shown by hconfig and hdash). (hive-mind-dash#18 item 10)
+- `hive-mind version` (alias `--version`) prints the installed release (from `git describe`), full commit, contract version and verify state; `--json` and `--no-verify` supported. `hive-mind status` now starts with the same line plus one line per installed module (name, version, publisher key prefix). `hv version` is unchanged. (#468)
+- `hive-mind config set`, `group admit|revoke`, `module add|remove` and `module config set --fleet|--fleet-node` take `--plan --json`: it prints the exact canonical governance bodies the verb would sign (the same bytes the real run signs, minted fields fixed, replay argv included) and signs and writes nothing. Owner approval slice A0 (#475).
+- `api_peers` rows (`/api/peers`, `/v1/peers`) gain an additive `module` field: the module name for a module identity (the owner's `admit` marker), else `null`. No wire or signing change, and no `host` field because the marker does not record one.
+- Docs (hive-mind#470): a short root `AGENTS.md` points agents that discover the repository to the authoritative integration contract, with a five-command capability check.
+- CI (hive-mind#460): a new workflow `release-issue-close.yml` closes the issues a PR names with `Closes`/`Fixes`/`Resolves #N` when it merges into `release/*`, where GitHub does not; it only closes issues of this repository, never from `Part of`/`Refs` or another repo's `#N`. PR template now says when to write `Closes`.
+- CI (hive-mind#473): `sign.yml` signs only the current tip of `main`, and re-dispatches itself once when the push of the re-sign commit loses a race to another merge; a failure in a test on the pinned list `.github/flaky-tests.txt` (each line with its issue) is re-run once. Any other failure fails as before.
+- The integration fake seat runtime answers `auth status` / `models` (hwatch's auth probe, hive-mind-hwatch-dev#100) with exit 0 and does not count it as a session start.
+
 ## 4.0.0 (2026-10-13)
 
 - **4.0: contract 4.0.** `CONTRACT_VERSION` is `4.0`, a MAJOR for the adapter surface: `hv dash` and `hv telemetry` are removed (exit 2 with a pointer to `hdash dash` / `hwatch telemetry`), every `hive-mind config set` refusal exits 1, and `config node`, `config schema|show --json`, `module list --json`, `--non-interactive` and the node-local `dashboard_share` key are new. Re-read the contract (§0); no signing, manifest or sync change, and a module declaring `min_core: 3.x` still installs. `docs/CONTRACT_HISTORY.md` has the entry.
