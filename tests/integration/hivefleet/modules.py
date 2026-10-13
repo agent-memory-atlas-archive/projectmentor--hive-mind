@@ -10,7 +10,8 @@ _PASSPHRASE = "integration-test-passphrase"
 
 def module_env(node):
     """The node's environment plus its own modules directory and a non-interactive owner-key passphrase."""
-    return node.env(HIVE_MODULES_DIR=str(node.dir / "modules"), HIVE_OWNER_KEY_PASSPHRASE=_PASSPHRASE)
+    return node.env(HIVE_MODULES_DIR=str(node.dir / "modules"), HIVE_OWNER_KEY_PASSPHRASE=_PASSPHRASE,
+                    HIVE_MODULE_PORT=str(node.port("module-api")))        # never the default 9886 of a daemon on the runner
 
 
 def ctl(node, *args, **kw):

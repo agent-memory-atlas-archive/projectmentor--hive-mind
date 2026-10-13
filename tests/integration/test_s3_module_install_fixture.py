@@ -6,6 +6,7 @@ but the test node that installed the module.
 The plan says `module install` and a "genesis allowlist"; the core's command for a first install is `module add`, and a publisher
 is pinned per module in the node's `.modules.json` (trust on first use, or `--publisher`), not in genesis. The tests drive what exists."""
 import json
+import socket
 import sys
 from pathlib import Path
 
@@ -68,7 +69,11 @@ def test_a_fixture_module_installs_checks_reports_and_removes(fleet, publisher, 
     assert "fixture" in listed and "valid" in listed and "admitted" in listed
     r = ctl(node, "module", "status", "fixture")
     assert r.returncode == 0 and "fixture: ok (1.0.0)" in r.stdout
+    api = socket.socket()                                                       # stands in for the module API the sync daemon serves
+    api.bind(("127.0.0.1", node.port("module-api")))
+    api.listen(8)
     doc = node.run([sys.executable, CORE / "hv", "doctor", "--format", "json"], env=module_env(node))
+    api.close()
     checks = {c["name"]: c for c in json.loads(doc.stdout)["checks"]}
     assert checks["modules:fixture"]["status"] == "ok", checks["modules:fixture"]
     r = ctl(node, "module", "remove", "fixture")
