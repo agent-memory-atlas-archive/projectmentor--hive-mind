@@ -42,7 +42,18 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt pytest pyflakes==4.0.0
       - name: Run integration tests
-        run: python3 -m pytest -q -m integration tests/integration
+        run: python3 -m pytest -q -m integration tests/integration -rs
+      # S5's second-uid checks need root to drop to `nobody`. The hosted runner has passwordless sudo; where it does not, the
+      # step is skipped with this notice and the tests above report their own visible skip. Manual dogfood step for that case:
+      # `sudo python3 -m pytest -m integration tests/integration/test_s5_owner_agent.py -rs` (or the same in a root container).
+      - name: Owner agent, second uid (S5, needs root)
+        run: |
+          if ! sudo -n true 2>/dev/null; then
+            echo "::notice::S5 second-uid tests skipped: no passwordless sudo on this runner"
+            exit 0
+          fi
+          sudo -E env "PATH=$PATH" PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q -m integration \
+            tests/integration/test_s5_owner_agent.py -rs -p no:cacheprovider
 
   # The suite as it runs on a developer's machine (#160): HIVE_HOME exported to a live-looking hive with
   # an owner, a genesis pin and keys. That hive is marked as a decoy, so the session guard in conftest.py
