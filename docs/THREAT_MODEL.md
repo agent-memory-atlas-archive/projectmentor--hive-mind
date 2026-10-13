@@ -370,7 +370,7 @@ at once). Concretely:
   phone (or its PIN or a biometric bypass) can enrol an attacker passkey or a delegation in one tap: accepted by David,
   hardening is follow-up M1 with its reopen trigger (a second approver enrolled by default, or any sign of phone
   compromise); **operator rule:** if the phone is lost, revoke it from the desktop passkey at once, then remove it in the
-  Tailscale admin console. (2) A gated agent holds the seed for the whole uptime (no idle timeout, no 12h cap, no lock on
+  Tailscale admin console; **and** with two approvers enrolled run `--approvers-min 2`, because otherwise one stolen unlocked phone enrols an attacker passkey in two taps (it revokes the other approver, then adds its own). (2) A gated agent holds the seed for the whole uptime (no idle timeout, no 12h cap, no lock on
   suspend): the gate, not time, bounds it; a process of the same user on the owner node can still read root-only things
   such as swap, and can delete or restore the state files (a deleted used-ticket set (it also holds the sign counts) lets a
   captured assertion be presented again, which signs only the exact bodies that assertion approved; a restored `approvers.json` cannot un-revoke a record in a

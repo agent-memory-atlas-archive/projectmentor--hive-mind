@@ -566,6 +566,184 @@ def test_a_restored_file_cannot_unrevoke_an_approver_or_bring_back_a_cleared_del
     assert "revoked" in a.approvers[PHONE.id] and a.delegations == {}
 
 
+# ---- the #485 follow-up: tests that pin guards no other test reaches -----------------------------------------------------------
+# Group 1 (single-layer: nothing else refuses if the guard breaks). Each test below fails on the mutant named in its comment.
+
+def test_an_eddsa_assertion_with_a_bad_or_short_signature_is_refused():
+    # mutant: `ok = len(sig) == 64 and ed25519.verify(...)` -> `ok = True` (or without the length check)
+    ok, why, _ = _verify(DESKTOP, tamper=True)
+    assert not ok and "signature" in why
+    rec = approvers.sign_record(DESKTOP.record(), OWNER)
+    good = DESKTOP.assertion(CH)
+    for sig in (b"", b"\x00" * 63, b"\x00" * 64, base64.urlsafe_b64decode(good["signature"] + "==")[:63]):
+        bad = dict(good, signature=approvers.b64u(sig))
+        ok, why, _ = approvers.verify_assertion(rec, bad, CH, RP, ORIGIN)
+        assert not ok and "signature" in why
+    other = Passkey("someone else", "eddsa", "desktop")                                      # a valid signature by another key
+    ok, _, _ = approvers.verify_assertion(rec, dict(other.assertion(CH), credentialId=DESKTOP.id), CH, RP, ORIGIN)
+    assert not ok
+
+
+@pytest.mark.parametrize("key,pats,want", [
+    ("x-demo:poll", ["x-demo:*"], True),
+    ("x-demo:poll", ["x-demo:poll"], True),
+    ("x-demo:poll", ["x-demo:other"], False),                                                # exact means exact
+    ("x-demo:poll", ["x-demo:p"], False),
+    ("x-demo2:poll", ["x-demo:*"], False),                                                   # a wildcard stops at the colon
+    ("x-demox:poll", ["x-demo:*"], False),
+    ("x-other:poll", ["x-demo:*", "x-demo:poll"], False),
+    ("x-demo:poll", [], False),
+    ("quorum_m", ["x-demo:*"], False),                                                       # a core key is never in scope
+    ("quorum_m", ["quorum_m"], False),
+    ("x-demo:*", ["x-demo:poll"], False),
+])
+def test_key_in_scope_matches_a_listed_key_or_a_module_wildcard_only(key, pats, want):
+    # mutant: key_in_scope -> True, or the prefix test loosened, or the split_module_name guard dropped
+    assert approvers.key_in_scope(key, pats) is want
+
+
+def test_a_set_config_delegation_signs_only_the_keys_it_lists(tmp_path):
+    # mutant: the `key_in_scope` line in `_delegation_check` removed
+    a = gated(tmp_path, [PHONE])
+    assert add_deleg(a, PHONE, scope={"acts": ["set-config"], "keys": ["x-demo:poll", "x-demo2:*"]}, per_day=50)["ok"]
+    assert sign(a, body(action="set-config", key="x-demo:poll", value="1"))["ok"]
+    assert sign(a, body(action="set-config", key="x-demo2:anything", value="1"))["ok"]
+    for k in ("x-demo:other", "x-demo:pollx", "x-demo3:poll", "quorum_m", "cap_self"):
+        r = sign(a, body(action="set-config", key=k, value="1"))
+        assert not r["ok"], k
+
+
+def test_an_admit_delegation_signs_only_the_modules_it_lists_and_only_its_own_act(tmp_path):
+    # mutant: the `admit_modules` line in `_delegation_check` removed, or the act match loosened
+    a = gated(tmp_path, [PHONE])
+    assert add_deleg(a, PHONE, id="adm", scope={"acts": ["admit"], "admit_modules": ["demo", "other"]}, per_day=50)["ok"]
+    assert sign(a, body(action="admit", device_id=DEV, module="demo", principal="op"))["ok"]
+    assert sign(a, body(action="admit", device_id=DEV2, module="other", principal="op"))["ok"]
+    assert not sign(a, body(action="admit", device_id=DEV, module="third", principal="op"))["ok"]
+    assert not sign(a, body(action="set-config", key="x-demo:poll", value="1"))["ok"]       # an admit delegation is not a config one
+    (tmp_path / "b").mkdir()
+    b = gated(tmp_path / "b", [PHONE])
+    assert add_deleg(b, PHONE, per_day=50)["ok"]
+    assert not sign(b, body(action="admit", device_id=DEV, module="demo", principal="op"))["ok"]    # nor does a config one sign an admit
+
+
+def test_a_revoked_approver_id_cannot_be_enrolled_again(tmp_path):
+    # mutant: the `rec["id"] in self.approvers` refusal removed (a re-enrol would overwrite the revoked record)
+    a = gated(tmp_path, [PHONE, DESKTOP])
+    rr = revoke_rec(a, PHONE)
+    assert member(a, "approver-revoke", rr, [member_assertion(DESKTOP, "approver-revoke", rr)])["ok"]
+    again = new_approver(a, PHONE, DESKTOP.id)
+    r = member(a, "approver-add", again, [member_assertion(DESKTOP, "approver-add", again)])
+    assert not r["ok"] and "already enrolled" in r["why"]
+    assert "revoked" in a.approvers[PHONE.id]
+    stored = {x["id"]: x for x in json.loads((tmp_path / "state" / "approvers.json").read_text())}
+    assert "revoked" in stored[PHONE.id]
+    assert "enrolled" in present(a, PHONE, [{"id": "T", "acts": [h(SETCFG)]}])["why"]
+
+
+def test_a_break_glass_revoke_clears_every_delegation_on_reload(tmp_path):
+    # mutant: `if revoked_new: dead |= set(dels); dels = {}` removed in `_reload`
+    a = gated(tmp_path, [PHONE, DESKTOP])
+    rec = deleg(a, PHONE.id)
+    assert member(a, "delegate-add", rec, [member_assertion(PHONE, "delegate-add", rec), member_assertion(DESKTOP, "delegate-add", rec)])["ok"]
+    assert sign(a, body(action="set-config", key="x-demo:poll", value="1"))["ok"]
+    # break-glass: the verb writes an owner-signed revoked record into approvers.json, then asks the agent to reload
+    revoked = approvers.sign_record({**{k: v for k, v in a.approvers[PHONE.id].items() if k != "owner_sig"}, "revoked": now_of(a)}, OWNER)
+    path = tmp_path / "state" / "approvers.json"
+    path.write_text(json.dumps([revoked if r["id"] == PHONE.id else r for r in json.loads(path.read_text())]))
+    assert a._reload(1)["ok"]
+    assert "revoked" in a.approvers[PHONE.id]
+    assert a.delegations == {} and "d1" in a.dead_delegations
+    assert not sign(a, body(action="set-config", key="x-demo:poll", value="2"))["ok"]
+
+
+@LINUX
+def test_break_glass_approver_add_refuses_an_enrolled_id_and_keeps_the_revoked_record(hive):
+    # mutant: the "is already enrolled" refusal in the verb's own break-glass path removed
+    run_ctl(hive, *add_flags(PHONE), passphrase_fd=PASS)
+    run_ctl(hive, *add_flags(DESKTOP), "--break-glass", passphrase_fd=PASS)
+    run_ctl(hive, "owner", "approver", "revoke", "--credential-id", DESKTOP.id, "--break-glass", passphrase_fd=PASS)
+    r = run_ctl(hive, *add_flags(DESKTOP), "--break-glass", passphrase_fd=PASS, check=False)
+    assert r.returncode == 1 and "already enrolled" in r.stderr
+    assert "REVOKED" in run_ctl(hive, "owner", "approver", "list").stdout
+
+
+# Group 2 (layered: the agent still refuses if one of these breaks, so these pin the inner layer on its own). The functions
+# are called in-process with the agent's status faked; no seed is read and no passphrase is asked on any path below.
+
+@pytest.fixture
+def ow(monkeypatch):
+    import hivemind_owner as o
+    monkeypatch.delenv("HIVE_APPROVAL_TICKET", raising=False)
+    monkeypatch.setattr(o, "_UNLOCKED_SEED", None, raising=False)
+    monkeypatch.setattr(o, "_NON_INTERACTIVE", False, raising=False)
+    return o
+
+
+@pytest.mark.parametrize("bad", ["", "not a ticket!", "a" * 129, "t/../x"])
+def test_a_set_but_malformed_ticket_is_a_refusal_never_no_ticket(ow, monkeypatch, bad):
+    # mutant: `_approval_ticket` returns None for a malformed value (the id_ok check dropped)
+    monkeypatch.setenv("HIVE_APPROVAL_TICKET", bad)
+    with pytest.raises(ow.OwnerPromptRefused):
+        ow._approval_ticket()
+
+
+def test_an_unset_ticket_is_none_and_a_good_one_is_returned(ow, monkeypatch):
+    assert ow._approval_ticket() is None
+    monkeypatch.setenv("HIVE_APPROVAL_TICKET", "T-1.a:b")
+    assert ow._approval_ticket() == "T-1.a:b"
+
+
+def test_the_owner_seed_is_not_read_under_a_ticket_even_when_it_is_already_unlocked(ow, monkeypatch):
+    # mutant: the `_approval_ticket() is not None` refusal at the top of `_owner_seed` removed
+    monkeypatch.setattr(ow, "_UNLOCKED_SEED", b"s" * 32)
+    monkeypatch.setenv("HIVE_APPROVAL_TICKET", "T-1")
+    with pytest.raises(ow.OwnerPromptRefused):
+        ow._owner_seed()
+    monkeypatch.delenv("HIVE_APPROVAL_TICKET")
+    assert ow._owner_seed() == b"s" * 32
+
+
+@pytest.mark.parametrize("status", [None, {"gated": False, "public_key": base64.b64encode(PUB).decode() if isinstance(PUB, bytes) else PUB},
+                                    {"public_key": "AAAA"}], ids=["no agent", "ungated agent", "gated flag missing"])
+def test_a_ticketed_signer_needs_a_gated_agent_and_never_falls_back_to_the_seed(ow, monkeypatch, status):
+    # mutant: the `st is None or not st.get("gated")` check in `_owner_signer` removed or loosened
+    monkeypatch.setenv("HIVE_APPROVAL_TICKET", "T-1")
+    monkeypatch.setattr(ow, "_agent_status", lambda: status)
+    monkeypatch.setattr(ow, "_owner_seed", lambda: pytest.fail("the seed was reached under a ticket"))
+    monkeypatch.setattr(ow, "_UNLOCKED_SEED", b"s" * 32)
+    with pytest.raises(ow.OwnerPromptRefused):
+        ow._owner_signer()
+
+
+def test_a_ticketed_signer_with_a_gated_agent_is_a_hard_gate(ow, monkeypatch):
+    monkeypatch.setenv("HIVE_APPROVAL_TICKET", "T-1")
+    pub = base64.b64encode(ed25519.pub_from_seed(SEED)).decode()
+    monkeypatch.setattr(ow, "_agent_status", lambda: {"gated": True, "public_key": pub})
+    monkeypatch.setattr(ow, "_owner_seed", lambda: pytest.fail("the seed was reached under a ticket"))
+    monkeypatch.setattr(ow, "_UNLOCKED_SEED", b"s" * 32)
+    monkeypatch.setattr(ow, "HIVE_HOME", "/nonexistent", raising=False)                      # the library's name, set by the loader
+    sg = ow._owner_signer()
+    assert sg.public_key() == ed25519.pub_from_seed(SEED)
+    assert sg._ticket == "T-1" and sg._fallback() is None and sg._fail is ow.OwnerPromptRefused
+
+
+@pytest.mark.parametrize("status,want", [
+    (None, False),
+    ({"gated": False, "tickets": ["T-1"]}, False),
+    ({"gated": True, "tickets": []}, False),
+    ({"gated": True, "tickets": ["T-2"]}, False),
+    ({"gated": True}, False),
+    ({"gated": True, "tickets": ["T-1"]}, True),
+])
+def test_the_owner_gate_under_a_ticket_passes_only_when_the_gated_agent_holds_that_ticket(ow, monkeypatch, status, want):
+    # mutant: the ticket-live check in `_owner_gate` loosened (no `gated`, no `ticket in tickets`) or falling through to the seed
+    monkeypatch.setenv("HIVE_APPROVAL_TICKET", "T-1")
+    monkeypatch.setattr(ow, "_agent_status", lambda: status)
+    monkeypatch.setattr(ow, "_owner_seed", lambda: pytest.fail("the seed was reached under a ticket"))
+    assert ow._owner_gate() is want
+
+
 # ---- the real CLI and a real agent --------------------------------------------------------------------------------------------
 
 def run_ctl(h, *args, passphrase_fd=None, env=None, check=True):
