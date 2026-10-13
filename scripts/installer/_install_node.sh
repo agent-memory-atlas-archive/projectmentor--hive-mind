@@ -332,7 +332,7 @@ if [ -n "$IS_ANDROID" ]; then
   ok "python3 $(python3 --version)"
   python3 -I -c "import requests" 2>/dev/null || {
     info "Installing requests (pip)..."
-    pip install requests
+    pip install 'requests>=2.32.4,<3'
   }
   ok "requests available (Termux, no uv)"
 else
@@ -358,7 +358,7 @@ else
 
   python3 -I -c "import requests" 2>/dev/null || {
     info "Installing requests..."
-    uv pip install --system requests
+    uv pip install --system 'requests>=2.32.4,<3'
   }
   ok "requests available"
 fi

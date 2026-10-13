@@ -1,0 +1,1 @@
+- D10: `requests` is pinned to `>=2.32.4,<3` in `requirements.txt` and in the installer's pip/uv lines (2.32.4 is the first release with the known credential and certificate-verification fixes). Core still needs `requests` for the sync client and the peer probes, so it stays a dependency; the bundled crypto remains stdlib-only.
