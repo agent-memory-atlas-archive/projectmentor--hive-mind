@@ -1,0 +1,1 @@
+- Security (CK-7): the Ed25519 verifier refuses a small-order public key (the identity and the seven other points of order dividing 8), which verified signatures nobody made; owner-key canonicalisation (`_canon_pub`) refuses them too, so they cannot be admitted. No signature-format or journal change. A node older than this release still accepts them until it updates.
