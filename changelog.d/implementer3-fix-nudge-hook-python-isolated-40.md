@@ -1,0 +1,1 @@
+- Nudge hook and installer scripts: the `python3` calls that run in the caller's directory (the nudge hook, `hive-mind status`, `update`, and the install probes before it enters the checkout; `_status.sh`, `_update.sh`, `_install_node.sh`) now run with `-I`, so a `json.py` or `requests.py` planted in that directory is never imported.
