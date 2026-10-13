@@ -30,6 +30,17 @@ class OwnerKeyLocked(Exception):
     anything is signed or written, so the journal and the key files are as they were."""
 
 
+class OwnerPromptRefused(OwnerKeyLocked):
+    """`--non-interactive` met a passphrase prompt (4.0 C2): the agent is absent, locked or refused the act, and the key
+    is sealed. Nothing was asked, read from stdin, signed or written. Callers exit 5, the install code for a locked key."""
+
+
+# `config set --non-interactive` and `module config set --non-interactive` set this: every passphrase prompt the verb
+# could raise (`_owner_seed`, reached directly or as `ChainSigner`'s fallback after the agent refused) becomes
+# `OwnerPromptRefused`. A passphrase given in $HIVE_OWNER_KEY_PASSPHRASE is not a prompt and still works.
+_NON_INTERACTIVE = False
+
+
 # The owner seed once unlocked, for the rest of THIS process: one `hive-mind` command asks for the
 # passphrase at most once, however many signatures it makes (unlock per command, h:af5ecf48c5). Never
 # written anywhere; it ends with the process.
@@ -71,6 +82,9 @@ def _owner_seed():
     if _UNLOCKED_SEED is not None:
         return _UNLOCKED_SEED
     if _is_file(OWNER_SEALED_PATH):
+        if _NON_INTERACTIVE and os.environ.get(_KEY_PASSPHRASE_ENV) is None:
+            raise OwnerPromptRefused("the owner key is locked and --non-interactive never asks for a passphrase: "
+                                     "run `hive-mind owner unlock`, then try again. Nothing was signed.")
         tries = 1 if os.environ.get(_KEY_PASSPHRASE_ENV) is not None else 3
         seed = None
         for attempt in range(1, tries + 1):

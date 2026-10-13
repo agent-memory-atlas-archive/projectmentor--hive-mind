@@ -597,15 +597,8 @@ def sync_cmd(args):
                 src = f"{var} env" if env in ("off", "permissive", "enforce") else ".peers.json (default permissive)"
                 print(f"sync {label} mode: {get()}  (from {src})")
             return
-        try:
-            cfg = json.loads(cfg_path.read_text()) if cfg_path.exists() else {}
-        except Exception:
-            cfg = {}
-        if mode:
-            cfg["sync_auth"] = mode
-        if outbound:
-            cfg["sync_auth_outbound"] = outbound      # #107: what this node requires before it pushes
-        sync_common.atomic_write_text(cfg_path, json.dumps(cfg, indent=2) + "\n")
+        sync_common.update_peers_file({**({"sync_auth": mode} if mode else {}),
+                                       **({"sync_auth_outbound": outbound} if outbound else {})})   # #107: outbound
         if mode:
             print(f"sync read-auth mode set to '{mode}' in {cfg_path}.")
             if os.environ.get("HIVE_SYNC_AUTH"):

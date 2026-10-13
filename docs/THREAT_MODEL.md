@@ -314,6 +314,9 @@ at once). Concretely:
   bytes. The socket is mode 0600 in a 0700 directory owned by the user, and a connection from any other uid is closed
   unread. The seed lives only in the agent's memory (never a file, argv, env or log); `--for` is an idle timeout (1m
   to 8h), 12h is a hard cap, and expiry, `owner lock`, a suspend/resume jump or a vanished socket end the process.
+  `config set` and `module config set --fleet|--fleet-node` take `--non-interactive` (4.0): the verb never prompts for the
+  passphrase or reads stdin, and exits 5 with nothing signed when the agent is absent, locked, or refuses the act (so a
+  front end that runs it cannot hang on, or feed its own input to, a passphrase prompt).
   Residuals, none changing a journal, signature or sync byte: (1) *admitted-device class (accepted for 3.x):* while it
   is unlocked, any process running as the operator can obtain signatures for the acts above, so it can set config under
   an installed module's prefix or admit a module device for a module named at unlock; it can never get the seed or a

@@ -1710,7 +1710,7 @@ def _config_value_arg(args, key, spec):
             raise ModuleError(f"{key} is a secret: do not put it on the command line (shell history, `ps`); "
                               "it is never taken from the command line. "
                               "Omit the value to be asked, or pass --stdin or --file PATH")
-        if sys.stdin is None or not sys.stdin.isatty():
+        if getattr(args, "non_interactive", False) or sys.stdin is None or not sys.stdin.isatty():
             raise ModuleError(f"{key} is a secret: no terminal to ask on, so pass --stdin or --file PATH")
         return getpass.getpass(f"{key} (hidden): ")
     if args.value is None:
@@ -1729,6 +1729,13 @@ def _config_set_verb(lib, args, name, schema, node, path):
     layer = "fleet" if args.fleet else "fleet-node" if args.fleet_node else "node"
     if spec and spec.get("scope", "node") != layer:
         raise ModuleError(f"{key} has scope {spec.get('scope', 'node')}: set it with {SCOPE_FLAG[spec.get('scope', 'node')]}")
+    quiet = bool(getattr(args, "non_interactive", False))
+    if quiet:
+        lib._NON_INTERACTIVE = True            # every passphrase prompt the verb could raise becomes exit 5 (4.0 C2)
+        if layer != "node":                    # the owner gate comes BEFORE the value is read, so a locked key never reads stdin
+            if layer == "fleet-node":
+                _device_tag(args.fleet_node)
+            _require_owner(lib, [("set-config", name)], prompt=False)
     value = _config_value_arg(args, key, spec)
     if spec:
         problem = config_value_problem(spec, value)
@@ -1746,7 +1753,8 @@ def _config_set_verb(lib, args, name, schema, node, path):
         print(f"{name}: set {key}")
         return
     tag = _device_tag(args.fleet_node) if layer == "fleet-node" else None
-    _require_owner(lib)
+    if not quiet:
+        _require_owner(lib)
     if store_fleet(lib, name, key, value, spec, tag):
         print(f"{name}: set {key} ({layer})")
     else:
@@ -1777,8 +1785,13 @@ def cmd_config(lib, args):
     source; secrets are masked everywhere and are never taken from the command line."""
     path = _config_path(lib, args.name)
     schema = installed_manifest(lib, args.name).get("config_schema")
-    node = _read_config(path)
     action = args.action
+    if action == "schema":              # the installed manifest's block, as signed: for a UI that renders a form (4.0 C2)
+        if schema is None:
+            raise ModuleError(f"{args.name} declares no config_schema")
+        print(json.dumps(schema, indent=1, sort_keys=True))
+        return
+    node = _read_config(path)
     merged = schema is not None or args.merged
     fleet, mine = fleet_layers(_gov(lib), args.name, lib.NODE_ID) if merged or action == "validate" else ({}, {})
     if action == "validate":
@@ -2241,18 +2254,33 @@ def cmd_install(lib, args):
     return rc
 
 
-def cmd_list(lib, args):
+def _list_rows(lib):
     state = load_state(lib)
-    if not state:
+    rows = []
+    for name, rec in sorted(state.items()):
+        sig = _installed_signature(lib, name)
+        rows.append({"name": name, "version": rec["version"], "publisher": fingerprint(rec["publisher"]),
+                     "signature": sig.split(" ")[0], "service": service_state(name),
+                     "device": _device_state(lib, rec["device_id"]), "trust": effective_trust(rec),
+                     "quota_use": _quota_use(lib, rec["device_id"]), "problem": None if sig == "valid" else sig,
+                     "config_schema": installed_manifest(lib, name).get("config_schema") is not None})
+    return rows
+
+
+def cmd_list(lib, args):
+    rows = _list_rows(lib)
+    if getattr(args, "json", False):
+        print(json.dumps({"schema": 1, "modules": rows}, indent=2))
+        return
+    if not rows:
         print("No modules installed.")
         return
     print(f"{'NAME':<16}{'VERSION':<10}{'PUBLISHER':<18}{'SIGNATURE':<10}{'SERVICE':<14}{'DEVICE':<10}{'TRUST':<10}QUOTA USE")
-    for name, rec in sorted(state.items()):
-        sig = _installed_signature(lib, name)
-        print(f"{name:<16}{rec['version']:<10}{fingerprint(rec['publisher']):<18}{sig.split(' ')[0]:<10}"
-              f"{service_state(name):<14}{_device_state(lib, rec['device_id']):<10}{effective_trust(rec):<10}{_quota_use(lib, rec['device_id'])}")
-        if sig != "valid":
-            print(f"  ! {sig}")
+    for r in rows:
+        print(f"{r['name']:<16}{r['version']:<10}{r['publisher']:<18}{r['signature']:<10}{r['service']:<14}"
+              f"{r['device']:<10}{r['trust']:<10}{r['quota_use']}")
+        if r["problem"]:
+            print(f"  ! {r['problem']}")
 
 
 def cmd_quota(lib, args):
@@ -2840,7 +2868,7 @@ def cmd_check(lib, args):
     return 1 if errors else 0
 
 
-CONFIG_ACTIONS = ("list", "get", "set", "unset", "validate")
+CONFIG_ACTIONS = ("list", "get", "set", "unset", "validate", "schema")
 
 
 def _install_flags(p):
@@ -2878,7 +2906,8 @@ def build_parser():
     t = sub.add_parser("trust", help="show a module's trust tier, or lower it on this node (confined); clearing the lowering needs the owner key")
     t.add_argument("name")
     t.add_argument("tier", nargs="?", choices=TRUST_TIERS)
-    sub.add_parser("list", help="installed modules: version, publisher, signature, service, device, quota use")
+    sub.add_parser("list", help="installed modules: version, publisher, signature, service, device, quota use").add_argument(
+        "--json", action="store_true", help="print one JSON object (the same columns, plus the problem text and whether the module declares a config_schema)")
     sub.add_parser("reapply", help=argparse.SUPPRESS)           # internal: re-renders the units
     rf = sub.add_parser("refresh", help="update every installed module to the newest version this core admits, or disable one that has none (`hive-mind update` runs this)")
     rf.add_argument("--check", action="store_true", help="show what would be updated or disabled; change nothing")
@@ -2898,6 +2927,7 @@ def build_parser():
     c.add_argument("--json", action="store_true", help="list, get and validate print JSON (a secret is masked)")
     c.add_argument("--stdin", action="store_true", help="set: read the value from standard input (the way to give a secret in a script)")
     c.add_argument("--file", metavar="PATH", help="set: read the value from a file (the way to give a secret in a script)")
+    c.add_argument("--non-interactive", action="store_true", help="set: never ask for the owner passphrase and never read stdin to unlock: exit 5 when the unlock agent is absent, locked or would not sign the act")
     ru = sub.add_parser("run", help="run a module's cli command without its launcher: module run <name> [--] <args>")
     ru.add_argument("name")
     ru.add_argument("args", nargs="*", help="passed to the module's command unchanged")
@@ -2935,8 +2965,8 @@ def main(lib, argv):
     if args.verb == "config":
         takes_key = args.action in ("get", "set", "unset")
         extra = (args.key if not takes_key else args.value if args.action != "set" else None)
-        if args.action != "set" and (args.stdin or args.file):
-            print("hive-mind module: --stdin/--file only apply to config set", file=sys.stderr)
+        if args.action != "set" and (args.stdin or args.file or args.non_interactive):
+            print("hive-mind module: --stdin/--file/--non-interactive only apply to config set", file=sys.stderr)
             return 2
         if extra is not None or (takes_key and args.key is None):
             print(f"hive-mind module: config {args.action} takes the wrong arguments", file=sys.stderr)
@@ -2944,6 +2974,12 @@ def main(lib, argv):
     try:
         rc = VERBS[args.verb](lib, args)
         return (rc or 0) if args.verb in ("check", "config", "run", "status", "add", "update", "install") else 0
+    except OwnerLocked as e:
+        print(f"hive-mind module: {e}", file=sys.stderr)
+        return EXIT_LOCKED
+    except getattr(lib, "OwnerPromptRefused", ()) as e:           # `--non-interactive` met a prompt (the agent refused after the gate passed)
+        print(f"hive-mind module: {e}", file=sys.stderr)
+        return EXIT_LOCKED
     except ModuleError as e:
         print(f"hive-mind module: {e}", file=sys.stderr)
         return 1

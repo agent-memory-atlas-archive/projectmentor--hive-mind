@@ -116,6 +116,9 @@ def _is_control_plane(argv):
     return commandmap.lookup(lib) is not None
 
 
+EXIT_LOCKED = 5       # the key is sealed and `--non-interactive` was asked not to prompt (module install uses the same code)
+
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     if not argv:
@@ -138,7 +141,7 @@ def main(argv=None):
             return hive_modules.main(hv(), argv[1:])
         except hv().OwnerKeyLocked as e:
             print(f"hive-mind: {e}", file=sys.stderr)
-            return 1
+            return EXIT_LOCKED if isinstance(e, hv().OwnerPromptRefused) else 1
     m = hv()
     parser = m.build_parser(plane="control")                     # the library owns every flag definition
     args = parser.parse_args(_to_library_argv(argv))
@@ -147,7 +150,7 @@ def main(argv=None):
         return m.dispatch(args)
     except m.OwnerKeyLocked as e:                 # sealed and not unlocked: nothing signed or written
         print(f"hive-mind: {e}", file=sys.stderr)
-        return 1
+        return EXIT_LOCKED if isinstance(e, m.OwnerPromptRefused) else 1    # --non-interactive: 5, as `module install`
 
 
 if __name__ == "__main__":
