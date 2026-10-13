@@ -1,14 +1,15 @@
 {
-  "digest": "8504d818b30bbbf2c9438d28ef5a11456dfe03ca7202fe80ece941f16994fac6",
+  "digest": "bdbc9263e84cdf5e95844c3ecae3b6f7e98ba4b07c53b4623ab35cdb221222ff",
   "files": {
     ".github/FUNDING.yml": "ca6c63d7539bb7d2f809b5068781c78de97c028a44c5ae252b11bc1695caf85d",
     ".github/ISSUE_TEMPLATE/bug_report.yml": "22df51b1e51c25f50726392c79811116b88c40370843ff2d4a3e76b643f1cb68",
     ".github/ISSUE_TEMPLATE/config.yml": "3b57571a57a35ae2a2e1f4ea7771e0674673d3b15dfcd5608d26f2b757cd53e1",
     ".github/dependabot.yml": "42652acf58277a489b63308f8f32e68ec5b8ef14a1e422e0fee22c73f85defe3",
-    ".github/pull_request_template.md": "64c9099d2857119c8d471c6cc6f7982232bdc4e4263a7a357a21ee58b433c054",
+    ".github/pull_request_template.md": "d93f078fbae61360c72a52f347cfafc8cfc243fc64f751765e0df1a1df1c5ad6",
     ".github/workflows/ci-macos.yml": "43e46083e18a98e30198ce1eaa0edaa7e3731b89b80566301ae6b58b17b08b7c",
     ".github/workflows/ci.yml": "5fad713bdf671c5c5049ede62cd55c75cdd8dd7a47fd711c0cf2b334c1beccd7",
     ".github/workflows/cla.yml": "09e9c23c9183758cf86ccf10ed8975b3660bd59c8e90846866c96ac723a7e40f",
+    ".github/workflows/release-issue-close.yml": "a625c6cf5a913245d3bf1dfba5111e270d8f8685d411e0593419e36bee83de4b",
     ".github/workflows/sign.yml": "ce497aa2a81d7218813774ba4a0f4defa21516ef60b9dafa42140d2184237c67",
     "CHANGELOG.md": "3c603d55aa7587e3680cb4c31c23fcd3ca8ac3448dd623e0ed9c96268028e117",
     "CLA.md": "78a00158ab3090dbb1a4de6ed03b150f22b5a0e99bcbba139a6244728780cc7b",
@@ -18,6 +19,7 @@
     "advisories.json": "e1f7246819257c9cdcb8118aaee972ed89f22fb056d67230320d5ea7fdce6703",
     "cells/example-tool.json": "1ef1bb649f6805631bb6c20940baefb4a4bd867122b2c9e9b565c69aac30f060",
     "chacha20poly1305.py": "6c3bb50dc126dab128184280b4d11cb1494800651e97aea941a821f31ff012fd",
+    "changelog.d/ci-release-issue-close.md": "b1b64493fd10c1cde711239319e61a1188b92b8e0ab9418f4f4c88607793aa5b",
     "commandmap.py": "8bd409700a0667a15fa435d74cb3d48ae79a1d80b963b78e8791be12f9bc6e1b",
     "config/.peers.json.example": "e81eb4533b4e06969946a8fa1c977e0692bc047275101bcdbae1504355866674",
     "config/nudge.env.example": "b278edb191f6588316383f5c095f6332fc3ccaf695c595dccd9b21c4322d5cf3",
@@ -80,6 +82,7 @@
     "ownerkey.py": "f788557585ece6a5e1ea37b95c6f0100da5bf02370175a980b029ab04feafaa2",
     "requirements.txt": "272ff81551f0350c3feea5d7b134ce5ecd49c2d88c4e14167ddd2933858fb16a",
     "scripts/README.md": "b5b8ac787f54bbed620d65f30cb21c334b4e628713e7a977b932a366ad628beb",
+    "scripts/ci/release_issue_close.py": "e9e16fbbbd5765c911bb1b91fb21e0e5ef788377f8ba701f1ab82e08fc2f27a7",
     "scripts/common/_smoke_daemon.sh": "596c41c202e5e49d14a88df525b421d42fc13143ec0636e9eda4c7ccf712723a",
     "scripts/common/_smoke_isolate.sh": "038ce36dd9da922a0ec9d6c5f0965d6b78b2af2f909e31f34c157e7a2901cdeb",
     "scripts/common/gen_keypair.py": "4f1cf8fd3be80361c44c4fea3e9eb253be1e1e41d87cbab2b095838f93f39793",
@@ -249,6 +252,7 @@
     "tests/test_rebuild_atomic.py": "2d48911d76948053f3a2d21968b7518ac1662edc7b682933516a9d9c753eaef2",
     "tests/test_recipient_pubkeys.py": "5c899c02684b5398724a86801a0e2dc502b607e0daa95a47dded3f4e50dcff3a",
     "tests/test_ref_fields.py": "e53a930d7094bef9ceb140aeb4698d719edfedacb4c6692b91ba7cd7271788c7",
+    "tests/test_release_issue_close.py": "7841fb56966d310be1b11a50495944070c4feb434a1c78c71500a397cb97dd88",
     "tests/test_removed_aliases.py": "c9455aef9b1ad428014ca4472d2e9c93508ec3f3e2711577185817295b03240c",
     "tests/test_removed_pointers.py": "a483746a1e4a4930ae3576f1323115e4a659b8f8a5fb4841b394379ddc0c68aa",
     "tests/test_retire_keep_through.py": "9936b542b0c01ce104d017b66e6de8c9aef9b5c850a121b6daf606af7c424661",
@@ -290,6 +294,6 @@
     "vocabulary.py": "3a6977fc89573561e6248748db90379acc810ff183556e220ce6bf1b2c0d0d3b",
     "x25519.py": "ec1967595a2306cde860afe4dffab40a3f833d089de6caf5c9c080df8fd45726"
   },
-  "sequence": 650,
+  "sequence": 652,
   "version": "4.0"
 }
