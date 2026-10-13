@@ -13,7 +13,7 @@ HV="${HIVE_HOME:-$HOME/projects/hive-mind}/hv"
 payload="$(cat)"   # consume stdin once; re-parse from the variable
 
 parse() {  # parse <key1> [key2 ...] -> first present, non-empty value
-  printf '%s' "$payload" | python3 -c '
+  printf '%s' "$payload" | python3 -I -c '
 import sys, json
 try:
     d = json.load(sys.stdin)

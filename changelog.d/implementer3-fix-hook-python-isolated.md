@@ -1,1 +1,1 @@
-- Session hook: the `python3` call now runs with `-I`, so a `json.py` in the session's project directory is never imported.
+- Session and nudge hooks: the `python3` calls now run with `-I`, so a `json.py` in the session's project directory is never imported.

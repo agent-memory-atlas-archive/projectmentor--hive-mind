@@ -169,3 +169,22 @@ def test_session_hook_never_imports_a_module_planted_in_the_session_cwd(tmp_path
     assert r.returncode == 0
     assert not marker.exists()
     assert "s1" in log.read_text().split()
+
+
+def test_nudge_hook_never_imports_a_module_planted_in_the_session_cwd(tmp_path):
+    """Same guard for nudge_hook.sh, which runs on every prompt in the session's project directory."""
+    home = tmp_path / "home"
+    home.mkdir()
+    fake_hv = home / "hv"
+    fake_hv.write_text("#!/bin/sh\nexit 0\n")
+    fake_hv.chmod(0o755)
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    marker = tmp_path / "planted-ran.txt"
+    (proj / "json.py").write_text(f"open({str(marker)!r}, 'a').write('json')\n")
+    r = subprocess.run(["bash", str(PROJECT / "scripts" / "common" / "nudge_hook.sh"), "user-prompt"],
+                       env=dict(os.environ, HIVE_HOME=str(home)), cwd=proj,
+                       input='{"cwd": "/tmp", "session_id": "s1", "prompt": "hi"}',
+                       capture_output=True, text=True)
+    assert r.returncode == 0
+    assert not marker.exists()
