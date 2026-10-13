@@ -106,6 +106,7 @@ def owner(fleet):
     yield o
     o.ctl("owner", "lock", check=False)
     shutil.rmtree(o.runtime, ignore_errors=True)
+    shutil.rmtree(o.runtime.parent / (o.runtime.name + "-core"), ignore_errors=True)
 
 
 def _gone(pid):
@@ -178,9 +179,18 @@ def test_a_bad_socket_directory_is_refused_on_both_sides(owner, how):
     assert not owner.sock.is_socket()
 
 
-def _as_nobody(code, *args, timeout=30):
-    """Run `code` (python3 -I -c) as the `nobody` uid, from `/`, with only a scrubbed PATH."""
-    return subprocess.run([sys.executable, "-I", "-c", code, str(CORE), *args], user=NOBODY, group=65534, cwd="/",
+def _readable_core(owner):
+    """A world-readable copy of the core's Python (the runner's checkout is under a 0750 home that `nobody` cannot enter)."""
+    dst = owner.runtime.parent / (owner.runtime.name + "-core")
+    shutil.copytree(CORE, dst, ignore=shutil.ignore_patterns(".git", "tests", "__pycache__", "docs", "scripts", "cells"))
+    for d in [dst, *(p for p in dst.rglob("*") if p.is_dir())]:
+        d.chmod(0o755)
+    return dst
+
+
+def _as_nobody(core, code, *args, timeout=30):
+    """Run `code` (python3 -I -c) as the `nobody` uid, from `/`, with only a scrubbed PATH, against the copy at `core`."""
+    return subprocess.run([sys.executable, "-I", "-c", code, str(core), *args], user=NOBODY, group=65534, cwd="/",
                           env={"PATH": "/usr/bin:/bin"}, capture_output=True, text=True, timeout=timeout)
 
 
@@ -213,15 +223,16 @@ print("connect: ok, bytes back:", len(got))
 def test_a_second_uid_is_closed_before_any_byte(owner):
     pid = owner.agent_pid()
     assert owner_agent.Client(str(owner.sock)).status()["ok"]            # the owner's uid is served
+    core = _readable_core(owner)
     # Behind the directory and file modes: nobody cannot reach the socket at all.
-    out = _as_nobody(_PROBE, str(owner.sock))
+    out = _as_nobody(core, _PROBE, str(owner.sock))
     assert "client: refused" in out.stdout and "client: answered" not in out.stdout, out.stdout + out.stderr
     assert "connect: PermissionError" in out.stdout, out.stdout + out.stderr
     # Behind the peer-credential check: open the modes on purpose, so the agent's own SO_PEERCRED test is all that is left.
     owner.runtime.chmod(0o755)
     owner.sockdir.chmod(0o755)
     owner.sock.chmod(0o666)
-    out = _as_nobody(_PROBE, str(owner.sock))
+    out = _as_nobody(core, _PROBE, str(owner.sock))
     assert "client: refused" in out.stdout, out.stdout + out.stderr                       # the client refuses a directory it does not own
     assert "bytes back: 0" in out.stdout, out.stdout + out.stderr                         # the agent closed without a reply
     owner.sockdir.chmod(0o700)
