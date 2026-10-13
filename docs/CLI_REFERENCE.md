@@ -658,10 +658,16 @@ hive-mind module add <name> ... --device-id <id>           # replay of a plan: u
 `--plan` prints `{schema: 1, verb, bodies: [{act, body, canonical, sha256}], replay: {extra_argv}}` on stdout and signs
 and writes nothing: no unlock, no passphrase prompt, no agent call, no journal entry, no peer. `canonical` is the exact
 byte string the owner signature would cover (`body` is the same object, `owner_pub` included, `owner_sig` not) and
-`sha256` is its hash; the real run signs those bytes. `--plan` needs `--json`, and the owner key on this device. A verb that
+`sha256` is its hash; the real run signs those bytes. `--plan` needs `--json`. `config set`, `group admit|revoke` and the
+`admit` alias need only that a governance owner is declared in the journal (the plan holds the owner's public key, so
+they plan on any node that has synced it); the `module` verbs also need the owner key on this device, because
+`module add --plan` mints the module's device key. A verb that
 would refuse (an unknown key, a bad value, an unknown device) exits as it does without `--plan` and prints no plan; one with
-nothing to sign (the value is already set, the device is not admitted) prints `bodies: []`. The verb's own messages go to
-stderr. A secret value, and `--stdin`/`--file`, cannot be planned: the plan would print the value. `module add --plan`
+nothing to sign (the value is already set, the device is not admitted) prints `bodies: []`. A plan prints nothing else on
+stdout, and no success line anywhere (nothing was set); a refusal's reason goes to stderr. A secret value, and
+`--stdin`/`--file`, cannot be planned: the plan would print the value. That holds for `config set`, `config confidence|quorum
+set` and `module config set` alike: `x-<module>:<name>` with a secret name, or one the installed module's config_schema
+marks `secret`, is refused. `module add --plan`
 mints the module's device key in the key dir (a device key, not owner material) and puts its id in `replay.extra_argv`
 (`--device-id`, and `--principal` when it was derived); a second plan reuses that key, and the real run takes it over. Run the
 verb with the argv plus `replay.extra_argv` to sign the same bodies. `quota` has no signed body and is not planned.
@@ -806,7 +812,10 @@ hive-mind owner restore                              # recover the key from the 
 hive-mind owner revoke <node_id:seq|all>             # tombstone an escrowed key so `restore` skips it
 hive-mind owner seal                                 # seal a plaintext owner key at rest under a passphrase
 hive-mind owner unlock [--for 15m] [--module m]...   # ask for the passphrase once; a per-user agent then signs a few module acts
+hive-mind owner unlock --gated --rp-id HOST [--port 8444] [--approvers-min N] [--allow-synced]   # (4.0) gated mode: sign only what an approver's passkey approved
 hive-mind owner lock                                 # end the agent now (it exits and clears its seed page)
+hive-mind owner approver add|revoke|list ...         # (4.0) enrol or revoke a passkey approver (WebAuthn ES256/EdDSA)
+hive-mind owner delegate add|revoke|list ...         # (4.0) a scoped, capped, expiring right to sign without a ticket
 hive-mind owner status                               # whether the agent is unlocked, its expiry, the acts it signed or refused
 hive-mind owner standby <device_id> [--off]          # declare an advisory standby key holder
 hive-mind owner transfer <new_owner_pub>             # immediate handoff to a key the target already holds
@@ -820,6 +829,22 @@ add|remove|quota` and `config set x-<module>:…` then run without a passphrase 
 `transfer`, `rotate`, `group admit` of a voting device and owner-signed links are unchanged. A plain `owner unlock` (no `--module`)
 admits nothing, so `module add` then prompts once, up front. `HIVE_OWNER_KEY_PASSPHRASE` is ignored here. See THREAT_MODEL.md
 for what an unlocked agent exposes and the operator rule.
+
+**Gated mode, approvers and delegations (4.0, owner approval slice A1).** `owner unlock --gated --rp-id HOST` starts an agent
+with no idle timeout and no 12h cap that signs a body only if an enrolled approver's passkey approved its hash (a presented
+ticket) or a live delegation covers it. It needs `--approvers-min` (default 1) enrolled approvers, so enrol the first with
+the owner passphrase: `owner approver add --credential-id ID --alg es256|eddsa --pub BASE64 --label L --kind phone|key|desktop
+--break-glass` (`--pub` is the raw key: 64 bytes `x||y` for ES256, 32 for EdDSA). From then on the section 4.3 rule applies:
+one approver enrolled, one tap adds an approver or a delegation; two or more, two different approvers; revoking an approver
+takes one other approver, and revoking the only one is `--break-glass` (the passphrase, read on `/dev/tty`). Every membership
+verb takes `--plan --json`, which prints the `record`, the `challenge` an approver's passkey must sign and
+`assertions_needed`; run the verb again with the same `--at TS` and `--assertion FILE` per tap (a JSON object
+`{credentialId, authenticatorData, clientDataJSON, signature}`, base64url). `owner delegate add --id D --act set-config --key
+'x-hwatch:*' --per-day N --days D` (or `--act admit --module M`) is capped at 30 days and 200 a day. A run under an approved
+ticket sets `HIVE_APPROVAL_TICKET=<id>` and executes the planned argv (`--plan --json` first, then present the hashes): it
+signs those bytes through the agent or exits 5 with nothing signed, and never reads the seed or asks for a passphrase.
+`owner status` lists approvers, delegations, live tickets and, per signed act, the ticket and approver. The records live in
+the key directory (`approvers.json`, `delegations.json`, `used-tickets.json`, all 0600).
 
 
 You run `hive-mind owner init` once, on whichever machine you want to hold the owner key.

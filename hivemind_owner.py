@@ -16,6 +16,7 @@ library name, so importing this file on its own is harmless, but calling anythin
 """
 
 import contextlib
+import io
 import hashlib
 import base64          # noqa: F401  (the moved bodies use the library's names; these are this file's own)
 import os              # noqa: F401
@@ -48,6 +49,19 @@ _NON_INTERACTIVE = False
 # written anywhere; it ends with the process.
 _UNLOCKED_SEED = None
 _KEY_PASSPHRASE_ENV = "HIVE_OWNER_KEY_PASSPHRASE"
+_TICKET_ENV = "HIVE_APPROVAL_TICKET"
+
+
+def _approval_ticket():
+    """The approved ticket this run executes under (the executor sets `HIVE_APPROVAL_TICKET`), or None. A set but
+    malformed value is a refusal, never "no ticket": under a ticket the seed and the passphrase are out of reach."""
+    t = os.environ.get(_TICKET_ENV)
+    if t is None:
+        return None
+    import approvers
+    if not approvers.id_ok(t):
+        raise OwnerPromptRefused(f"${_TICKET_ENV} is not a ticket id: nothing was signed")
+    return t
 
 
 def _key_passphrase(prompt, confirm=False):
@@ -81,6 +95,9 @@ def _owner_seed():
     missing or stale one only costs `hv` its certainty, never authority, since authority is a signature
     that `hv` cannot produce."""
     global _UNLOCKED_SEED
+    if _approval_ticket() is not None:
+        raise OwnerPromptRefused("this run presented an approval ticket: the owner seed is not read and no passphrase is "
+                                 "asked under a ticket. Nothing was signed.")
     if _UNLOCKED_SEED is not None:
         return _UNLOCKED_SEED
     if _is_file(OWNER_SEALED_PATH):
@@ -209,6 +226,16 @@ def _owner_signer():
     key, a `ChainSigner`: the agent first, and on a refusal or an unreachable agent one passphrase prompt and a
     `FileSigner`, saying why. Else unlocks like `_owner_seed` (which it wraps); the seed goes no further than the
     signer, so a caller holds `sign(bytes)` and never the seed."""
+    ticket = _approval_ticket()
+    if ticket is not None:
+        st = _agent_status()
+        if st is None or not st.get("gated"):
+            raise OwnerPromptRefused("this run presented an approval ticket but no gated owner agent holds the owner key: "
+                                     "nothing was signed, and no passphrase is asked under a ticket.")
+        import owner_agent
+        return owner_agent.ChainSigner(owner_agent.Client(owner_agent.socket_path(HIVE_HOME)),
+                                       base64.b64decode(st["public_key"]), lambda: None,
+                                       ticket=ticket, fail=OwnerPromptRefused)
     if _UNLOCKED_SEED is None and _owner_key_exists():
         st = _agent_status()
         if st is not None:
@@ -224,7 +251,12 @@ def _owner_gate(acts=()):
     prompt only when the agent is reachable, holds the governance owner's key, and would sign every act in `acts`
     ((action, arg) pairs, see `owner_agent.gate_ok`) with margin; otherwise it is `_owner_seed()` exactly as before,
     so the command is either covered by the agent for its whole run or unlocks up front, before it fetches or writes.
-    Returns whether the owner key is usable."""
+    Returns whether the owner key is usable. Under an approval ticket it is usable only if the gated agent holds that
+    ticket live; the seed and the passphrase are never reached."""
+    ticket = _approval_ticket()
+    if ticket is not None:
+        st = _agent_status()
+        return bool(st and st.get("gated") and ticket in st.get("tickets", ()))
     if _UNLOCKED_SEED is None:
         st = _agent_status()
         if st is not None:
@@ -237,6 +269,8 @@ def _owner_gate(acts=()):
 def _owner_usable_quietly(acts=()):
     """Whether `_owner_gate(acts)` would pass without asking anything: the key is already open in this process, is not
     sealed, has its passphrase in the environment, or the unlock agent covers every act in `acts`. Opens nothing."""
+    if _approval_ticket() is not None:
+        return _owner_gate(acts)
     if _UNLOCKED_SEED is not None or not _is_file(OWNER_SEALED_PATH):
         return True
     if os.environ.get(_KEY_PASSPHRASE_ENV) is not None:
@@ -455,20 +489,24 @@ def _plan_record(action_payload):
 
 def plan_verb(verb, fn, replay=None):
     """Run `fn()` (an owner verb's body) in plan mode and print `{schema, verb, bodies, replay}` as JSON. Every
-    `_append_governance` inside records its canonical body and signs and writes nothing; the verb's own output goes to
-    stderr so stdout is the JSON alone. `replay` is a callable returning the extra argv that fixes what the verb minted
+    `_append_governance` inside records its canonical body and signs and writes nothing; the verb's own output is held back
+    so stdout is the JSON alone: dropped when the plan succeeds (nothing was set), written to stderr when the verb refuses. `replay` is a callable returning the extra argv that fixes what the verb minted
     or derived (the executor appends it, so the run produces the same bodies). A refusal exits as the verb does."""
     global _PLAN
     if _PLAN is not None:
         raise RuntimeError("plan mode does not nest")
     _PLAN = []
+    said = io.StringIO()
     try:
-        with contextlib.redirect_stdout(sys.stderr):
+        with contextlib.redirect_stdout(said):
             fn()
         bodies = list(_PLAN)
     except PlanRefused as e:
         print(f"{verb}: cannot plan: {e}", file=sys.stderr)
         sys.exit(1)
+    except SystemExit:
+        sys.stderr.write(said.getvalue())          # a refusal says why, on stderr, and exits as the verb does
+        raise
     finally:
         _PLAN = None
     print(json.dumps({"schema": 1, "verb": verb, "bodies": bodies,
@@ -1305,6 +1343,10 @@ def _config_set(key, value):
         if _governance_state(merkle.read_all_entries(JOURNAL_DIR)).get("module_config", {}).get(key) == value:
             print(f"{key} is already {value!r}: nothing to sign")
             return True
+        if _PLAN is not None:
+            import hive_modules
+            if hive_modules.secret_config_key(CONTRACT_VERSION, key):
+                raise PlanRefused(f"{key} is a secret: a plan prints the value, so it cannot be planned; set it on the owner machine")
         if _append_governance({"action": "set-config", "key": key, "value": value}):
             print(f"set {key} = {value}")
             return True

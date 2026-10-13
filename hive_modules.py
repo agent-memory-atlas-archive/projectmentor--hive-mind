@@ -1467,6 +1467,23 @@ def installed_manifest(lib, name):
         raise ModuleError(f"{name}'s installed manifest is not usable ({e}): `hive-mind module update {name}`")
 
 
+def secret_config_key(contract_version, full_key):
+    """Whether the module key `x-<module>:<name>` holds a secret: its name looks like one, or the installed module's
+    config_schema marks it `secret`. A plan prints the value it would sign, so a secret key cannot be planned."""
+    sp = vocabulary.split_module_name(full_key)
+    if sp is None:
+        return False
+    name, local = sp
+    if _is_secret_key(local):
+        return True
+    try:
+        schema = validate_manifest((modules_dir() / name / MANIFEST).read_bytes(), contract_version).get("config_schema")
+    except (OSError, ModuleError):
+        return False
+    ent = schema_entry(schema, local) if isinstance(schema, dict) else None
+    return bool(ent and ent[1].get("secret"))
+
+
 def schema_entry(schema, key):
     """(schema key, entry) for a concrete config key, or None: an exact name first, then a `{word}` template whose
     segments each match one `[a-z0-9_-]+` segment."""
