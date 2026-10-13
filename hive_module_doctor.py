@@ -367,7 +367,7 @@ def fix(hv, dry=False, now=None):
         for f in changed:
             lines.append(f"  {'would re-render' if dry else 're-rendered'} unit {f} (module {name})")
         if changed and not dry:
-            hive_modules._write_units(hv, name, manifest)      # stop first: a daemon that becomes a timer must not keep running
+            hive_modules._write_units(hv, name, manifest, path=hive_modules.recorded_path(rec))  # stop first: a daemon that becomes a timer must not keep running
         if stopped:
             lines.append(f"  module {name} is stopped; `systemctl --user start {unit}` to resume (left alone)")
         if stopped and not changed:

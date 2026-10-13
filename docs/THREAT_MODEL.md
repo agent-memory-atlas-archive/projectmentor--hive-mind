@@ -578,6 +578,9 @@ owner key (clearing that lowering, or an update that signs a higher tier than th
 publisher signed. Residual, needing an admitted device or local access and so accepted for 3.x: a process running as the
 operator's own user can edit `.modules.json` and so change the node-local tier; the OS account is the boundary. A
 publisher key holder can sign `trusted`; the pinned key and the operator's look at the printed tier are the control.
+Residual, admitted device only and so accepted for 3.x: `ProtectSystem=strict` makes paths read-only, not unreadable. The node
+key directory, `HIVE_HOME` and the modules directory are hidden from a confined unit only because their defaults sit under
+the home. Operator rule: keep `HIVE_KEY_DIR`, `HIVE_HOME` and `HIVE_MODULES_DIR` under the home for `confined` to hide them.
 
 ## Seat steering (agent seats driven by GitHub and the hive)
 
