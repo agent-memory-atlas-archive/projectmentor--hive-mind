@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import _realhome                                    # noqa: E402  (tests/_realhome.py)
 from hivefleet import Fleet                          # noqa: E402
+from hivefleet.publisher import ThrowawayPublisher   # noqa: E402
 
 
 # Resolved at import, before any fixture points CLAUDE_CONFIG_DIR / HIVE_IDENTITY_STASH at the per-test sandbox.
@@ -43,3 +44,9 @@ def fleet_factory(tmp_path):
 @pytest.fixture
 def fleet(fleet_factory):
     return fleet_factory(1)
+
+
+@pytest.fixture
+def publisher(tmp_path):
+    """A fresh throwaway module publisher whose seed lives in memory only; its fixture repos go under this test's temp dir."""
+    return ThrowawayPublisher(tmp_path / "publisher")
