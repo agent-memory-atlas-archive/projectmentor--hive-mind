@@ -402,7 +402,10 @@ def _boot_report(before, waited, dry):
 
 def _heal_genesis_pin(entries, dry):
     """Placeholder for the genesis-pin repair (2.0 PR 2b). Pinning is operator state, so the repair is
-    `hive-mind doctor --fix` (`hivemind_owner.py` replaces this); `hv doctor --fix` only points at it."""
+    `hive-mind doctor --fix` (`hivemind_owner.py` replaces this); `hv doctor --fix` only points at it.
+    A member that LOST its pin is the exception (SN-14): the timer re-pins it from the local journal."""
+    if not dry and _restore_genesis_pin(entries):
+        return
     if _load_genesis_pin() is None and len(_self_signed_owner_acts(entries)) == 1:
         print("\n--fix: this hive's single genesis declaration is not pinned on this device. Pinning is "
               "operator state: run `hive-mind doctor --fix` (or `hive-mind owner pin --set`).")

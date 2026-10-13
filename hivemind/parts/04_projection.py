@@ -491,6 +491,34 @@ def _auto_pin_genesis(entries):
     return _write_genesis_pin(_genesis_pin_for(cands[0])) if len(cands) == 1 else None
 
 
+def _genesis_pin_lost(entries):
+    """SN-14: True when this device is a MEMBER of the hive its journal shows (it wrote the genesis, or the
+    owner admitted it) and holds no valid pin. Members got there through `owner init` or a join, and both pin,
+    so a member without a pin has lost it (deleted, truncated, restored from a backup)."""
+    if _load_genesis_pin() is not None:
+        return False
+    gov = _governance_state(entries)
+    return bool(gov.get("owner_id")) and (NODE_ID in gov.get("admitted", set()) or NODE_ID == gov.get("genesis_device"))
+
+
+def _restore_genesis_pin(entries=None):
+    """SN-14: re-pin a LOST pin from the genesis in this node's own journal, with no network input: the
+    batch being ingested never reaches this. Only for a member (`_genesis_pin_lost`) and only when the
+    journal holds exactly ONE candidate, so a stored rival leaves the choice to the operator. Returns the
+    pin it wrote, or None."""
+    if entries is None:
+        entries = merkle.read_all_entries(JOURNAL_DIR)
+    if not _genesis_pin_lost(entries):
+        return None
+    cands = _self_signed_owner_acts(entries)
+    if len(cands) != 1:
+        return None
+    pin = _write_genesis_pin(_genesis_pin_for(cands[0]))
+    print(f"hv: the genesis pin was missing on this device; re-pinned {pin['genesis_ref']} "
+          f"(owner {pin['owner_id']}) from the local journal.", file=sys.stderr)
+    return pin
+
+
 def _genesis_fingerprint(entries, gov=None):
     """This hive's genesis, in a form a human can compare across devices and an invite can carry:
     `<hive_id>/<owner_id>/<hash8>`. The hash prefix is what makes it a FINGERPRINT rather than a
