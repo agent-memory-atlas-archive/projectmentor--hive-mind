@@ -16,18 +16,29 @@ def _ended_devices(gov):
     return set(gov.get("purged") or ()) | (set(gov.get("revoked") or ()) - set(gov.get("admitted") or ()))
 
 
+def _peer_bound_device(peer):
+    """The device id a .peers.json entry is bound to, else None: the node-local `device` field
+    `group admit --principal` records beside the principal, else an `id` that is itself a device id (k1:…)."""
+    for key in ("device", "id"):
+        v = str(peer.get(key) or "")
+        if _is_device_id(v):
+            return v
+    return None
+
+
 def _peer_ended_device(peer, ended, cands=None, joins=None, admitted=()):
     """The ended device this .peers.json entry stands for, else None. An entry naming a device id is decided on
-    that id alone. Any other label (`group admit --principal` seeds the principal) is matched to an ended device
+    that id alone, and so is an entry whose `device` field `group admit` recorded. An entry with neither (a hand-set
+    one, or one written before that field existed) with a label other than a device id is matched to an ended device
     by that device's join-request URL, else by the host a signed request or hello once proved it at
     (.peer_candidates.json) when it is the only device verified there. Either match is dropped when an ADMITTED
     device (not ended) was verified at, or advertised, the same host: a reinstall at the old address keeps its
     entry. A join-request from a device outside `admitted` is only a claim and keeps nothing. A node-local judgement: no wire format involved (SECREV B6)."""
     if not ended or not isinstance(peer, dict):
         return None
-    pid = str(peer.get("id") or "")
-    if _is_device_id(pid):
-        return pid if pid in ended else None
+    bound = _peer_bound_device(peer)
+    if bound:
+        return bound if bound in ended else None
     url = str(peer.get("url") or "")
     host = _url_host(url)
     if not host:
@@ -152,9 +163,9 @@ def _peer_entry_device(entry, candidates):
     """The device a .peers.json entry points at, or None: its `id` when that is a device id (k1:…),
     else the ONE device verified at the entry's current host. Never a hostname or label: names are
     self-reported and collide (two devices named HP-cn2063cl on one hive)."""
-    pid = str(entry.get("id") or "")
-    if _is_device_id(pid):
-        return pid
+    bound = _peer_bound_device(entry)
+    if bound:
+        return bound
     host = _url_host(entry.get("url"))
     here = [d for d, hist in candidates.items() if host and host in hist]
     return here[0] if len(here) == 1 else None

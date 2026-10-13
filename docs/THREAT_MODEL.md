@@ -387,8 +387,9 @@ at once). Concretely:
   the journal). Closed node-locally, with no
   format change: a device the owner revokes or purges is dropped from `.peers.json` when the revoke or purge
   projects, and `hv sync now`, the sync loop and the doctor probes send it nothing. An entry is matched by
-  its device `id` (`k1:…`); an entry labelled otherwise (`group admit --principal` seeds the principal) is
-  matched by the URL of the ended device's last join-request at or before the revoke or purge that ended it (one this node received at or before the act counts whatever stamp it carries; a
+  its device `id` (`k1:…`) or by the node-local `device` field that `group admit --principal` records beside the
+  principal it seeds (no wire-format change); either decides the entry on that device alone. An entry with
+  neither (written before the field existed, or set by hand) and a label other than a device id is matched by the URL of the ended device's last join-request at or before the revoke or purge that ended it (one this node received at or before the act counts whatever stamp it carries; a
   join-request it writes afterwards leaves that URL where it was, and so does one this node received after the
   act's stamp, by its own arrival record, whatever stamp it carries), else by the one device verified at its host in
   `.peer_candidates.json`. A match is dropped when an admitted device was verified at, or advertised, the same
@@ -396,9 +397,10 @@ at once). Concretely:
   from a device that is not admitted is only a claim and keeps nothing. An entry set by hand with no device
   `id`, at an address that matches neither, keeps getting signed reads, so list peers by their `k1:…` id.
   Accepted for 3.x (an admitted device only): clock skew between this node's receipt clock and the act's stamp, and
-  entries that arrived before arrival records existed (they keep the stamp rule); that device can append a join-request whose URL differs from
-  the one `group admit` stored (the last one wins), after which the principal-labelled row matches nothing,
-  and a second admitted device whose join-request names the host keeps the row; list those peers by `k1:…`
+  entries that arrived before arrival records existed (they keep the stamp rule). Operator rule, for entries
+  written before the `device` field existed only: a principal-labelled row can match nothing when that device
+  appends a join-request whose URL differs from the one `group admit` stored, or when a second admitted device
+  names the host; re-run `group admit` for the device, or list the peer by its `k1:…`
   id. What remains: a peer you still list can do this to a third node, so
   list only devices you trust to hold your reads, and revoke a device before you stop trusting it. A daemon
   restart empties the nonce cache, so a request captured within the window is replayable once. Binding the
