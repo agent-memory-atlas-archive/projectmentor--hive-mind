@@ -1,5 +1,5 @@
 {
-  "digest": "8863dcd04efa6d739b13698d4a83bcc15a8177eea6802d6b072a14093e56bade",
+  "digest": "a0b998a0ba259dbbc5fb125480f0654c8f7a0bea5f1bc9f32485def23df5cd9b",
   "files": {
     ".github/FUNDING.yml": "ca6c63d7539bb7d2f809b5068781c78de97c028a44c5ae252b11bc1695caf85d",
     ".github/ISSUE_TEMPLATE/bug_report.yml": "22df51b1e51c25f50726392c79811116b88c40370843ff2d4a3e76b643f1cb68",
@@ -18,6 +18,7 @@
     "advisories.json": "e1f7246819257c9cdcb8118aaee972ed89f22fb056d67230320d5ea7fdce6703",
     "cells/example-tool.json": "1ef1bb649f6805631bb6c20940baefb4a4bd867122b2c9e9b565c69aac30f060",
     "chacha20poly1305.py": "6c3bb50dc126dab128184280b4d11cb1494800651e97aea941a821f31ff012fd",
+    "changelog.d/admit-device-field.md": "7dba7ab32e6881b8e0cc4d0d259b6adf89648b4ddf23685549cd3f0365ebef3e",
     "changelog.d/atomic-peers-key.md": "f77da26d1b02651f7b48fa412514ad3fb2020867b01a26447ae4b90a3714965b",
     "changelog.d/docs-419-3.1-followups.md": "f9d12ab2cea30a4b08486a9f9886d22db5a11fcbdf7ca01626488736a6dae67c",
     "changelog.d/implementer3-b10-passphrase-never-daemon.md": "355be728356a7662d21e113fed0e85ed05cf4ff0d0c96e5eb0aacadf45087537",
@@ -38,7 +39,7 @@
     "docs/MODULE_API.md": "419c340ce880c7bda902a3e8eab4c3ffa171b0b11a0a42a72678c94fd2555b98",
     "docs/NAMESPACES.md": "9bf01e1a565d4158f340be9f3c1f4ebc55583708546dbc29f18f1353f20ecdeb",
     "docs/SYNC_API.md": "acca61104873742601a17a5a897db4c763ab102f8661a3b6d47b344162920709",
-    "docs/THREAT_MODEL.md": "14edfd4e595ce0e2a0f13d66a49f9f46dbb7f6f55a5546fa373cdfde5593d19f",
+    "docs/THREAT_MODEL.md": "9c9eec01dff7262b1361e560f843024eb181641f71999152bb00c74468f5957f",
     "docs/WORKING_TOGETHER.md": "2ad8f81d57c57976c6c4bcc68ac5a1d77c6511346ba763eea9a90320cb56aba3",
     "docs/design/hivemind_continual_learning_design.md": "95dd0438ab71ab0f0bf85ca67e102e7b3cc28074ff9ce9a187ded9f5595828f5",
     "docs/history/P2P_DESIGN.md": "91b34fee3d1c55a1759b4d256c1c805afb5e084e874932bb133c2487825de1dd",
@@ -66,11 +67,11 @@
     "hivemind/parts/11_release_node.py": "cb02a9a4373b227be3af702e1ed306336d34177e3549b9ed37593565c741bef1",
     "hivemind/parts/12_capsules_keys.py": "67719c0092a322db32e03f6440dbfd955f27e4e1b2d0de43c4295e0338ac0c31",
     "hivemind/parts/13_doctor_status.py": "6b9ac1e4d461f4f2726e6709e9e8e1403a71183874e71341e8ab0ec6f9caeaa9",
-    "hivemind/parts/14_peers.py": "716cf63900bb46351945a0af4bca917d63d3b3cafb6993814428d7a8eda3df31",
-    "hivemind/parts/15_doctor_control_join.py": "03279171da3ad46b573b1b979d1d1e8c71faa571be85f2dc83a3190a282a4d3e",
+    "hivemind/parts/14_peers.py": "4206d6622523fc1d5fba1ad7bb872c16b5722edeaff4fcfef145472d0434c404",
+    "hivemind/parts/15_doctor_control_join.py": "bdeea9949cae0fadcb42089a0d475ca8d0c2f74fe6ec19876e73502589750577",
     "hivemind/parts/17_cli.py": "88771a15d24a16b594f779c0a2c1bb943ed2c25714f22488c0114fe027b6a9a4",
     "hivemind_ctl.py": "4765f0aa63b90f268f2f918264642ac4e843577abc0ca8d5785c41418d59c993",
-    "hivemind_owner.py": "cfe857fbd2b3ba0b1340e5c57b497dba3efe993098228f746d7e356cbbcf05be",
+    "hivemind_owner.py": "bc8353a53ffe11ff3e7c5bf2a39c048f2d459de93dd061d398e57c45fe3de622",
     "hv": "7a7d2f5974f92e943229ded51d1adb1fc15a330e030966d79c297b776a66756b",
     "integrations/claude-code/automode.py": "6e0ad30ed84ff725d88d64fd2754b8c9a9cd0fbcd79cdf36a19eaf743c2cb835",
     "integrations/claude-code/hive-memory/SKILL.md": "55c025490cd4afecce87901ade9077bada2a73b3443143f42391c2958ccf91bb",
@@ -233,7 +234,7 @@
     "tests/test_removed_pointers.py": "a483746a1e4a4930ae3576f1323115e4a659b8f8a5fb4841b394379ddc0c68aa",
     "tests/test_retire_keep_through.py": "9936b542b0c01ce104d017b66e6de8c9aef9b5c850a121b6daf606af7c424661",
     "tests/test_revoke_decision.py": "3a3de15e9a5bac4b7c4168162dde00ca6df9d86364d94165473067dfb5cca46c",
-    "tests/test_revoked_peer.py": "fc237a493993e8bbf4dd8fd21c51fac30ff10b1bedb2cd7530f0c76f133a9c8e",
+    "tests/test_revoked_peer.py": "a0c99add451ab4ea784909e95317e39e89076a72b25f211e99bd90d04fb8c25a",
     "tests/test_s2_split.py": "45a48bcf13f770555e9fd2b35e91f3bbaf77ef31dd87953dd7713fa2d9344b85",
     "tests/test_sealed_owner_key.py": "6d23e96512dc1881cd9c02eb37ed5d311e4dd8433f101fe63d6c90cb4c26fa2b",
     "tests/test_search_id.py": "e849aa86efc4c2c45e0d0b1ad11b169f463ba1c113c726a4d7514fdd73bedd7f",
@@ -269,6 +270,6 @@
     "vocabulary.py": "3a6977fc89573561e6248748db90379acc810ff183556e220ce6bf1b2c0d0d3b",
     "x25519.py": "ec1967595a2306cde860afe4dffab40a3f833d089de6caf5c9c080df8fd45726"
   },
-  "sequence": 593,
+  "sequence": 595,
   "version": "3.1"
 }
