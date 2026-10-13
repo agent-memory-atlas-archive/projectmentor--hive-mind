@@ -55,6 +55,10 @@ Every path belongs to one of three classes. A **loopback** caller is a request t
 | **Remote-auth** | `/sync/hello`, `/sync/chunk`, `/sync/ingest` | allowed | depends on the node's **sync auth mode** (below) |
 | **Local only** | the dashboard (`/`, `/index.html`, `/dashboard`, `/dashboard/`, `/logo.svg`, `/favicon.svg`) and every other `/api/*` path | allowed | only a validly **signed** request from an admitted device (the dashboard's per-node view, below); anything else gets **403**, even in `permissive` mode |
 
+**Viewer class (4.x).** A fourth class lives on hdash's own listener, not the daemon's: an allowlisted tailnet login (the
+`dashboard_viewers` node key), arriving through the tailnet front end, may `GET` the read-only dashboard subset and nothing else
+(no write, no `/sync/*`, no `node:` key, no secret). The daemon serves it no path and its access classes above are unchanged.
+
 **Sync auth mode** is set per node and is not journaled, so each node can switch on its own schedule:
 
 | Mode | Remote-auth paths from another device | Local-only paths from another device |
@@ -418,6 +422,7 @@ Written by the installer; per node and git-ignored.
 | `bind` | automatic | Optional override of the bind address (see *Binding*); `0.0.0.0` is treated as automatic |
 | `sync_auth` | `permissive` | Optional sync auth mode (`hv sync auth` sets it) |
 | `sync_auth_outbound` | `permissive` | Optional outbound mode: what a peer's hello must prove before this node pushes to it (`hv sync auth --outbound` sets it; see *Responder signatures*) |
+| `dashboard_share`, `dashboard_viewers`, `dashboard_viewer_port` | `false`, `[]`, unset | Node-local keys for hdash's read-only tailnet viewer listener (`hive-mind config node set` writes them; the daemon ignores them) |
 | `peers[].csrf_token_file` | optional | Path to the `.csrf-token` of a daemon on this same machine under another `HIVE_HOME`. A POST to a loopback daemon needs its `Hive-CSRF` token (or a valid signed envelope); `hv sync` reads this file to send it. Not needed for a remote peer |
 
 Admitting a device with `hive-mind group admit` also adds a peer entry from the address in its join request.

@@ -336,7 +336,7 @@ def build_parser(plane="data"):
                          ("set", "set one node key (the daemon re-reads at restart)")):
         _p = config_node_sub.add_parser(_name, help=_help)
         if _name != "list":
-            _p.add_argument("key", help="port | bind | sync_auth | sync_auth_outbound | dashboard_viewers | dashboard_viewer_port")
+            _p.add_argument("key", help="port | bind | sync_auth | sync_auth_outbound | dashboard_share | dashboard_viewers | dashboard_viewer_port")
         if _name == "set":
             _p.add_argument("value")
         _p.add_argument("--json", action="store_true", help="machine-readable output")

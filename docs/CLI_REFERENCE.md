@@ -70,8 +70,8 @@ hv config schema [--json]              # 4.0: the governed and node-local key ta
 hv config show [--json]                # 4.0: every governed key's value, source and who set it last (`set_by`), plus the `governance` block
 ```
 
-`config node` reads and writes the node-local keys (`port`, `bind`, `sync_auth`, `sync_auth_outbound`, `dashboard_viewers`,
-`dashboard_viewer_port`) with the same writer `hv sync auth` uses, so every other key in `.peers.json` is kept; an
+`config node` reads and writes the node-local keys (`port`, `bind`, `sync_auth`, `sync_auth_outbound`, `dashboard_share`,
+`dashboard_viewers`, `dashboard_viewer_port`) with the same writer `hv sync auth` uses, so every other key in `.peers.json` is kept; an
 environment override (`HIVE_BIND`, `HIVE_SYNC_AUTH`, `HIVE_SYNC_AUTH_OUTBOUND`) shows as `source: env` with its value masked,
 and the daemon re-reads the file at restart. `hive-mind config set <key> <value> --non-interactive` never asks for the
 owner passphrase and never reads stdin: when the unlock agent is absent, locked or refuses the act it exits 5 with nothing
