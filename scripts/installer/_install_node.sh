@@ -294,7 +294,7 @@ ok "tailscaled running"
 
 # Check auth state
 TS_BACKEND=$(sudo tailscale status --json 2>/dev/null \
-  | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('BackendState','NeedsLogin'))" \
+  | python3 -I -c "import sys,json; d=json.load(sys.stdin); print(d.get('BackendState','NeedsLogin'))" \
   2>/dev/null || echo "NeedsLogin")
 
 if [[ "$TS_BACKEND" == "Running" ]]; then
@@ -330,7 +330,7 @@ if [ -n "$IS_ANDROID" ]; then
   command -v python3 &>/dev/null || { info "Installing python (pkg)..."; pkg install -y python; }
   command -v git     &>/dev/null || { info "Installing git (pkg)...";    pkg install -y git; }
   ok "python3 $(python3 --version)"
-  python3 -c "import requests" 2>/dev/null || {
+  python3 -I -c "import requests" 2>/dev/null || {
     info "Installing requests (pip)..."
     pip install requests
   }
@@ -356,7 +356,7 @@ else
   fi
   ok "uv $(uv --version)"
 
-  python3 -c "import requests" 2>/dev/null || {
+  python3 -I -c "import requests" 2>/dev/null || {
     info "Installing requests..."
     uv pip install --system requests
   }
