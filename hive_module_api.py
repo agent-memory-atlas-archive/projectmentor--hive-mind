@@ -511,7 +511,7 @@ def _read_overview(ctx, q):
 
 
 def _read_tags(ctx, q):
-    return daemon.hv.api_tags()
+    return daemon.hv.api_tags(counts=q.get("counts", ["0"])[0] in ("1", "true"))
 
 
 def _read_related(ctx, q):
