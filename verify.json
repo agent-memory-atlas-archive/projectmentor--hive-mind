@@ -1,5 +1,5 @@
 {
-  "digest": "50b8cc9957fd0655373f271a88de0d557ad615d6d9199c081400cfc885be44a0",
+  "digest": "b69754dd1a332da159cc89762177663c3857ea7b574143a6b1929406ff547c4f",
   "files": {
     ".github/FUNDING.yml": "ca6c63d7539bb7d2f809b5068781c78de97c028a44c5ae252b11bc1695caf85d",
     ".github/ISSUE_TEMPLATE/bug_report.yml": "22df51b1e51c25f50726392c79811116b88c40370843ff2d4a3e76b643f1cb68",
@@ -25,6 +25,7 @@
     "chacha20poly1305.py": "6c3bb50dc126dab128184280b4d11cb1494800651e97aea941a821f31ff012fd",
     "changelog.d/impl2-module-commands-c1.md": "fd8f1a284a586ae758596053bec1198e714e1c564f6f9a474b8c295e549b6ada",
     "changelog.d/implementer-504-confined-runtime-dir.md": "1b330c19b71c7a4354573b7f0afb3f59c338bdeb02551f254205d988c5c464bc",
+    "changelog.d/implementer2-module-commands-c2.md": "d503249d1a0107c9828744f14e7eb46c9846eec51f4e2afa529776fad2838c83",
     "changelog.d/implementer3-docs-confined-runtime-dir.md": "41f8d61b4bde685f9a1fa16f8e7ba8d1efb07085706f5c7a8d7c32c3ea1d7512",
     "changelog.d/implementer3-g2-duplicate-issue.md": "93ddd2930b46d961b32a110d408bccac8fab6b69e6fbc1c9c539bc62186c4571",
     "changelog.d/peers-seen-at.md": "4e18cdf904d4c305bf34aaa943b7a1b15f8e3273c3ccf69c6ac9a10c63c95b91",
@@ -43,11 +44,11 @@
     "docs/HV_ARCHITECTURE.md": "06e7e5e1d880f3eaced360025fa1403ed0d89907c45ddfffd0746276244bb835",
     "docs/INTEGRATION_DOGFOOD.md": "4c5758bbf4073b1f71fc5274ed6bc42bc9a4c9153d372e22cf6e34d2be5a6ad1",
     "docs/INTERNALS.md": "4af5337542697b26ce6a8538cd5a0c24daf7a06e0fd106557820e1865a051e9b",
-    "docs/MODULES.md": "b5f1eb399f95b2d6b84bcb2f95ff1806d3f4603415334c0624069fe04aca18f6",
+    "docs/MODULES.md": "ebac56b8e49f2118d416585ba774e95b43e6fa64260c932c7c62029e5495ebc3",
     "docs/MODULE_API.md": "912abac3c90e4f0f838b2ec05c490b0fe008a67ad0cf946e99a1ee3be0a95de7",
     "docs/NAMESPACES.md": "9bf01e1a565d4158f340be9f3c1f4ebc55583708546dbc29f18f1353f20ecdeb",
     "docs/SYNC_API.md": "251a5bf57daa7c2a19398d87cbf44b937a5a90529ac611ffd2cf19d3b74c8bf8",
-    "docs/THREAT_MODEL.md": "d5a587e8d80bd8587c16a84c1f9d43027f36930473e6dd08218d33f78772ff75",
+    "docs/THREAT_MODEL.md": "c785d8bd45e6831053f5fea1560a82a4e698ebcc02bbd4b46eddd4eb7cdc6442",
     "docs/WORKING_TOGETHER.md": "e98b1e290aa20b8e676a54ba9a0c2c0965caee0f1bbebd442376eb7282e57aab",
     "docs/design/hivemind_continual_learning_design.md": "95dd0438ab71ab0f0bf85ca67e102e7b3cc28074ff9ce9a187ded9f5595828f5",
     "docs/history/P2P_DESIGN.md": "91b34fee3d1c55a1759b4d256c1c805afb5e084e874932bb133c2487825de1dd",
@@ -57,7 +58,7 @@
     "hive_module_api.py": "42104bb7608b0bc816d52750dd9f3b9720ec1954940ab85339fbf0349c86e100",
     "hive_module_client.py": "a734b85aff7cb4bd86f32a3b3ef697e5048e440e7a22d572668b9cebd86718e1",
     "hive_module_doctor.py": "6c942d56113dd19d926911cdc1ce6e1070b16bb46b9679bb10fd6e0e3686bf07",
-    "hive_modules.py": "aaa815d3c2cf6eb6e5e4f91d9e1c08ca433bf0252286e9922157985e13baa10b",
+    "hive_modules.py": "19668d801cff8ac4cea7035fd5bb28aac115b0298cbae1c893b07fa91ff80304",
     "hive_sync_daemon.py": "ebad53e217e00728a834d4914b49a5bd203d2eafd52829e8392272794529b031",
     "hive_version.py": "481670c649e5be6f10070f5d46004144eb7b2bc97d246dffac988711b1d615c3",
     "hivemind/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -241,7 +242,7 @@
     "tests/test_merkle_dedup.py": "be232d5c8466f1f470c98099c620093e0b3031aaa5bc4c9271caf47dcb53cb28",
     "tests/test_migrate_forget.py": "2451804f27ef0a5ad62f738dc37e190434948bd504618dd762c91697883065c2",
     "tests/test_module_api.py": "0f1af4eb8101c4faa10d94bdadfbcf7fa31fd2d524f80789b1d6c155b9df091b",
-    "tests/test_module_commands.py": "27878e62dc119b2c77858b684bf46867bdabab5ae06e3e9e880b8feb84b00dd1",
+    "tests/test_module_commands.py": "fc66c629b2abdff7421660508ca8e4bdfbfc43ea4452968fbb7b8d9c83e15598",
     "tests/test_module_config_schema.py": "1f53e7d9eeda978a6280087cdfb29572657916b97a97f1d6e17e442028fb9d59",
     "tests/test_module_doctor.py": "0654351fbb758ca6c258b0530a0e1843b4359fa8c7dbe34cba1b992ba9090d48",
     "tests/test_module_doctor_slot.py": "e437bcf5f12a619f906a265e96c84a8945ff151486439a34338442383eac3626",
@@ -322,6 +323,6 @@
     "vocabulary.py": "3a6977fc89573561e6248748db90379acc810ff183556e220ce6bf1b2c0d0d3b",
     "x25519.py": "ec1967595a2306cde860afe4dffab40a3f833d089de6caf5c9c080df8fd45726"
   },
-  "sequence": 696,
+  "sequence": 698,
   "version": "4.1"
 }
