@@ -200,6 +200,69 @@ and `fleet` keys; a template key or a `fleet-node` key is set after the install.
 asked for a fleet key (the owner sets it; `config validate` reports it). `update` asks only for keys the new schema
 added. The install of a module that has no `config_schema` takes none of these flags.
 
+#### Declared commands *(4.2)*
+
+`commands` (the manifest table above) is how a module says which of its operator verbs change state and how to take
+that back. A verb is words, not a string: core runs `cli.command`, then the verb's words, then the caller's remaining
+arguments, with no shell, and joins nothing. Core reads none of them (`--dry-run`, `--yes`, `--`, `--json` and a word
+with spaces reach the module as one word each). The verb core matches is the leading words that do not start with `-`,
+longest key first; `hwatch --json status` matches none, so that verb is undeclared and runs as before. A verb absent from the map is undeclared: treat it as one
+that cannot be undone. The rules below are the module's to keep; core checks the shape and `--help`, never the truth.
+
+**Every declared verb answers `--help` with exit 0 and no state change.** `module check --run` and `hv doctor` run it.
+
+**`--dry-run` (every verb that `mutates`).** Prints exactly what the verb would change, item by item, in the same shape
+the real run prints, and changes nothing: no file, snapshot, ledger, unit, request or journal write.
+
+- It never prompts and never needs `--yes`, including when stdin is not a terminal and including a `reversible: "no"`
+  verb. It prints the plan and exits 0 when the verb would act once confirmed. It uses the real run's refusal (same
+  message, same exit code) only for a reason other than the missing confirmation: a superseded restore, an unknown id,
+  a missing file. `--dry-run` together with `--yes` is still a dry run.
+- Text output starts with the line `dry run: nothing is changed`. A machine format keeps its format and does not
+  prefix that line; every record it prints carries `"dry_run": true` instead (a real run omits the field).
+
+**`reversible: "yes"`.**
+
+- *Keep what you remove.* Before the verb removes, moves or overwrites a thing, it writes the thing as it was to a
+  bounded archive of the module's own: a local 0600 file or snapshot section, never journaled, never synced. The bound
+  is a count and an age, stated in the module's README and `--help`. On each archive write, drop entries older than the
+  age, then drop the oldest until the count fits. One entry per change, with an undo id (the proposal id when the change
+  came from a proposal, else a fresh 16-hex id), the time, who ran it (the verb and its arguments, as data) and the
+  restore point.
+- *Print the way back.* For each change the real run prints one line `undo: <cli> <undo verb> <id>`, filled in: on
+  stdout for text output, on stderr when stdout is a machine format. A `--json` run carries `"undo": [argv…]` per
+  change. A value that contains spaces, or starts with `-`, stays one element.
+- *The undo verb* takes the undo id (or `--since <time>`: every archived change at or after that time, each handled on
+  its own, oldest first; a superseded id is reported and skipped; exit 1 if any selected id was refused, 0 only when
+  every one restored) and restores the thing as it was. It refuses, naming the reason and the id, exit 1, when the
+  restore point is superseded: the entry is gone (pruned) or past the age (expired, even when no write has pruned it);
+  a newer state exists for the same subject; or the subject no longer exists. There is no force flag. Undo is itself a
+  declared verb, takes `--dry-run`, never needs `--yes`, and archives what it replaces.
+- Nothing is read from the archive or a ledger as an instruction: the undo verb restores a stored object after
+  re-checking the current state.
+
+**`reversible: "no"`.**
+
+- The help text contains the sentence `This cannot be undone.` and names `--yes` and `--dry-run`.
+- The output of a real run starts with `this cannot be undone: <what>` and ends with what was done.
+- A run is non-interactive when stdin is not a terminal (`os.isatty(0)` is false). Then, without `--yes`, the verb
+  prints `refused: <verb> cannot be undone; add --yes to confirm, or --dry-run to see what it would do`, changes
+  nothing and exits 1. At a terminal the real run asks once (`This cannot be undone. Type yes to continue:`); only the
+  exact word `yes` proceeds. `--yes` is accepted, and ignored, on any declared mutating verb. No environment variable
+  stands in for `--yes`: the word must be in the argv a permission rule sees.
+- Such a verb is never `fleet: true`.
+
+**`reversible: "n/a"`.** Takes `--dry-run`, needs no `--yes`, prints what it did. A verb that deletes, closes, posts,
+moves or overwrites anything is never `n/a`. `module check` lists every `n/a` verb in one warning for the publisher to
+reread, because core cannot tell `n/a` from a lie.
+
+**Exit codes.** 0: done, or a dry run that would act. 1: refused (no `--yes` without a terminal, a superseded restore,
+an unknown id) or any selected id of a `--since` refused. The module's own usage errors keep its own code.
+
+**What an agent can rely on** is exactly as good as the publisher's honesty: the map is the signed publisher's claim,
+not a sandbox. Read the table at install and `hive-mind module commands <name>` after an update, and give the agent's
+settings a deny rule for `--yes`.
+
 #### `hive-mind module check <dir> [--run] [--deny TERM] [--json]`
 
 For publishers and CI. It validates the directory's `module.json` with the code `module add` uses, verifies the
@@ -209,7 +272,10 @@ manifest and shipped files for text that looks like a person, host, account or r
 **warnings**: a publisher aid, not a gate and not a claim that nothing identifying is shipped. With `--run` it also
 runs the module's `status` and `doctor` in a throwaway directory, with a scrubbed environment (`PATH`, a temporary
 `HOME`, `HIVE_MODULE_NAME/DIR/KEY_DIR` and `HIVE_DOCTOR_MODE=manual`; no owner or identity variable), a 20-second
-limit and a 64 KiB output cap, and checks the shapes above. `--run` runs the module's own code as you, which is why it
+limit and a 64 KiB output cap, and checks the shapes above. For a module that declares `commands` it also runs
+`<cli.command> <verb> --help` for each declared verb (5 s each, 60 s in all; then it stops and warns naming the verbs it did not
+run) and warns when one exits non-zero, when a mutating verb's help does not name `--dry-run`, or when a `reversible: "no"`
+verb's help lacks `This cannot be undone.`, `--yes` or `--dry-run`. Nothing in `check` runs a verb without `--help`. `--run` runs the module's own code as you, which is why it
 is a flag. A contract-1 manifest with a `cli` and no `commands` gets a warning (4.2), and the verbs a `commands` map
 declares `reversible: "n/a"` are listed in one warning so the publisher rereads them. Exit 0 when there is no error, 1 otherwise. `module add` does not require `check` to have been run: it
 re-validates everything itself.
