@@ -53,10 +53,12 @@ owner, escrow, capsule, cell or comb state.
 | `/v1/entries` | POST | Append one entry the module signed |
 | `/v1/overview` | GET | *(3.1, `reads`)* The dashboard header: counts, role, address, merkle root |
 | `/v1/tags` | GET | *(3.1, `reads`)* Every distinct tag; `?counts=1` adds `counts` (facts + decisions per tag) |
+| `/v1/series` | GET | *(4.2, `reads`)* Daily counts of facts, decisions and ideas, `?days=N` (default 30, at most 90) |
 | `/v1/related` | GET | *(3.1, `reads`)* Facts that share tags with one fact or decision |
 | `/v1/audit` | GET | *(3.1, `reads`)* The audit counts and a small sample per bucket |
 | `/v1/peers` | GET | *(3.1, `reads`)* The admitted devices, with a live probe of each |
 | `/v1/verify` | GET | *(3.1, `reads`)* This node's integrity verdict |
+| `/v1/series` | `days` (default 30, clamped to 1-90; `400` if not an integer) | `{"facts": [{"day": "YYYY-MM-DD", "n": 3}], "decisions": [...], "ideas": [...]}`: counts per UTC day, oldest first, a day with no rows left out, no row text. Owner-forgotten facts are not counted. A row whose own `created_at` is not a date is not counted |
 | `/v1/node` | GET | *(3.1, `reads`)* The address of one admitted, reachable peer |
 
 A signed `GET` on a `POST` route, or the reverse, is `405` with `Allow`. An unknown path is `404 {"error": "not found"}`.
@@ -139,7 +141,7 @@ read holds no lock.
 
 ### The read routes (3.1, `provisional`)
 
-`overview`, `tags`, `related`, `audit`, `peers`, `verify` and `node` are for a module that shows the hive, such as the
+`overview`, `tags`, `related`, `audit`, `peers`, `verify`, `node` and `series` are for a module that shows the hive, such as the
 dashboard. All are `GET`, read-only, loopback and signed like every other route, and each returns what the matching
 `/api/*` route of the dashboard returns, except where noted.
 

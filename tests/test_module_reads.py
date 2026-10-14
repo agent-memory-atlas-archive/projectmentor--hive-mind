@@ -1,4 +1,4 @@
-"""3.1 PR 6 (design §5): the read routes `overview`, `tags`, `related`, `audit`, `peers`, `verify`, `node`, served to a module
+"""3.1 PR 6 (design §5): the read routes `overview`, `tags`, `related`, `audit`, `peers`, `verify`, `node`, `series`, served to a module
 only if its signed manifest names them in `reads`. Same harness as `test_module_api`: the real handler over loopback HTTP, a
 journal with real signatures, and the `.modules.json` row the installer writes."""
 import json
@@ -120,6 +120,36 @@ def test_overview_tags_verify_and_peers_answer_what_the_api_twin_does(hive):
     assert code == 200 and set(v) >= {"ok", "level", "lines"}
     code, p = hive.get("/v1/peers?probe=0")
     assert code == 200 and isinstance(p["peers"], list)
+
+
+def test_series_counts_per_day_without_text_and_leaves_forgotten_facts_out(hive):
+    hv = hive.hv
+    today = hv.datetime.now(hv.timezone.utc).strftime("%Y-%m-%d")
+    old = (hv.datetime.now(hv.timezone.utc) - hv.timedelta(days=60)).strftime("%Y-%m-%d")
+    conn = hv.get_conn()
+    conn.execute("UPDATE facts SET created_at = ? WHERE content LIKE '%nightly job%'", (today + "T01:00:00Z",))
+    conn.execute("UPDATE facts SET created_at = ? WHERE content LIKE '%under the mat%'", (today + "T02:00:00Z",))
+    conn.execute("UPDATE facts SET created_at = ? WHERE content LIKE '%hardlinks%'", (old + "T02:00:00Z",))
+    conn.commit()
+    conn.close()
+    code, out = hive.get("/v1/series?days=30")
+    assert code == 200 and set(out) == {"facts", "decisions", "ideas"}
+    assert out["facts"] == [{"day": today, "n": 1}]               # the forgotten fact is not counted
+    assert hv.api_series(days=30)["facts"] == [{"day": today, "n": 2}]   # the unfiltered twin counts it
+    assert "rsync" not in json.dumps(out) and "backup" not in json.dumps(out)
+    assert all(set(r) == {"day", "n"} for k in out for r in out[k])
+    assert hive.get("/v1/series?days=90")[1]["facts"] == [{"day": old, "n": 1}, {"day": today, "n": 1}]   # oldest first
+    assert old not in json.dumps(hive.get("/v1/series?days=30")[1])
+
+
+def test_series_clamps_days_and_refuses_a_non_integer(hive):
+    assert hive.get("/v1/series?days=0")[0] == 200 and hive.get("/v1/series?days=100000")[0] == 200
+    assert hive.get("/v1/series")[0] == 200
+    assert hive.get("/v1/series?days=abc")[0] == 400
+    assert hive.hv.api_series(days=100000) == hive.hv.api_series(days=90)
+    declare(hive, "hwatch", [r for r in ALL if r != "series"])
+    code, body = hive.get("/v1/series")
+    assert code == 403 and body["detail"] == "read-not-declared"
 
 
 def test_related_leaves_forgotten_facts_out_and_answers_empty_for_a_forgotten_source(hive):

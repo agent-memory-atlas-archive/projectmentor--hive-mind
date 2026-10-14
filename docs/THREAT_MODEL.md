@@ -606,6 +606,12 @@ at once). Concretely:
   device, in memory) bounds how much work a module can ask of the node (`overview` and `audit` read the whole
   journal); it resets when the daemon restarts, and it is not a defence against the operator's own processes.
   Operator rule: install a module that declares `peers` or `node` only if you would give it the tailnet addresses.
+- **`/v1/series` (4.2) hands a declaring module daily row counts.** It returns only `{day, n}` per day for facts,
+  decisions and ideas, over at most 90 days, and no row text, id, tag, source or node. Owner-forgotten facts are not
+  counted. It is served only to a module whose signed manifest names `series` in `reads`, under the same read bucket as
+  the other read routes; `days` is clamped to 1-90 and the query is a `GROUP BY` over three local tables, bounded by the bucket. The counts say when and how much the hive was written, which the feed already carries in full;
+  they add nothing an admitted module cannot count from `/v1/feed`. It is operator-only: the dashboard's viewer
+  listener does not serve it, so a viewer sees no series (no change to the viewer allowlist).
 - **`module install` never prompts for the owner key under `--non-interactive` or `--json` (3.1).** It opens the key only when
   it is already open, unsealed, its passphrase is in `HIVE_OWNER_KEY_PASSPHRASE`, or the unlock agent covers the acts it will
   sign; otherwise it exits 5 before it fetches or writes anything. It adds no signing path: the acts are `module add`'s
