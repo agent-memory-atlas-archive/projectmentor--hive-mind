@@ -817,6 +817,9 @@ hive-mind owner lock                                 # end the agent now (it exi
 hive-mind owner approver add|revoke|list ...         # (4.0) enrol or revoke a passkey approver (WebAuthn ES256/EdDSA)
 hive-mind owner delegate add|revoke|list ...         # (4.0) a scoped, capped, expiring right to sign without a ticket
 hive-mind owner status                               # whether the agent is unlocked, its expiry, the acts it signed or refused
+hive-mind owner unlock --gated --rp-id HOST --passphrase-source dpapi|libsecret|keychain   # (4.0) boot unlock: the passphrase comes from the OS keystore; needs --gated
+hive-mind owner keystore store --source dpapi|libsecret|keychain | clear | status   # (4.0) put the owner passphrase in the OS keystore (checked first), remove it, or name it
+hive-mind owner boot-unit install --rp-id HOST [--port N] [--approvers-min N] [--allow-synced] | remove | status   # (4.0) the user unit and lingering that unlock at boot
 hive-mind owner standby <device_id> [--off]          # declare an advisory standby key holder
 hive-mind owner transfer <new_owner_pub>             # immediate handoff to a key the target already holds
 hive-mind owner unnominate <successor_pub>           # withdraw a pending nomination
@@ -845,6 +848,16 @@ ticket sets `HIVE_APPROVAL_TICKET=<id>` and executes the planned argv (`--plan -
 signs those bytes through the agent or exits 5 with nothing signed, and never reads the seed or asks for a passphrase.
 `owner status` lists approvers, delegations, live tickets and, per signed act, the ticket and approver. The records live in
 the key directory (`approvers.json`, `delegations.json`, `used-tickets.json`, all 0600).
+
+**Boot unlock (4.0, owner approval slice A3).** `owner keystore store --source dpapi|libsecret|keychain` asks for the owner
+passphrase once, checks it opens the sealed owner key, and puts it in the OS keystore (`dpapi` is DPAPI through
+`powershell.exe` interop on WSL; `libsecret` needs `secret-tool`; `keychain` is macOS). `owner unlock --gated --rp-id HOST
+--passphrase-source SRC` then reads it from there with no prompt; any source but `prompt` is refused without `--gated`.
+`owner boot-unit install --rp-id HOST` writes `~/.config/systemd/user/hive-owner-agent.service` (a oneshot that stays active,
+`ExecStop` is `owner lock`), enables it and runs `loginctl enable-linger`, so a reboot leaves a gated agent with no typing;
+`remove` undoes the unit. `owner status` and `hv doctor` (`owner-keystore`) name the keystore in use. The stored passphrase is
+readable by any process of your user that can ask the same keystore: run no seat and no `trust: full` module on that node
+(THREAT_MODEL, boot unlock).
 
 
 You run `hive-mind owner init` once, on whichever machine you want to hold the owner key.

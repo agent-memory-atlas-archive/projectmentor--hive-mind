@@ -217,6 +217,27 @@ def _doctor_status():
     else:
         checks.append({"name": "owner-seal", "status": "ok", "detail": "no owner key on this device"})
 
+    # 3b''. Boot unlock (owner approval slice A3): is the owner passphrase in an OS keystore? From the node-local record
+    #      only; the keystore is never asked. ok = none stored, or stored and usable; warn = a record whose dpapi
+    #      blob is gone, so the boot unit would fail.
+    try:
+        import keystore
+        rec = keystore.read_record(KEY_DIR)
+        if rec is None:
+            checks.append({"name": "owner-keystore", "status": "ok",
+                           "detail": "no OS keystore holds the owner key's secret (it is typed at `owner unlock`)"})
+        elif rec["source"] == "dpapi" and not (KEY_DIR / keystore.BLOB).is_file():
+            checks.append({"name": "owner-keystore", "status": "warn",
+                           "detail": "keystore dpapi is recorded but its blob is missing, so boot unlock fails: "
+                                     "`hive-mind owner keystore store --source dpapi` again, or `owner keystore clear`"})
+        else:
+            checks.append({"name": "owner-keystore", "status": "ok",
+                           "detail": f"owner passphrase stored in {rec['source']} for boot unlock (gated mode only): "
+                                     "a process of this user that can ask it can read the seed; run no seat or `trust: full` "
+                                     "module on this node"})
+    except Exception as e:
+        checks.append({"name": "owner-keystore", "status": "warn", "detail": f"owner-keystore check error: {e}"})
+
     # 3b'. Stray plaintext owner-key copies: paths only, never contents; nothing is deleted.
     try:
         found = _owner_copies()
