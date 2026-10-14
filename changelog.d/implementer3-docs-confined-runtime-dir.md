@@ -1,0 +1,1 @@
+- Docs: `HIVE_MODULE_RUNTIME_DIR` and the confined unit's per-module runtime directory and client-file binds are now in CONTRACT.md, MODULE_API.md and THREAT_MODEL.md. (#506, part of #504)

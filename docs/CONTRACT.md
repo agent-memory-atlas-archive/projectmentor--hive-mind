@@ -32,6 +32,11 @@ Everything a module can reach is marked with one of three tiers.
   `pub`, `sig`), the canonical form (`merkle._canonical`), the signing bytes (everything but `sig`, `pub` included),
   the entry hash, the device id (`k1:` and 16 hex of the key's sha256), `prev_hash` and `"sha256:genesis"`.
   `hive_module_client.py` is the reference and imports nothing from `hv`.
+- **`HIVE_MODULE_RUNTIME_DIR`** (4.2, additive). A `confined` module that has a `service` finds its own writable runtime
+  directory for sockets in this variable (`$XDG_RUNTIME_DIR/hive-mind-mod-<name>`, mode 0700, owned by the unit). A module
+  that binds a socket uses it, not `$XDG_RUNTIME_DIR` (read-only there) or the shared `hive-mind` directory (absent there). A
+  `trusted` unit does not get it. The module's doctor is a different process and does not get it either, so a doctor that
+  checks the socket resolves the same `$XDG_RUNTIME_DIR/hive-mind-mod-<name>` path itself.
 - **The feed's fields**: `node_id`, `seq`, `ref`, `sid`, `type`, `timestamp`, `payload`, `sig`, `pub`, the cursor,
   `more`, and the two the core computes, `forgotten` and `affects`.
 - **What a module may write**: the types `fact`, `decision`, `idea`, `entity`, `link`; a source of `x-<module>`; the
