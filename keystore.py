@@ -32,8 +32,19 @@ SECURITY = ("/usr/bin/security",)
 MAX_OUT = 4096
 
 
+REASONS = {"unavailable": "this keystore is not usable on this node (see `hive-mind owner keystore status`)",
+           "missing": "nothing is stored there for this hive (run `hive-mind owner keystore store`), or the keystore is locked",
+           "failed": "the keystore tool failed",
+           "malformed": "the stored value is not ours or is malformed"}
+
+
 class KeystoreError(Exception):
-    """A keystore failure. The message never carries the passphrase or a blob."""
+    """A keystore failure. The message never carries the passphrase or a blob; `code` is a key of REASONS, a fixed text
+    a caller can print without echoing anything that came from the keystore."""
+
+    def __init__(self, message, code="failed"):
+        super().__init__(message)
+        self.code = code
 
 
 def run_default(argv, data, timeout=30):
@@ -100,7 +111,7 @@ def store(source, passphrase, key_dir, hive_home, run=None, now=None):
     run = run or run_default
     ok, why = available(source)
     if not ok:
-        raise KeystoreError(why)
+        raise KeystoreError(why, "unavailable")
     if not passphrase or "\n" in passphrase or "\r" in passphrase or "\0" in passphrase:
         raise KeystoreError("the passphrase is empty or has a line break")
     raw = passphrase.encode("utf-8")
@@ -126,34 +137,34 @@ def fetch(source, key_dir, hive_home, run=None):
     run = run or run_default
     ok, why = available(source)
     if not ok:
-        raise KeystoreError(why)
+        raise KeystoreError(why, "unavailable")
     if source == "dpapi":
         try:
             with open(os.path.join(str(key_dir), BLOB), "rb") as f:
                 blob = f.read(MAX_OUT).strip()
         except OSError:
-            raise KeystoreError("no stored passphrase for dpapi: run `hive-mind owner keystore store --source dpapi`")
+            raise KeystoreError("no stored passphrase for dpapi: run `hive-mind owner keystore store --source dpapi`", "missing")
         raw = base64.b64decode(_ps("Unprotect", blob + b"\n", run), validate=True)
     elif source == "libsecret":
         rc, out = run([SECRET_TOOL[0], "lookup", "service", SERVICE, "account", _account(hive_home)], b"")
         if rc != 0 or not out:
             raise KeystoreError("no stored passphrase in the Secret Service (or it is locked): "
-                                "run `hive-mind owner keystore store --source libsecret`")
+                                "run `hive-mind owner keystore store --source libsecret`", "missing")
         raw = out
     else:
         rc, out = run([SECURITY[0], "find-generic-password", "-s", SERVICE, "-a", _account(hive_home), "-w"], b"")
         if rc != 0 or not out.strip():
-            raise KeystoreError("no stored passphrase in the keychain: run `hive-mind owner keystore store --source keychain`")
+            raise KeystoreError("no stored passphrase in the keychain: run `hive-mind owner keystore store --source keychain`", "missing")
         try:
             raw = base64.b64decode(out.strip(), validate=True)
         except ValueError:
-            raise KeystoreError("the keychain entry is not ours")
+            raise KeystoreError("the keychain entry is not ours", "malformed")
     try:
         pw = raw.decode("utf-8")
     except UnicodeDecodeError:
-        raise KeystoreError("the stored passphrase is not text")
+        raise KeystoreError("the stored passphrase is not text", "malformed")
     if not pw or "\n" in pw:
-        raise KeystoreError("the stored passphrase is empty or malformed")
+        raise KeystoreError("the stored passphrase is empty or malformed", "malformed")
     return pw
 
 

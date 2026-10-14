@@ -162,7 +162,7 @@ def test_boot_unlock_end_to_end_through_the_fake_keystore(hive, interop, capsys)
     run_ctl(hive, *add_flags(PHONE), "--break-glass", passphrase_fd=PASS)
     lib = _lib(hive)
     assert owner_agent.cmd_unlock(lib, ["--gated", "--rp-id", RP, "--passphrase-source", "dpapi"]) == 1
-    assert "no stored passphrase" in capsys.readouterr().err                     # nothing stored yet
+    assert "nothing is stored there" in capsys.readouterr().err                     # nothing stored yet
     rfd, wfd = os.pipe()
     os.write(wfd, (PASS + "\n").encode())
     os.close(wfd)
