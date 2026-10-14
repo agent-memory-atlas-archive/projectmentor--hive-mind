@@ -1,1 +1,0 @@
-- A telemetry read's `by_day` rows carry `tokens` (in + out) and `cost` (USD; `null` when no session that day is priced) beside `sessions`, on `/api/telemetry` and the hive view and its per-node series; the 21-day cap is unchanged. Additive; older clients ignore them. (Part of projectmentor/hive-mind-dash#18, gap 2.)

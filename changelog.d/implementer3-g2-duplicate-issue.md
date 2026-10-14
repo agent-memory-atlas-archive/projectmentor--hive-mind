@@ -1,1 +1,0 @@
-- CI (hive-mind#493, security): a new workflow `duplicate-issue.yml` comments on and labels `duplicate?` a new issue that strictly duplicates an open one (same normalised title, body at least 95% similar, same author, within 10 minutes). It never closes an issue; it holds `issues: write` only and passes issue text through `env:`.
