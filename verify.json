@@ -1,5 +1,5 @@
 {
-  "digest": "99c00195b0eeb02a27494d6cac4f6ce7def6b014effd68acd6b287fb30019439",
+  "digest": "fa759d0cbe68863b5998d581b36fd130d5d4dfba3d5c7bade0426260af57bb40",
   "files": {
     ".github/FUNDING.yml": "ca6c63d7539bb7d2f809b5068781c78de97c028a44c5ae252b11bc1695caf85d",
     ".github/ISSUE_TEMPLATE/bug_report.yml": "22df51b1e51c25f50726392c79811116b88c40370843ff2d4a3e76b643f1cb68",
@@ -14,7 +14,7 @@
     ".github/workflows/release-issue-close.yml": "a625c6cf5a913245d3bf1dfba5111e270d8f8685d411e0593419e36bee83de4b",
     ".github/workflows/sign.yml": "4be19163ffa6c3c6010ac249475ffce87c8b514fa1b1e5496f19d64634905778",
     "AGENTS.md": "4abda267ab6ded83f372bfa36362ad8a55ebdaff6a2c7f258eee9eed584374e3",
-    "CHANGELOG.md": "1998c29b74074e3d375ad58c5660befb125bf1800e6932eaf5d452671c5c3bc2",
+    "CHANGELOG.md": "a13864bb3ae6171be1fc5da1b6f392c6f0e9f5e3f5ea3bb1aa7ffb6548556077",
     "CLA.md": "78a00158ab3090dbb1a4de6ed03b150f22b5a0e99bcbba139a6244728780cc7b",
     "CONTRIBUTING.md": "4497a6cad02f179eaecdebb55cf22f2ca578af0d7cbd9445ff6b05aafda8f2d4",
     "README.md": "03fc326c4ad40493c2c16e68475378aa38052f6eb7186880978a8f6244fab44e",
@@ -23,16 +23,6 @@
     "approvers.py": "18b91c5d5f5b6965a7576735b566c09f8f4460cada38749c54be8d611237c215",
     "cells/example-tool.json": "1ef1bb649f6805631bb6c20940baefb4a4bd867122b2c9e9b565c69aac30f060",
     "chacha20poly1305.py": "6c3bb50dc126dab128184280b4d11cb1494800651e97aea941a821f31ff012fd",
-    "changelog.d/impl2-module-commands-c1.md": "fd8f1a284a586ae758596053bec1198e714e1c564f6f9a474b8c295e549b6ada",
-    "changelog.d/implementer-504-confined-runtime-dir.md": "1b330c19b71c7a4354573b7f0afb3f59c338bdeb02551f254205d988c5c464bc",
-    "changelog.d/implementer2-module-commands-c2.md": "d503249d1a0107c9828744f14e7eb46c9846eec51f4e2afa529776fad2838c83",
-    "changelog.d/implementer3-docs-confined-runtime-dir.md": "41f8d61b4bde685f9a1fa16f8e7ba8d1efb07085706f5c7a8d7c32c3ea1d7512",
-    "changelog.d/implementer3-g2-duplicate-issue.md": "93ddd2930b46d961b32a110d408bccac8fab6b69e6fbc1c9c539bc62186c4571",
-    "changelog.d/module-contract-4-2.md": "9db19df9db662946fa59e3b8aa6c7493e2cf769a13fd6a847b60e510a9cc85ea",
-    "changelog.d/peers-seen-at.md": "4e18cdf904d4c305bf34aaa943b7a1b15f8e3273c3ccf69c6ac9a10c63c95b91",
-    "changelog.d/telemetry-by-day-cost.md": "de51d31afe0027d1686f5acf5fcdfd0cca5e69cbdbf34823a9b0ef2481d3c6a3",
-    "changelog.d/v1-series.md": "e847f65d15bf55ef98820b1ca19642a9ee253d24cf788b7df3845a34fc1efc6b",
-    "changelog.d/v1-tags-counts.md": "8c88c0e27eb4ba86f478db341be9134987dc8e16136a3d16320315ff32440bad",
     "commandmap.py": "8bd409700a0667a15fa435d74cb3d48ae79a1d80b963b78e8791be12f9bc6e1b",
     "config/.peers.json.example": "e81eb4533b4e06969946a8fa1c977e0692bc047275101bcdbae1504355866674",
     "config/nudge.env.example": "b278edb191f6588316383f5c095f6332fc3ccaf695c595dccd9b21c4322d5cf3",
@@ -324,6 +314,6 @@
     "vocabulary.py": "3a6977fc89573561e6248748db90379acc810ff183556e220ce6bf1b2c0d0d3b",
     "x25519.py": "ec1967595a2306cde860afe4dffab40a3f833d089de6caf5c9c080df8fd45726"
   },
-  "sequence": 700,
+  "sequence": 702,
   "version": "4.2"
 }
