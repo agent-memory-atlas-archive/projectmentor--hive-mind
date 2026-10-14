@@ -1,0 +1,38 @@
+name: Flag duplicate issues
+# Flags a new issue that strictly duplicates an open one: same normalised title, body >= 95 % similar, same
+# author, opened within 10 minutes of it. It comments, names the original and adds the `duplicate?` label. It
+# never closes an issue (hive-mind#493, design G2).
+#
+# Why this is safe (CI-01 class; it holds a write scope): the `issues` event runs in the context of the
+# default branch, and the one checkout is of that branch (reviewed code already merged), with credentials not
+# persisted and only scripts/ci present. The issue title, body and author reach the script only through
+# `env:`; no `${{ github.event.issue.* }}` is interpolated into a `run:` script, and the comment is fixed text
+# plus one integer. Do not add a `run:` that interpolates issue text; a change that must do so has to be
+# reviewed as a security change.
+on:
+  issues:
+    types: [opened]
+
+permissions: {}
+
+jobs:
+  flag-duplicate:
+    permissions:
+      contents: read        # fetch scripts/ci from the default branch
+      issues: write         # comment and label
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          sparse-checkout: scripts/ci
+          persist-credentials: false
+      - name: Flag a suspected duplicate
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          ISSUE_AUTHOR: ${{ github.event.issue.user.login }}
+          ISSUE_CREATED_AT: ${{ github.event.issue.created_at }}
+        run: python3 -I scripts/ci/duplicate_issue.py
