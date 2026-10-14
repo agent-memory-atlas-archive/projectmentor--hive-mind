@@ -1,5 +1,5 @@
 {
-  "digest": "365767c98230bb912edb7936681218b6cbceacb2088ed6ad140dc2bd82380914",
+  "digest": "80668785e82d5437806096a61463cd3e434f14d7aca071417abf735d77630c57",
   "files": {
     ".github/FUNDING.yml": "ca6c63d7539bb7d2f809b5068781c78de97c028a44c5ae252b11bc1695caf85d",
     ".github/ISSUE_TEMPLATE/bug_report.yml": "22df51b1e51c25f50726392c79811116b88c40370843ff2d4a3e76b643f1cb68",
@@ -19,9 +19,10 @@
     "README.md": "20621d1f94f13ffcf78c8872e6536fc87b441070d2395f9f009f411218226317",
     "SECURITY.md": "96637414ee287d816e96b2184959350ed3f6cda4b2dd79ccded8e477569b585d",
     "advisories.json": "e1f7246819257c9cdcb8118aaee972ed89f22fb056d67230320d5ea7fdce6703",
-    "approvers.py": "89c3d4ddb16f2d6d0bbe180a543b2f3bcb9c3154d4c9f4ff455887596643d0ca",
+    "approvers.py": "18b91c5d5f5b6965a7576735b566c09f8f4460cada38749c54be8d611237c215",
     "cells/example-tool.json": "1ef1bb649f6805631bb6c20940baefb4a4bd867122b2c9e9b565c69aac30f060",
     "chacha20poly1305.py": "6c3bb50dc126dab128184280b4d11cb1494800651e97aea941a821f31ff012fd",
+    "changelog.d/implementer-487-approvers-fullmatch.md": "d45fcb6c5e4a851612ae95a66626eed0d11fffb55cae9fb22c1032f7186e2bd7",
     "changelog.d/implementer-a1-guard-tests.md": "5636cd63f1c598689ae2b0ccc55a357d3e0fe55f359ccdee2bf3a7b73372ceed",
     "changelog.d/implementer-owner-approval-a1-481.md": "47b8d41f1072fa0e5966326ee76140ca26ea655b23b6862f4a529e5dd2881236",
     "commandmap.py": "8bd409700a0667a15fa435d74cb3d48ae79a1d80b963b78e8791be12f9bc6e1b",
@@ -157,6 +158,7 @@
     "tests/test_admit_peering.py": "7f57b621cf6ba09d9d30fc12d8efa471a582d155d7f216c8c3c28b6225a03ea7",
     "tests/test_agent_guidance.py": "f3211fb32efe143ba28fcf92d9c5f653482f211832d9d7b1ed3cc19ac055e1c9",
     "tests/test_announce.py": "84692c20195c1b039e790a6d823e7f6a8afadd31232f402cab22660c4ea92f46",
+    "tests/test_approvers_fullmatch.py": "ccf4fdc26f3f510ebedf86f3c0610f17fca38d15ebcea4c7ca8355def2048d6e",
     "tests/test_atomic_writes.py": "72cfd1d2a617e6c6d5553cd9ae216aa2dc12899912fc7491a4cb9931aae5a67a",
     "tests/test_automode_profile.py": "47076408ba69e6f209228c4a0bb1c406409b0c000ae8b3b21445a73657e57126",
     "tests/test_bounded_timestamps.py": "c024145a804422d2346002eac6b483fcf9d6467794df4e79fa62f25cbc693a9f",
@@ -307,6 +309,6 @@
     "vocabulary.py": "3a6977fc89573561e6248748db90379acc810ff183556e220ce6bf1b2c0d0d3b",
     "x25519.py": "ec1967595a2306cde860afe4dffab40a3f833d089de6caf5c9c080df8fd45726"
   },
-  "sequence": 674,
+  "sequence": 676,
   "version": "4.1"
 }
