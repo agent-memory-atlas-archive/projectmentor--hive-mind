@@ -783,6 +783,18 @@ Operator rules:
 **Reopen if** any of these arrives: federation, hosted relays, an admitted device the owner does not control, or a
 second login or collaborator admitted by the gate. Tracked in hive-mind-private #44.
 
+### Duplicate-issue workflow (`duplicate-issue.yml`, hive-mind#493)
+
+The workflow runs on `issues: opened` with `contents: read` and `issues: write` only, so anyone who can open an
+issue triggers a job that holds a write token. It checks out the default branch (never issue text), passes the
+title, body and author to `scripts/ci/duplicate_issue.py` through `env:` only, and posts fixed text plus one
+issue number. It flags (comment and the `duplicate?` label) and never closes, edits or deletes. A match needs
+the same login, so a stranger cannot make the bot name or label anyone else's issue; the most they can do is
+get their own duplicate flagged. Residual: an outsider can open many identical issues and draw one bot comment
+each; this is bounded by GitHub's own rate limits and moderation, and costs the repo nothing but noise. Do not
+add a `run:` that interpolates issue text, a checkout of anything other than the default branch, or a close
+action to this workflow without reviewing it as a security change.
+
 ## Cryptographic posture
 
 - Primitives are **pure-Python** (Ed25519, X25519, Ed25519↔Curve25519, ChaCha20-Poly1305 per
