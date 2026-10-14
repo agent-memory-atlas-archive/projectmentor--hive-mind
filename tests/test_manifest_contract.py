@@ -408,7 +408,7 @@ def full_module(root, status=STATUS_OK, doctor=DOCTOR_OK, doctor_rc=0, status_rc
 
 def test_check_passes_a_conforming_module_and_runs_it(tmp_path):
     full_module(tmp_path)
-    assert hive_modules.check_module(tmp_path, CORE, run=True) == ([], [])
+    assert hive_modules.check_module(tmp_path, CORE, run=True) == ([], [hive_modules.NO_COMMANDS_WARNING])
 
 
 def test_check_reports_what_install_would_refuse(tmp_path):

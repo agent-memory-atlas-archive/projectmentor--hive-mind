@@ -219,6 +219,25 @@ def _own_doctor(hv, name, rec, manifest, key_dir):
     return results
 
 
+def _undo_probe(name, rec, manifest, key_dir):
+    """4.2: each undo verb the manifest names answers `--help` (the first PROBE_MAX, PROBE_TIMEOUT seconds each). Warns
+    only: the module is degraded, its promise of a way back is broken, not hostile. Runs module code, so the caller
+    has checked the pinned publisher and the mode."""
+    verbs = hive_modules.undo_verbs(manifest)
+    moddir, out = hive_modules.modules_dir() / name, []
+    env = hive_modules.narrow_env(name, rec, key_dir)
+    for verb in verbs[:hive_modules.DOCTOR_PROBE_MAX]:
+        argv = hive_modules.module_argv(manifest, manifest["cli"]["command"], moddir) + verb.split() + ["--help"]
+        rc, why = hive_modules.probe_help(argv, env, moddir)
+        if why or rc != 0:
+            out.append(("warn", f"declared undo verb `{verb}` is not accepted by the module "
+                                f"(--help {why or f'exited {rc}'})"))
+    if len(verbs) > hive_modules.DOCTOR_PROBE_MAX:
+        out.append(("warn", f"{len(verbs) - hive_modules.DOCTOR_PROBE_MAX} declared undo verbs were not probed "
+                            f"(the first {hive_modules.DOCTOR_PROBE_MAX} are)"))
+    return out
+
+
 def _quota(hv, rec, dev, lifetime, now):
     limits, times = _limits(rec), _window_times(hv, dev, now)
     used = {"per_hour": sum(1 for t in times if t > now - 3600), "per_day": len(times), "lifetime": lifetime}
@@ -266,6 +285,9 @@ def _module(hv, gov, name, rec, entries, listener, now):
         ran = _own_doctor(hv, name, rec, manifest, key_dir)
         problems += [(r["level"], f"{r['check']}: {r['message']}" + (f" ({r['fix_hint']})" if r.get("fix_hint") else ""))
                      for r in ran if r["level"] != "ok"]
+    if (manifest is not None and manifest["name"] == name and manifest["publisher"] == rec.get("publisher")
+            and manifest.get("commands") and doctor_mode() in ("manual", "install", "update")):
+        problems += _undo_probe(name, rec, manifest, key_dir)          # the timer and boot passes spawn nothing extra
     if not listener[0]:
         problems.append(("warn", f"the module API is not listening on 127.0.0.1:{listener[1]} (the sync daemon serves it)"))
     used = None

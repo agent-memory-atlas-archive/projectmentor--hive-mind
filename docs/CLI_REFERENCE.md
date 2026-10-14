@@ -1451,6 +1451,7 @@ hive-mind module config <name> set <key> [<value>] [--fleet | --fleet-node DEVIC
                           #   locked or would not sign the act (a --fleet / --fleet-node value; a node value needs no key and is unchanged)
                           # a secret key (token, password, ...) is never taken from argv: --stdin, --file PATH or a hidden prompt
 hive-mind module quota <name> [--per-hour N] [--per-day N] [--entry-bytes N] [--lifetime N]
+hive-mind module commands <name> [--json]             # (4.2) the verbs the signed manifest declares: read-only or changes state, reversible or not, the undo verb; exit 1 unless the tree verifies
 hive-mind module run <name> [--] <args>...             # (3.1) the module's cli command, without its launcher
 hive-mind module status <name> [--json]                # (3.1) the module's status envelope; exit 0 when `ok`
 hive-mind module runtime <name> <program> <dir> | --unset   # (3.1) where one of the module's runtimes lives

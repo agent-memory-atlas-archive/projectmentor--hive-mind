@@ -60,7 +60,7 @@ NOT_SUPPORTED = "module management is not supported on this platform yet (2.1 sh
 HOOK_EVENTS = ("session-start", "user-prompt", "precompact", "sessionend", "notification", "stop")
 BASE_KEYS = {"name", "version", "min_core", "publisher", "files", "service", "hooks", "config", "quota"}
 # Manifest contract 1 (3.1): optional, and only under `contract`. A manifest without `contract` is a 2.1/3.0 manifest.
-CONTRACT_KEYS = ("cli", "runtimes", "config_schema", "status", "doctor", "reads", "ui", "trust")
+CONTRACT_KEYS = ("cli", "runtimes", "config_schema", "status", "doctor", "reads", "ui", "trust", "commands")
 MANIFEST_KEYS = BASE_KEYS | {"contract", *CONTRACT_KEYS}
 CONTRACTS = (1,)                                    # the manifest contracts this core knows
 TRUST_TIERS = ("confined", "trusted")                # lowest first; a manifest without `trust` is `trusted`
@@ -302,6 +302,11 @@ def _has_control(text):
     return any(ord(c) < 0x20 or ord(c) == 0x7f for c in text)
 
 
+def _has_unprintable(text):
+    """Control, format (bidi, zero-width) and line-break characters: C0, DEL, C1, U+200B, U+202E, U+2028 and so on."""
+    return any(unicodedata.category(c) in ("Cc", "Cf", "Zl", "Zp") for c in text)
+
+
 def _check_argv(label, cmd):
     """An argv list with `service.command`'s rules: strings, no control characters, and a relative first word may not
     leave the module's directory. It is run without a shell."""
@@ -434,10 +439,129 @@ def _check_ui(m):
                               f"{sorted(used)} in its command must match")
 
 
+# ── declared commands (4.2) ─────────────────────────────────────────────────────────────────────────
+
+COMMANDS_MIN_CORE = (4, 2)
+MAX_COMMANDS, MAX_UNDO_WORDS, MAX_UNDO_WORD = 64, 16, 128
+COMMAND_KEY = re.compile(r"[a-z][a-z0-9-]{0,31}( [a-z][a-z0-9-]{0,31}){0,3}\Z")
+COMMAND_FIELDS = ("dry_run", "fleet", "mutates", "reversible", "undo")
+_UNDO_PLACEHOLDER = re.compile(r"\{[a-z][a-z0-9_]{0,31}\}\Z")
+
+
+def _undo_words(undo):
+    """The undo template's words up to the first placeholder or option: the words that name the undo verb."""
+    words = []
+    for w in undo:
+        if w.startswith("-") or "{" in w:
+            break
+        words.append(w)
+    return words
+
+
+def find_verb(commands, words):
+    """The longest key of `commands` that the leading non-option `words` begin with, else None."""
+    lead = []
+    for w in words:
+        if w.startswith("-"):
+            break
+        lead.append(w)
+    for n in range(min(len(lead), 4), 0, -1):
+        if " ".join(lead[:n]) in commands:
+            return " ".join(lead[:n])
+    return None
+
+
+def _check_commands(m):
+    """The `commands` map (4.2): which verbs of the module's cli change state, whether they can be undone, and how."""
+    cmds, where = m["commands"], "manifest commands"
+    if not isinstance(cmds, dict) or len(cmds) > MAX_COMMANDS:
+        raise ModuleError(f"{where} must be an object of at most {MAX_COMMANDS} verbs")
+    if "contract" not in m or not m.get("cli"):
+        raise ModuleError(f'{where} needs "contract": 1 and a cli')
+    if _core_tuple(m.get("min_core", "0")) < COMMANDS_MIN_CORE:
+        raise ModuleError(f"{where} needs min_core 4.2 or newer (a 4.1 core refuses the field)")
+    for key, e in cmds.items():
+        if not isinstance(key, str) or not COMMAND_KEY.match(key):
+            raise ModuleError(f"{where} {key!r}: a verb is 1 to 4 words of a-z, 0-9, -, separated by single spaces")
+        if isinstance(e, dict) and set(e) - set(COMMAND_FIELDS):
+            raise ModuleError(f"{where} {key}: may only name: {', '.join(COMMAND_FIELDS)}")
+        if not isinstance(e, dict) or not isinstance(e.get("mutates"), bool):
+            raise ModuleError(f"{where} {key}: mutates must be true or false")
+        for field in ("dry_run", "fleet"):
+            if field in e and not isinstance(e[field], bool):
+                raise ModuleError(f"{where} {key}: {field} must be true or false")
+        mutates, rev = e["mutates"], e.get("reversible")
+        if mutates and rev not in ("yes", "no", "n/a"):
+            raise ModuleError(f"{where} {key}: reversible must be one of: yes, no, n/a")
+        if not mutates and rev not in (None, "n/a"):
+            raise ModuleError(f"{where} {key}: a read-only verb is reversible n/a")
+        if ("undo" in e) != (rev == "yes"):
+            raise ModuleError(f"{where} {key}: undo is required for reversible yes and only then")
+        if "undo" in e:
+            undo = e["undo"]
+            if (not isinstance(undo, list) or not 1 <= len(undo) <= MAX_UNDO_WORDS
+                    or not all(isinstance(w, str) and 0 < len(w) <= MAX_UNDO_WORD and not _has_unprintable(w)
+                               and (_UNDO_PLACEHOLDER.match(w) if "{" in w else True) for w in undo)
+                    or undo[0].startswith("-")):
+                raise ModuleError(f"{where} {key}: undo is an argv list of 1 to {MAX_UNDO_WORDS} words (placeholders {{name}}), "
+                                  "no control characters")
+        if mutates and e.get("dry_run") is False:
+            raise ModuleError(f"{where} {key}: a mutating verb takes --dry-run (4.2): dry_run must be true")
+        if not mutates and e.get("dry_run"):
+            raise ModuleError(f"{where} {key}: dry_run applies to a mutating verb")
+        if e.get("fleet") and rev == "no":
+            raise ModuleError(f"{where} {key}: an irreversible verb is never fleet-runnable")
+    for key, e in cmds.items():
+        if e.get("reversible") == "yes":
+            verb = find_verb(cmds, e["undo"])
+            if verb is None or verb != " ".join(_undo_words(e["undo"])) or not cmds[verb]["mutates"]:
+                raise ModuleError(f"{where} {key}: undo names {' '.join(_undo_words(e['undo']))}, which is not a declared mutating verb")
+
+
+def command_entry(e):
+    """One declared verb with every default filled in (what `module commands --json` prints)."""
+    out = {"mutates": e["mutates"], "reversible": e.get("reversible", "n/a") if e["mutates"] else "n/a"}
+    if "undo" in e:
+        out["undo"] = list(e["undo"])
+    out["dry_run"] = e.get("dry_run", e["mutates"])
+    out["fleet"] = e.get("fleet", False)
+    return out
+
+
+def commands_lines(manifest):
+    """The text table of a manifest's declared verbs (read-only first), or [] for a manifest without the map."""
+    cmds = manifest.get("commands")
+    if cmds is None:
+        return []
+    cli = manifest["cli"]["name"]
+    rows = sorted(((k, command_entry(e)) for k, e in cmds.items()), key=lambda r: r[1]["mutates"])   # stable: manifest order within each group
+    width = max((len(k) for k, _ in rows), default=0)
+    head = f"{manifest['name']} {manifest['version']} (contract {manifest['contract']}, min_core {manifest['min_core']}): "
+    lines = [head + f"{len(rows)} declared verb{'' if len(rows) == 1 else 's'}"]
+    for key, e in rows:
+        if not e["mutates"]:
+            cols = ["read-only"]
+        else:
+            cols = ["changes state", {"yes": "reversible", "no": "CANNOT BE UNDONE: needs --yes when not at a terminal",
+                                      "n/a": "nothing to restore"}[e["reversible"]]]
+            if "undo" in e:
+                cols.append("undo: " + " ".join([cli, *(re.sub(r"\{(\w+)\}", r"<\1>", w) for w in e["undo"])]))
+            if e["dry_run"]:
+                cols.append("--dry-run")
+        if e["fleet"]:
+            cols.append("fleet")
+        lines.append(f"  {key.ljust(width)}  " + "  ".join(cols))
+    lines.append("a verb not listed here is undeclared: treat it as one that cannot be undone")
+    return lines
+
+
+
 def _validate_contract(m):
     """The contract-1 fields (3.1). A manifest without `contract` is a 2.1/3.0 manifest and may name none of them."""
     new = [k for k in CONTRACT_KEYS if k in m]
     if "contract" not in m:
+        if "commands" in m:
+            _check_commands(m)                      # refuses: names its own message for the missing contract
         if new:
             raise ModuleError(f"manifest names {', '.join(new)} without `contract`: declare `\"contract\": 1`")
         return
@@ -482,6 +606,8 @@ def _validate_contract(m):
             _check_config_entry(m["name"], key, spec)
     if "ui" in m:
         _check_ui(m)
+    if "commands" in m:
+        _check_commands(m)
 
 
 # A deliberately small JSON Schema subset, enough for docs/ui_block.schema.json (the one definition of the `ui` block)
@@ -643,6 +769,8 @@ def _confirm_publisher(manifest, expected, pinned=None):
     print("  " + trust_summary(manifest))
     if reads_summary(manifest):
         print("  " + reads_summary(manifest))
+    for line in commands_lines(manifest):
+        print("  " + line)
     if expected is not None:
         if expected != pub:
             raise ModuleError(f"--publisher does not match the manifest's publisher key ({fingerprint(pub)}): refusing")
@@ -1323,6 +1451,59 @@ def cmd_run(lib, args):
     except OSError as e:
         raise ModuleError(f"could not run {argv[0]}: {e}")
     return rc if rc >= 0 else 128 - rc
+
+
+def cmd_commands(lib, args):
+    """`module commands <name> [--json]`: the verbs the module's signed manifest declares. The tree is verified
+    (signature, digests) and must be signed by the pinned publisher first: callers act on this listing."""
+    rec = load_state(lib).get(args.name)
+    if rec is None:
+        raise ModuleError(f"module {args.name!r} is not installed")
+    refuse_disabled(args.name, rec)
+    manifest = check_tree(modules_dir() / args.name, lib.CONTRACT_VERSION, ignore=("config",))
+    if manifest["name"] != args.name or manifest["publisher"] != rec.get("publisher"):
+        raise ModuleError(f"module {args.name!r}: the installed manifest is not the one signed by the pinned publisher: refusing")
+    cmds = manifest.get("commands")
+    cli = (manifest.get("cli") or {}).get("name")
+    if args.json:
+        print(json.dumps({"schema": 1, "module": manifest["name"], "version": manifest["version"], "cli": cli,
+                          "declared": cmds is not None,
+                          "commands": {k: command_entry(e) for k, e in (cmds or {}).items()}}, indent=1))
+    elif cmds is None:
+        print(f"{manifest['name']} {manifest['version']}: declares no commands (a 4.1 manifest); treat every verb as one that cannot be undone")
+    else:
+        print("\n".join(commands_lines(manifest)))
+    return 0
+
+
+DOCTOR_PROBE_TIMEOUT, DOCTOR_PROBE_MAX = 5, 8
+
+
+def probe_help(argv, env, cwd, timeout=DOCTOR_PROBE_TIMEOUT):
+    """Run `argv` (a verb plus `--help`) without a shell or stdin and with its output discarded; (returncode or None,
+    why or ""). The group is killed at the deadline."""
+    try:
+        proc = subprocess.Popen(argv, cwd=str(cwd), env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL, start_new_session=True)
+    except OSError as e:
+        return None, f"could not run: {e.strerror or e}"
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _kill_group(proc)
+        proc.wait()
+        return None, f"did not finish in {timeout} s"
+    return proc.returncode, ""
+
+
+def undo_verbs(manifest):
+    """The distinct undo verbs the manifest's `reversible: yes` verbs name, in manifest order."""
+    cmds, out = manifest.get("commands") or {}, []
+    for e in cmds.values():
+        verb = find_verb(cmds, e["undo"]) if e.get("reversible") == "yes" else None
+        if verb and verb not in out:
+            out.append(verb)
+    return out
 
 
 def narrow_env(name, rec, key_dir, **extra):
@@ -2133,6 +2314,8 @@ def _update_tree(lib, args, state, rec, source, src, manifest, head):
     print(f"module {args.name} {manifest['version']} declares: {trust_summary(manifest)}")
     if reads_summary(manifest):                   # the pinned key needs no prompt, but the new read access is shown
         print(f"module {args.name} {manifest['version']} declares: {reads_summary(manifest)}")
+    for line in commands_lines(manifest):
+        print(line)
     try:
         before = installed_manifest(lib, args.name).get("config_schema") or {}
         have = _read_config(modules_dir() / args.name / "config")
@@ -2878,6 +3061,9 @@ def _kill_group(proc):
         pass
 
 
+NO_COMMANDS_WARNING = "manifest declares no commands (4.2): callers cannot tell which verbs change state or can be undone"
+
+
 def check_module(root, core_version, run=False, deny=()):
     """Everything `module check` reports: (errors, warnings). Errors are what `install` would refuse or what a
     contract-1 module must answer; warnings are the publisher's to read. Validates through `validate_manifest`, the
@@ -2921,6 +3107,11 @@ def check_module(root, core_version, run=False, deny=()):
                 warnings.append(f"no `{field}` command: nothing to run for it")
         if "doctor" not in m:
             warnings.append("no `doctor`: every contract-1 module should provide its own")
+        if "cli" in m and "commands" not in m:
+            warnings.append(NO_COMMANDS_WARNING)
+        na = [k for k, e in (m.get("commands") or {}).items() if e["mutates"] and e["reversible"] == "n/a"]
+        if na:
+            warnings.append(f"verbs declared reversible n/a (nothing to restore; the core cannot check it, read them): {', '.join(na)}")
     warnings += lint_identifying(root, m, deny)
     if run and not errors and "contract" in m:
         with tempfile.TemporaryDirectory(prefix="hive-module-check-") as tmp:
@@ -3035,6 +3226,9 @@ def build_parser():
     rt.add_argument("program")
     rt.add_argument("dir", nargs="?")
     rt.add_argument("--unset", action="store_true", help="forget the override")
+    cm = sub.add_parser("commands", help="list the verbs a module's signed manifest declares: which change state, which can be undone")
+    cm.add_argument("name")
+    cm.add_argument("--json", action="store_true", help="print one JSON object with every default filled in")
     k = sub.add_parser("check", help="check a module directory against the module contract (what `add` would refuse; for publishers and CI)")
     k.add_argument("dir")
     k.add_argument("--run", action="store_true", help="also run its `status` and `doctor` commands in a throwaway directory and check what they print")
@@ -3045,7 +3239,7 @@ def build_parser():
 
 VERBS = {"add": cmd_add, "install": cmd_install, "remove": cmd_remove, "update": cmd_update, "list": cmd_list, "quota": cmd_quota,
          "reapply": cmd_reapply, "refresh": cmd_refresh, "config": cmd_config, "check": cmd_check, "run": cmd_run, "status": cmd_status,
-         "runtime": cmd_runtime, "trust": cmd_trust}
+         "runtime": cmd_runtime, "trust": cmd_trust, "commands": cmd_commands}
 
 
 def main(lib, argv):
@@ -3085,7 +3279,7 @@ def main(lib, argv):
                                      lambda: VERBS[args.verb](lib, args), replay=lambda: args._replay)
             return 0
         rc = VERBS[args.verb](lib, args)
-        return (rc or 0) if args.verb in ("check", "config", "run", "status", "add", "update", "install") else 0
+        return (rc or 0) if args.verb in ("check", "config", "run", "status", "add", "update", "install", "commands") else 0
     except OwnerLocked as e:
         print(f"hive-mind module: {e}", file=sys.stderr)
         return EXIT_LOCKED

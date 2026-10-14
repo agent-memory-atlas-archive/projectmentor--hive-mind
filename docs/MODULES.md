@@ -76,6 +76,7 @@ there keeps a separate tag. The core knows contract `1` and refuses any other va
 | `doctor` | argv that prints the module's own doctor answer (below). |
 | `reads` | Distinct names from `overview`, `tags`, `related`, `audit`, `peers`, `verify`, `node`: the read routes the module declares it will use. `module add` and `update` list them (marking `peers`/`node`, which carry tailnet addresses, and `overview`/`peers`/`verify`, which are node-local) and record them in `.modules.json`; the module API serves `/v1/<name>` only for a recorded name and answers `403` otherwise. A manifest without `reads` is served none. |
 | `trust` | `trusted` or `confined`; absent means `trusted`, so every existing manifest keeps its meaning. It is the tier the publisher signs. `module add` and `update` print it (`trusted` loudly) before you confirm, and `.modules.json` records a `confined` tier. A node may **lower** a module's tier with `hive-mind module trust <name> confined` (node-local, no key needed); clearing that lowering, or an update whose manifest signs a higher tier than the node last held, is a raise and needs the owner key, and nothing raises a module above what its manifest signs. `module list` shows the effective tier. A unit whose effective tier is `confined` gets `ProtectSystem=strict`, `ProtectHome=tmpfs`, `PrivateTmp=yes`, `NoNewPrivileges=yes` and an empty `CapabilityBoundingSet=`; it can write only its key directory (`HIVE_MODULE_KEY_DIR`) and reads its own directory and its runtimes' `PATH` entries; a unit with a `service` also gets its own runtime directory for sockets, `HIVE_MODULE_RUNTIME_DIR` (`$XDG_RUNTIME_DIR/hive-mind-mod-<name>`, 0700, never the shared `hive-mind` one), and reads `hive_module_client.py`, `ed25519.py`, `merkle.py` and `sync_common.py` from the checkout. Lowering a tier re-renders and restarts the unit; a `trusted` unit is unchanged. |
+| `commands` | *(4.2)* An object keyed by operator verb (1 to 4 words of `a-z`, `0-9`, `-`; at most 64): `{"mutates": bool, "reversible": "yes"\|"no"\|"n/a", "undo": [argv…], "dry_run": bool, "fleet": bool}`. `mutates` is required; a mutating verb names `reversible` and takes `--dry-run` (`dry_run` must be `true`); `undo` is an argv template (placeholders `{name}`, one whole word each) whose leading words name another declared mutating verb, and is required for `reversible: "yes"` and only then; `fleet` is reserved and refused on a `reversible: "no"` verb. Needs `contract: 1`, a `cli` and `min_core` `4.2` or newer. A manifest without it is unchanged; `module check` warns that its callers cannot tell which verbs change state. `module add` and `update` print the table, and `hive-mind module commands <name> [--json]` lists it from the verified tree. It is the publisher's claim, not a sandbox. |
 | `ui` | The module's page for the dashboard: an object of at most 64 KiB, defined by [`ui_block.schema.json`](ui_block.schema.json). Unknown top-level keys are refused; unknown widgets, slots and extra fields inside an item are ignored by the dashboard. |
 
 `status`, `doctor` and `cli.command` are argv lists run without a shell, with `service.command`'s rules: strings, no
@@ -138,7 +139,12 @@ is writable by group or world. `remove` deletes the launcher (only if it is stil
 renames or drops it with the manifest, and a failed update puts the old one back.
 
 `hive-mind module run <name> [--] <args…>` does the same without the launcher (flags after the name go to the module's
-command), and returns the command's exit status. `hive-mind module status <name> [--json]` runs the manifest's `status`
+command, each word unchanged, and core reads none of them), and returns the command's exit status.
+`hive-mind module commands <name> [--json]` (4.2) prints the verbs the module's signed manifest declares: which are
+read-only, which change state, which can be undone and how. It loads the installed tree through the same signature and
+digest check as `doctor` and needs the pinned publisher's signature, and exits 1 when that fails or the module is not
+installed or disabled. A manifest without `commands` prints that it declares none; treat every verb of such a module as one that
+cannot be undone. A verb the table does not list is undeclared. `hive-mind module status <name> [--json]` runs the manifest's `status`
 argv (no shell, in the module's directory, with `PATH`, `HOME`, `LANG` and the three `HIVE_MODULE_*` variables only; 20 s and
 64 KiB at most) and prints the envelope. A status that does not run, parse or fit the envelope is reported as `unknown`
 with the reason, never as a crash. Exit 0 when the state is `ok`, 1 otherwise.
@@ -204,7 +210,8 @@ manifest and shipped files for text that looks like a person, host, account or r
 runs the module's `status` and `doctor` in a throwaway directory, with a scrubbed environment (`PATH`, a temporary
 `HOME`, `HIVE_MODULE_NAME/DIR/KEY_DIR` and `HIVE_DOCTOR_MODE=manual`; no owner or identity variable), a 20-second
 limit and a 64 KiB output cap, and checks the shapes above. `--run` runs the module's own code as you, which is why it
-is a flag. Exit 0 when there is no error, 1 otherwise. `module add` does not require `check` to have been run: it
+is a flag. A contract-1 manifest with a `cli` and no `commands` gets a warning (4.2), and the verbs a `commands` map
+declares `reversible: "n/a"` are listed in one warning so the publisher rereads them. Exit 0 when there is no error, 1 otherwise. `module add` does not require `check` to have been run: it
 re-validates everything itself.
 
 `module.json.sig` is Ed25519 over the exact bytes of `module.json`, verified under `publisher`.
@@ -284,6 +291,7 @@ hive-mind module remove <name>
 hive-mind module list [--json]                                     # (4.0) --json
 hive-mind module check <dir> [--run] [--deny TERM] [--json]       # (3.1)
 hive-mind module config <name> set <key> <value> | unset <key> | list | get <key> | validate | schema
+hive-mind module commands <name> [--json]                         # (4.2)
 hive-mind module run <name> [--] <args>... | status <name> [--json] | runtime <name> <program> <dir> | trust <name> [confined|trusted]
 hive-mind module quota <name> [--per-hour N] [--per-day N] [--entry-bytes N] [--lifetime N]
 ```
