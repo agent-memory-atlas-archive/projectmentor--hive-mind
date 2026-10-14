@@ -627,6 +627,16 @@ at once). Concretely:
   any other failure fails as before. A repository writer can edit that list, but the same writer can already
   edit the workflow; accepted for 3.x (admitted party). Operator rule: keep the list short and remove a line
   when its issue closes.
+- **`duplicate-issue.yml` flags, never closes (#493).** On `issues: opened` it comments and adds the
+  `duplicate?` label to an issue whose normalised title equals an open issue's, whose body is at least
+  95 % alike, opened by the same login within 10 minutes. Its token is `issues: write` only; the title and body
+  reach `scripts/ci/duplicate_issue.py` through `env:`, never a `run:` line, and the one checkout is the default
+  branch with credentials not persisted. An unadmitted user who can open an issue can make the bot comment
+  and label their own issue (one comment naming an issue number, an integer the script read from the API); they
+  cannot make it touch another person's issue, close anything, or run code. Residuals: an author can dodge the
+  rule with a slightly different title, and can trigger a false flag against their own earlier issue; both cost
+  a label that a person removes. Rollout to the other repositories waits a week of clean runs here; a private
+  repository also needs `contents: read` for the checkout.
 - **The release key is a repository-level secret.** `sign.yml` runs the test suite in a job with no secrets
   and signs in a separate job (`needs: test`, `environment: signing`, deployable from `main` only), so a pull
   request's code never runs with the key in scope, and `tests/test_workflow_secrets.py` fails if a job that runs

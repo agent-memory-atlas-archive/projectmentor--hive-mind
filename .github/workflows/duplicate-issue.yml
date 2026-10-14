@@ -1,0 +1,38 @@
+name: Flag duplicate issues
+# Flags a just-opened issue that strictly duplicates an earlier open one (same normalised title, body at
+# least 95 % alike, same author, opened within 10 minutes): one comment naming the original and a
+# `duplicate?` label. It never closes an issue (hive-mind#493, G2 of the owner-approval and hygiene design).
+#
+# Why this is safe (CI-01 class; it holds a write scope): the token is scoped to `issues: write` and nothing
+# else (a private repository would also need `contents: read` for the checkout below). The issue title and
+# body reach the script only through `env:`; no `${{ github.event.issue.* }}` is interpolated into a `run:`
+# script. The one checkout is the default branch (reviewed code), credentials not persisted, only
+# scripts/ci present. The trigger is `issues`, which runs the workflow file from the default branch, so an
+# issue author cannot change what runs. Do not add a checkout of anything else, or a `run:` that
+# interpolates issue text; a change that must do so has to be reviewed as a security change.
+on:
+  issues:
+    types: [opened]
+
+permissions: {}
+
+jobs:
+  flag-duplicate:
+    permissions:
+      issues: write         # comment and label; nothing else
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          sparse-checkout: scripts/ci
+          persist-credentials: false
+      - name: Flag a strict duplicate
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          ISSUE_USER: ${{ github.event.issue.user.login }}
+          ISSUE_CREATED_AT: ${{ github.event.issue.created_at }}
+        run: python3 -I scripts/ci/duplicate_issue.py
