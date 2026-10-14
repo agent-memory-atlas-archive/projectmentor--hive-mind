@@ -2998,8 +2998,10 @@ def lint_identifying(root, manifest, deny=()):
     return found[:50]
 
 
-def _run_json(argv, files, mod_dir, env):
-    """Run one manifest argv in the throwaway module dir; (returncode, parsed JSON or None, problem or None)."""
+def _run_capture(argv, files, mod_dir, env, timeout=None, merge_stderr=False):
+    """Run one manifest argv in the throwaway module dir, no shell and no stdin; (returncode, output bytes or None,
+    problem or None). The deadline is wall-clock and the group is killed at it; the output is capped."""
+    timeout = CHECK_TIMEOUT if timeout is None else timeout
     first = argv[0]
     if first.startswith("/"):
         cmd = list(argv)
@@ -3012,10 +3014,10 @@ def _run_json(argv, files, mod_dir, env):
         cmd = [found, *argv[1:]]
     try:
         proc = subprocess.Popen(cmd, cwd=str(mod_dir), env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                stderr=subprocess.DEVNULL, start_new_session=True)
+                                stderr=subprocess.STDOUT if merge_stderr else subprocess.DEVNULL, start_new_session=True)
     except OSError as e:
         return None, None, f"could not run: {e}"
-    deadline, chunks, size, fd = time.monotonic() + CHECK_TIMEOUT, [], 0, proc.stdout.fileno()
+    deadline, chunks, size, fd = time.monotonic() + timeout, [], 0, proc.stdout.fileno()
     timed_out = False
     try:
         while True:                         # a wall-clock deadline on the read: a child that keeps the pipe open must not extend it
@@ -3042,14 +3044,51 @@ def _run_json(argv, files, mod_dir, env):
         if timed_out:
             _kill_group(proc)
             proc.wait()
-            return None, None, f"did not finish in {CHECK_TIMEOUT} seconds"
+            return None, None, f"did not finish in {timeout} seconds"
     finally:
         proc.stdout.close()
-    out = b"".join(chunks)
+    return proc.returncode, b"".join(chunks), None
+
+
+def _run_json(argv, files, mod_dir, env):
+    """Run one manifest argv in the throwaway module dir; (returncode, parsed JSON or None, problem or None)."""
+    rc, out, why = _run_capture(argv, files, mod_dir, env)
+    if why:
+        return None, None, why
     try:
-        return proc.returncode, json.loads(out), None
+        return rc, json.loads(out), None
     except ValueError:
-        return proc.returncode, None, "did not print JSON"
+        return rc, None, "did not print JSON"
+
+
+CHECK_HELP_TIMEOUT, CHECK_HELP_TOTAL = 5, 60
+IRREVERSIBLE_HELP = ("This cannot be undone.", "--yes", "--dry-run")
+
+
+def help_warnings(m, mod_dir, env):
+    """`module check --run`: run `<cli.command> <verb> --help` for each declared verb (5 s each, 60 s in all) and warn
+    on a non-zero exit, on a mutating verb whose help does not name --dry-run, and on an irreversible verb whose help
+    lacks the plain words. Warnings only: help text is provisional. Runs nothing but `--help`."""
+    out, started, cmds = [], time.monotonic(), m["commands"]
+    for i, (verb, e) in enumerate(cmds.items()):
+        if time.monotonic() - started >= CHECK_HELP_TOTAL:
+            out.append(f"probing the help of declared verbs stopped after {CHECK_HELP_TOTAL} s; not run: {', '.join(list(cmds)[i:])}")
+            break
+        rc, text, why = _run_capture([*m["cli"]["command"], *verb.split(), "--help"], m["files"], mod_dir, env,
+                                     timeout=CHECK_HELP_TIMEOUT, merge_stderr=True)
+        if why:
+            out.append(f"`{verb} --help` {why}")
+            continue
+        if rc != 0:
+            out.append(f"`{verb} --help` exited {rc}, not 0: every declared verb answers --help")
+        text = text.decode("utf-8", "replace")
+        if e.get("reversible") == "no":
+            missing = [w for w in IRREVERSIBLE_HELP if w not in text]
+            if missing:
+                out.append(f"help of irreversible verb `{verb}` lacks: {', '.join(missing)}")
+        elif e["mutates"] and "--dry-run" not in text:
+            out.append(f"help of mutating verb `{verb}` does not name --dry-run")
+    return out
 
 
 def _kill_group(proc):
@@ -3133,6 +3172,8 @@ def check_module(root, core_version, run=False, deny=()):
                     continue
                 rc, obj, why = _run_json(m[field], m["files"], mod_dir, env)
                 errors += [f"{field} {why}"] if why else [f"{p}" for p in judge(rc, obj)]
+            if m.get("commands") and m.get("cli"):
+                warnings += help_warnings(m, mod_dir, env)
     return errors, warnings
 
 

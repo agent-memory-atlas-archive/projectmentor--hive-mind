@@ -566,6 +566,25 @@ at once). Concretely:
   temporary directory, with a time and size limit; a module that spawns a detached child can outlive it. Operator rule:
   run `--run` only on a module you would install. Only an admitted publisher key signs a manifest, so a remaining gap
   that needs one is an admitted-device residual (accepted for 3.x).
+- **Declared commands are the publisher's word, not a sandbox (4.2).** `commands` sits inside the signed `module.json`,
+  so only the pinned publisher key can declare, and `check_tree` turns a map edited in place into the existing `fail`.
+  A publisher that lies (an irreversible verb declared `reversible: "yes"` or `"n/a"`, a mutating verb declared
+  `mutates: false`, a verb declared `dry_run: true` whose dry run writes, a verb declared `reversible: "no"` that does
+  not enforce `--yes`) is bounded by that signature and by the checks core can make: the doctor probes only that an
+  undo verb's `--help` exits 0, and `module check --run` only that each declared verb's `--help` exits 0 and names the
+  plain words (warnings). The validator cannot test truth, and `--dry-run` output is the module's own. What the
+  declaration buys an agent (an allow rule over `hive-mind module run *`) is therefore exactly as good as the
+  publisher's honesty: an admitted-device residual, one class for all four lies (the owner pins the publisher key;
+  accepted for 4.x as the 3.1 fields were). Operator rules: pin only publishers you trust; read the `commands` table at
+  install and `hive-mind module commands <name>` after an update; give the agent's settings a deny rule for `--yes` (a
+  deny outranks an allow) and for pty wrappers. The deny rule covers the flag, not the prompt: a verb mis-declared `yes`
+  or `n/a` never asks for `--yes`, and a process that already has a terminal (`isatty(0)` is satisfied by a pty an agent
+  allocates for itself) can answer the `yes` prompt with no `--yes` in argv. That is the human path and the same
+  residual. `--yes` is a word in argv, not a secret: it turns an unattended destructive run from a default into a
+  visible choice that permission rules and audit can see. A module's undo archive is a local file of the module (B9
+  class): a same-uid process, including the module, can delete or edit it; the undo verb re-checks current state and
+  refuses a superseded restore. `module check --run` runs only `<verb> --help` of each declared verb, under the same
+  scrubbed environment, time and size limits as `status` and `doctor`, with no stdin.
 - **Module config secrets sit in a plaintext node file (3.1).** A `secret` key in a `config_schema` is node-scoped by
   the validator, so it is never journaled or synced, and the CLI never takes it from the command line (shell history,
   `ps`), masks it in `list`, `get`, `--json`, `validate` and the doctor, and refuses it from `--fleet`. It is stored in

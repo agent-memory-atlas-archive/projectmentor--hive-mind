@@ -193,8 +193,8 @@ def test_an_irreversible_verb_is_never_fleet_runnable():
 
 # ── `module commands`, the install summary ────────────────────────────────────────────────────────
 
-def publish(root, commands=EXAMPLE, sign=True, tamper=None, seed=SEED, **extra):
-    body = {"run.sh": "#!/bin/sh\nexit 0\n"}
+def publish(root, commands=EXAMPLE, sign=True, tamper=None, seed=SEED, script="exit 0\n", **extra):
+    body = {"run.sh": "#!/bin/sh\n" + script}
     for rel, text in body.items():
         (root / rel).write_text(text)
         (root / rel).chmod(0o755)
@@ -342,6 +342,54 @@ def test_check_lists_the_na_verbs_in_one_warning_and_a_bad_map_is_an_error(tmp_p
     assert errors == ["manifest commands a: a mutating verb takes --dry-run (4.2): dry_run must be true"]
 
 
+# ── `module check --run`: the help probes ─────────────────────────────────────────────────────────
+
+def help_script(tmp_path, cases):
+    return f'echo "$*" >> "{tmp_path.parent / (tmp_path.name + "-calls")}"\ncase "$*" in\n{cases}\n*) exit 0;;\nesac\n'
+
+
+def help_run(tmp_path, cases, **kw):
+    publish(tmp_path, script=help_script(tmp_path, cases))
+    errors, warnings = hive_modules.check_module(tmp_path, CORE, run=True)
+    calls = tmp_path.parent / (tmp_path.name + "-calls")
+    return errors, [w for w in warnings if "--help" in w or "help of" in w or "probing" in w], \
+        calls.read_text().splitlines() if calls.exists() else []
+
+
+def test_run_probes_each_verb_with_help_and_nothing_else(tmp_path):
+    errors, warns, calls = help_run(tmp_path, '"stop --help") echo "This cannot be undone. Use --yes or --dry-run";;\n'
+                                              '"restart --help") echo "usage: --dry-run" >&2;;\n'
+                                              '"hygiene apply --help") exit 2;;\n'
+                                              '"hygiene undo --help") echo "usage";;')
+    assert errors == []
+    assert calls == ["hygiene apply --help", "hygiene undo --help", "hygiene list --help", "restart --help", "stop --help"]
+    assert warns == ["`hygiene apply --help` exited 2, not 0: every declared verb answers --help",
+                     "help of mutating verb `hygiene apply` does not name --dry-run",
+                     "help of mutating verb `hygiene undo` does not name --dry-run"]
+
+
+def test_run_warns_when_an_irreversible_verbs_help_lacks_the_plain_words(tmp_path):
+    _, warns, _ = help_run(tmp_path, '"stop --help") echo "stops it";;\n"hygiene apply --help"|"hygiene undo --help"|"restart --help") echo "--dry-run";;')
+    assert warns == ["help of irreversible verb `stop` lacks: This cannot be undone., --yes, --dry-run"]
+    _, warns, _ = help_run(tmp_path, '"stop --help") echo "This cannot be undone. --yes";;\n"hygiene apply --help"|"hygiene undo --help"|"restart --help") echo "--dry-run";;')
+    assert warns == ["help of irreversible verb `stop` lacks: --dry-run"]
+
+
+def test_check_without_run_runs_nothing(tmp_path):
+    publish(tmp_path, script=help_script(tmp_path, ""))
+    hive_modules.check_module(tmp_path, CORE)
+    assert not (tmp_path.parent / (tmp_path.name + "-calls")).exists()
+
+
+def test_run_stops_probing_at_the_total_and_names_the_verbs_it_did_not_run(tmp_path, monkeypatch):
+    monkeypatch.setattr(hive_modules, "CHECK_HELP_TIMEOUT", 0.3)
+    monkeypatch.setattr(hive_modules, "CHECK_HELP_TOTAL", 0.5)
+    _, warns, calls = help_run(tmp_path, '*) sleep 30;;')
+    assert calls == ["hygiene apply --help", "hygiene undo --help"]
+    assert warns[:2] == ["`hygiene apply --help` did not finish in 0.3 seconds", "`hygiene undo --help` did not finish in 0.3 seconds"]
+    assert warns[2] == "probing the help of declared verbs stopped after 0.5 s; not run: hygiene list, restart, stop"
+
+
 # ── the doctor's undo probe ───────────────────────────────────────────────────────────────────────
 
 def fake_cli(path, body):
@@ -471,3 +519,50 @@ def test_module_run_passes_flags_dashes_and_spaces_through_one_word_each(install
     rc, _, _ = run(["run", "demo", *(["--"] if dash else []), *words], capsys)
     assert rc == 7                                              # the module's own exit status
     assert out.read_text().split("\n")[:-1] == words
+
+
+# ── probe_help: stdin, session and process group ──────────────────────────────────────────────────
+
+def _probe(tmp_path, body, timeout=1):
+    fake_cli(tmp_path / "p.sh", body)
+    return hive_modules.probe_help([str(tmp_path / "p.sh"), "--help"], {"PATH": os.environ["PATH"]}, tmp_path, timeout)
+
+
+def test_probe_help_gives_the_child_no_stdin(tmp_path):
+    r, w = os.pipe()                    # an inherited stdin would be this open pipe, and `read` would block to the deadline
+    saved = os.dup(0)
+    os.dup2(r, 0)
+    try:
+        assert _probe(tmp_path, 'read x || exit 0\nexit 7\n', timeout=3) == (0, "")
+    finally:
+        os.dup2(saved, 0)
+        for fd in (r, w, saved):
+            os.close(fd)
+
+
+def test_probe_help_starts_its_own_session(tmp_path):
+    rc, _ = _probe(tmp_path, '[ "$(ps -o pgid= -p $$ | tr -d " ")" = "$$" ]\n')
+    assert rc == 0, "the child must lead its own process group"
+
+
+def test_probe_help_kills_the_whole_group_at_the_deadline(tmp_path):
+    pidfile = tmp_path / "child.pid"
+    try:
+        rc, why = _probe(tmp_path, f'sleep 30 &\necho $! > "{pidfile}"\nwait\n', timeout=0.5)
+        assert rc is None and why == "did not finish in 0.5 s"
+        pid = int(pidfile.read_text())
+        for _ in range(50):             # SIGKILL is delivered at once; the zombie is reaped by init
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                break
+            import time
+            time.sleep(0.1)
+        else:
+            raise AssertionError("the grandchild outlived the probe")
+    finally:
+        if pidfile.exists():
+            try:
+                os.kill(int(pidfile.read_text()), 9)
+            except (OSError, ValueError):
+                pass
