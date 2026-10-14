@@ -49,6 +49,7 @@ if __name__ == "__main__":      # entry point only (`python3 -I` puts no directo
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import approvers
+import keystore
 import merkle
 import vocabulary
 from hivemind.crypto import signer as _sigseam
@@ -314,7 +315,10 @@ class Agent:
     """Holds the signer and answers on `sock_path`. `run()` returns once locked; the caller then exits the process."""
 
     def __init__(self, seed, sock_path, idle, policy, clocks=None, uid=None, mlocked=False, peer_uid_fn=peer_uid,
-                 gated=False, state_dir=None, rp_id=None, origin=None, approvers_min=1, allow_synced=False):
+                 gated=False, state_dir=None, rp_id=None, origin=None, approvers_min=1, allow_synced=False, keystore=None):
+        if keystore and not gated:
+            raise ValueError("a keystore-sourced seed is held only by a gated agent")
+        self.keystore = keystore
         self.signer = _sigseam.FileSigner(seed)
         if base64.b64encode(self.signer.public_key()).decode() != policy.owner_pub:
             raise ValueError("the seed is not the owner key")
@@ -562,7 +566,7 @@ class Agent:
                "idle": self.idle, "modules": sorted(self.policy.modules), "gated": self.gated,
                "admitted": sorted(self.policy.admitted_session), "signed": self.signed,
                "budget_left": None if self.gated else SIGNS_TOTAL - self.signed,
-               "mlocked": self.mlocked, "backoff": max(0, int(self.backoff_until - now)),
+               "mlocked": self.mlocked, "keystore": self.keystore, "backoff": max(0, int(self.backoff_until - now)),
                "allowlist": (["a presented ticket's exact bodies", "a live delegation's scope"] if self.gated else
                              ["admit (module device, --module only)", "revoke (device admitted this session)",
                               "set-config x-<module>:<key>"]),
@@ -1031,8 +1035,18 @@ def cmd_unlock(lib, argv, out=print):
     ap.add_argument("--port", type=int, default=8444, help="--gated: the approval page's HTTPS port (default 8444)")
     ap.add_argument("--approvers-min", type=int, default=1, help="--gated: unrevoked approvers required (default 1)")
     ap.add_argument("--allow-synced", action="store_true", help="--gated: accept backup-eligible (synced) passkeys")
+    ap.add_argument("--passphrase-source", choices=("prompt",) + keystore.SOURCES, default="prompt",
+                    help="where the passphrase comes from: prompt (default), or the OS keystore it was stored in with "
+                         "`owner keystore store`; a keystore source needs --gated (boot unlock)")
     ap.add_argument("--passphrase-fd", type=int, default=None, help=argparse.SUPPRESS)
     a = ap.parse_args(argv)
+    if a.passphrase_source != "prompt" and not a.gated:
+        print("hive-mind: --passphrase-source other than prompt needs --gated: a stored passphrase may only unlock an agent "
+              "that signs nothing without an approved ticket or a live delegation", file=sys.stderr)
+        return 2
+    if a.passphrase_source != "prompt" and a.passphrase_fd is not None:
+        print("hive-mind: --passphrase-source and --passphrase-fd are exclusive", file=sys.stderr)
+        return 2
     if a.gated and (a.idle or a.module):
         print("hive-mind: --gated has no --for and no --module: the gate, not time or a module list, bounds the agent",
               file=sys.stderr)
@@ -1100,7 +1114,16 @@ def cmd_unlock(lib, argv, out=print):
                  ", ".join(a.module) or "installed modules", _clock(now + idle)))
     seed = None
     for attempt in range(1, 4):
-        pw = _read_unlock_passphrase(a.passphrase_fd)
+        if a.passphrase_source != "prompt":
+            src = str(a.passphrase_source)
+            try:
+                pw = keystore.fetch(src, lib._ensure_key_dir(), lib.HIVE_HOME)
+            except keystore.KeystoreError as e:
+                print(f"hive-mind: could not read the owner key's secret from the OS keystore: "
+                      f"{keystore.REASONS.get(e.code, keystore.REASONS['failed'])}", file=sys.stderr)
+                return 1
+        else:
+            pw = _read_unlock_passphrase(a.passphrase_fd)
         if pw is None:
             print("Cancelled: the owner key stays sealed.", file=sys.stderr)
             return 1
@@ -1109,8 +1132,10 @@ def cmd_unlock(lib, argv, out=print):
             seed = ownerkey.load_sealed(lib.OWNER_SEALED_PATH, pw, lib._owner_unseal)
             break
         except (ValueError, KeyError) as e:
-            if attempt == 3 or a.passphrase_fd is not None:
-                print(f"hive-mind: could not unlock the owner key ({e})", file=sys.stderr)
+            if attempt == 3 or a.passphrase_fd is not None or a.passphrase_source != "prompt":
+                print(f"hive-mind: could not unlock the owner key ({e})"
+                      + ("; the stored passphrase may be stale: `owner keystore store` again" if a.passphrase_source != "prompt" else ""),
+                      file=sys.stderr)
                 return 1
             print("Wrong passphrase, try again.", file=sys.stderr)
     pub = base64.b64encode(lib._sigseam.from_seed(seed).public_key()).decode()
@@ -1129,7 +1154,8 @@ def cmd_unlock(lib, argv, out=print):
             return 1
         gated = {"state_dir": state_dir, "rp_id": a.rp_id, "origin": f"https://{a.rp_id}:{a.port}",
                  "approvers_min": a.approvers_min, "allow_synced": a.allow_synced}
-    proc = spawn(seed, path, idle, pub, a.module, gated=gated)
+    proc = spawn(seed, path, idle, pub, a.module, gated=gated,
+                 keystore_source=None if a.passphrase_source == "prompt" else a.passphrase_source)
     for _ in range(100):
         try:
             client.status()
@@ -1159,13 +1185,31 @@ def cmd_lock(lib, argv, out=print):
     return 0
 
 
+def _keystore_lines(lib, st):
+    """Name the keystore in use (slice A3). A keystore source is a seed readable at rest by the same user: say so."""
+    try:
+        line = keystore.describe(lib._ensure_key_dir())
+    except OSError:
+        line = None
+    if st is not None and st.get("keystore"):
+        print(f"  keystore: the agent was unlocked from {st['keystore']}")
+    if line:
+        print(f"  keystore: {line}")
+        if unit_installed():
+            print("  boot unlock: the user unit is installed")
+    elif st is not None and st.get("keystore"):
+        print("  keystore: no record on this node (cleared since)")
+
+
 def cmd_status(lib, argv, out=print):
     try:
         st = Client(socket_path(lib.HIVE_HOME)).status()
     except AgentError:
         print("locked (no agent)")
+        _keystore_lines(lib, None)
         return 0
     print(f"unlocked{' (gated)' if st.get('gated') else ''}: public key {st['public_key']}")
+    _keystore_lines(lib, st)
     if st.get("gated"):
         print(f"  no timer: ends at `owner lock` or a reboot; rpId {st['rp_id']}, approvers.min {st['approvers_min']}")
         print("  approvers: " + (", ".join(f"{r['label']} ({r['kind']}{', REVOKED' if r['revoked'] else ''})"
@@ -1432,7 +1476,159 @@ def cmd_delegate(lib, argv, out=print):
     return _finish(lib, a, "delegate-revoke", {**{k: v for k, v in old[0].items() if k != "owner_sig"}, "revoked": at})
 
 
-COMMANDS = {"unlock": cmd_unlock, "lock": cmd_lock, "status": cmd_status, "approver": cmd_approver, "delegate": cmd_delegate}
+# ---- boot unlock: the keystore and the user unit (owner approval slice A3) -------------------------------------------------
+
+UNIT_NAME = "hive-owner-agent.service"
+
+
+def unit_path():
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
+    return os.path.join(base, "systemd", "user", UNIT_NAME)
+
+
+def unit_installed():
+    return os.path.isfile(unit_path())
+
+
+def _sh(argv):
+    """Run one service-manager command; (returncode, output). The seam the tests replace."""
+    import subprocess
+    try:
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=30, cwd="/")
+    except (OSError, subprocess.SubprocessError):
+        return 127, ""
+    return r.returncode, (r.stdout + r.stderr).strip()
+
+
+def _q(arg):
+    """One ExecStart word: systemd splits on whitespace and expands `%` and `$`, so quote and double them."""
+    esc = arg.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%").replace("$", "$$")
+    return f'"{esc}"'
+
+
+def render_unit(ctl_path, source, rp_id, port, approvers_min, allow_synced, hive_home):
+    """The user unit. A oneshot that stays active: `owner unlock --gated` starts the agent and exits; the agent stays in
+    the unit's cgroup and ends at `ExecStop` (`owner lock`) or at logout/shutdown. Nothing secret is in it."""
+    start = [sys.executable, "-I", ctl_path, "owner", "unlock", "--gated", "--rp-id", rp_id, "--port", str(port),
+             "--approvers-min", str(approvers_min), "--passphrase-source", source] + (["--allow-synced"] if allow_synced else [])
+    stop = [sys.executable, "-I", ctl_path, "owner", "lock"]
+    esc = f"HIVE_HOME={hive_home}".replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%")
+    env = f'Environment="{esc}"\n'
+    return ("[Unit]\nDescription=HiveMind owner agent, gated, unlocked at boot from the OS keystore\n"
+            "[Service]\nType=oneshot\nRemainAfterExit=yes\n" + env +
+            "ExecStart=" + " ".join(_q(w) for w in start) + "\nExecStop=" + " ".join(_q(w) for w in stop) + "\n"
+            "[Install]\nWantedBy=default.target\n")
+
+
+def cmd_keystore(lib, argv, out=print):
+    import argparse
+    ap = argparse.ArgumentParser(prog="hive-mind owner keystore")
+    ap.add_argument("action", choices=("store", "clear", "status"))
+    ap.add_argument("--source", choices=keystore.SOURCES)
+    ap.add_argument("--passphrase-fd", type=int, default=None, help=argparse.SUPPRESS)
+    a = ap.parse_args(argv)
+    key_dir = lib._ensure_key_dir()
+    if a.action == "status":
+        line = keystore.describe(key_dir)
+        print(f"keystore: {line}" if line else "keystore: none (the passphrase is typed at `owner unlock`)")
+        print(f"boot unit: {'installed (' + unit_path() + ')' if unit_installed() else 'not installed'}")
+        return 0
+    if a.action == "clear":
+        src = keystore.clear(key_dir, lib.HIVE_HOME)
+        print(f"cleared the stored passphrase ({src})" if src else "nothing stored")
+        if unit_installed():
+            print("hive-mind: the boot unit is still installed and will fail to unlock; "
+                  "`hive-mind owner boot-unit remove` removes it", file=sys.stderr)
+        return 0
+    if not a.source:
+        print("hive-mind: owner keystore store needs --source dpapi|libsecret|keychain", file=sys.stderr)
+        return 2
+    ok, why = keystore.available(a.source)
+    if not ok:
+        print(f"hive-mind: {a.source} is not available here: {why}", file=sys.stderr)
+        return 1
+    if not lib._is_file(lib.OWNER_SEALED_PATH):
+        print("hive-mind: no sealed owner key on this device; nothing to store a passphrase for", file=sys.stderr)
+        return 1
+    print(f"This stores the owner passphrase in {a.source}. Any process of your user on this node that can ask {a.source} for\n"
+          "it can read it, so use it only for `owner unlock --gated` (a gated agent signs nothing without an approver's ticket).\n"
+          "Do not run seats or `trust: full` modules on this node.\n")
+    pw = _read_unlock_passphrase(a.passphrase_fd)
+    if pw is None:
+        print("Cancelled: nothing stored.", file=sys.stderr)
+        return 1
+    try:
+        import ownerkey
+        ownerkey.load_sealed(lib.OWNER_SEALED_PATH, pw, lib._owner_unseal)       # never store a passphrase that does not open it
+    except (ValueError, KeyError) as e:
+        print(f"hive-mind: that passphrase does not open the owner key ({e}); nothing stored", file=sys.stderr)
+        return 1
+    try:
+        keystore.store(a.source, pw, key_dir, lib.HIVE_HOME, now=time.time())
+    except keystore.KeystoreError as e:
+        print(f"hive-mind: {e}", file=sys.stderr)
+        return 1
+    print(f"stored in {a.source}. Next: `hive-mind owner boot-unit install --rp-id HOST --passphrase-source {a.source}`")
+    return 0
+
+
+def cmd_boot_unit(lib, argv, out=print):
+    import argparse
+    ap = argparse.ArgumentParser(prog="hive-mind owner boot-unit")
+    ap.add_argument("action", choices=("install", "remove", "status"))
+    ap.add_argument("--rp-id")
+    ap.add_argument("--port", type=int, default=8444)
+    ap.add_argument("--approvers-min", type=int, default=1)
+    ap.add_argument("--allow-synced", action="store_true")
+    a = ap.parse_args(argv)
+    path = unit_path()
+    if a.action == "status":
+        print(f"boot unit: {'installed at ' + path if unit_installed() else 'not installed'}")
+        return 0
+    if a.action == "remove":
+        _sh(["systemctl", "--user", "disable", "--now", UNIT_NAME])
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            print("boot unit: not installed")
+            return 0
+        _sh(["systemctl", "--user", "daemon-reload"])
+        print("boot unit removed (lingering is left as it was: `loginctl disable-linger` ends it)")
+        return 0
+    rec = keystore.read_record(lib._ensure_key_dir())
+    if rec is None:
+        print("hive-mind: no passphrase stored: run `hive-mind owner keystore store --source ...` first", file=sys.stderr)
+        return 1
+    if not a.rp_id or not 0 < a.port < 65536 or a.approvers_min < 1 or not all(c.isalnum() or c in ".-" for c in a.rp_id):
+        print("hive-mind: boot-unit install needs --rp-id HOST (the owner node's MagicDNS name), a valid --port and "
+              "--approvers-min >= 1", file=sys.stderr)
+        return 2
+    rc, _ = _sh(["systemctl", "--user", "is-system-running"])
+    if rc == 127:
+        print("hive-mind: no user systemd manager here (on WSL enable systemd in /etc/wsl.conf)", file=sys.stderr)
+        return 1
+    ctl = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hivemind_ctl.py")
+    text = render_unit(ctl, rec["source"], a.rp_id, a.port, a.approvers_min, a.allow_synced, lib.HIVE_HOME)
+    os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+    tmp = f"{path}.tmp{os.getpid()}"
+    with open(tmp, "w") as f:
+        f.write(text)
+    os.replace(tmp, path)
+    user = os.environ.get("USER") or os.path.basename(os.path.expanduser("~"))
+    steps = [(["systemctl", "--user", "daemon-reload"], "daemon-reload"),
+             (["systemctl", "--user", "enable", UNIT_NAME], "enable"),
+             (["loginctl", "enable-linger", user], "enable-linger (the agent must start at boot, before a login)")]
+    for argv2, what in steps:
+        rc, msg = _sh(argv2)
+        if rc != 0:
+            print(f"hive-mind: boot unit written, but {what} failed: {msg}", file=sys.stderr)
+            return 1
+    print(f"boot unit installed ({path}), enabled, lingering on: the gated agent unlocks from {rec['source']} at boot.\n"
+          "Start it now with `systemctl --user start " + UNIT_NAME + "` (or reboot).")
+    return 0
+
+
+COMMANDS = {"keystore": cmd_keystore, "boot-unit": cmd_boot_unit, "unlock": cmd_unlock, "lock": cmd_lock, "status": cmd_status, "approver": cmd_approver, "delegate": cmd_delegate}
 
 
 # ---- the agent process --------------------------------------------------------------------------------------------
@@ -1480,7 +1676,10 @@ def _agent_main(argv):
     ap.add_argument("--origin")
     ap.add_argument("--approvers-min", type=int, default=1)
     ap.add_argument("--allow-synced", action="store_true")
+    ap.add_argument("--keystore", choices=keystore.SOURCES)
     a = ap.parse_args(argv)
+    if a.keystore and not a.gated:
+        return 2                # the agent itself refuses a keystore-sourced seed without the gate
     seed = _read_seed(0)
     os.close(0)
     if len(seed) != 32 or _ed25519 is None:
@@ -1536,7 +1735,7 @@ def _agent_main(argv):
     try:
         agent = Agent(bytes(buf[:32]), a.socket, a.idle, Policy(a.owner_pub, a.module, probe, installed), mlocked=mlocked,
                       gated=a.gated, state_dir=a.state_dir, rp_id=a.rp_id, origin=a.origin,
-                      approvers_min=a.approvers_min, allow_synced=a.allow_synced)
+                      approvers_min=a.approvers_min, allow_synced=a.allow_synced, keystore=a.keystore)
     except ValueError:
         return 2
     agent.buf = buf
@@ -1546,7 +1745,7 @@ def _agent_main(argv):
     os._exit(0)                                           # exit, not zeroing, is the guarantee for what CPython can't reach
 
 
-def spawn(seed, sock_path, idle, owner_pub_b64, modules, gated=None):
+def spawn(seed, sock_path, idle, owner_pub_b64, modules, gated=None, keystore_source=None):
     """Start the agent process with the seed on an anonymous pipe (stdin). argv and env carry nothing secret."""
     import subprocess
     here = os.path.dirname(os.path.abspath(__file__))
@@ -1558,6 +1757,8 @@ def spawn(seed, sock_path, idle, owner_pub_b64, modules, gated=None):
     if gated:
         argv += ["--gated", "--state-dir", gated["state_dir"], "--rp-id", gated["rp_id"], "--origin", gated["origin"],
                  "--approvers-min", str(gated["approvers_min"])] + (["--allow-synced"] if gated["allow_synced"] else [])
+    if keystore_source:
+        argv += ["--keystore", keystore_source]
     p = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                          close_fds=True, env=env, cwd="/")
     try:

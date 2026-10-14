@@ -382,6 +382,24 @@ at once). Concretely:
   renamed MagicDNS name kills every passkey (break-glass, then re-enrol). A plan is still a statement, not an authority:
   the agent, not the plan, is the gate.
 
+- **Boot unlock from the OS keystore (4.0, owner approval slice A3).** *Authority:* David's word of 2026-10-13 (design
+  Q3: boot unlock, only together with gated mode). `owner keystore store --source dpapi|libsecret|keychain` checks the
+  passphrase opens the sealed owner key, then puts it in the keystore (DPAPI through `powershell.exe` interop on WSL, the
+  Secret Service, the macOS keychain); `owner boot-unit install` writes a user unit and turns on lingering so
+  `owner unlock --gated --passphrase-source ...` runs at boot. `--passphrase-source` other than `prompt` is refused
+  without `--gated`, and the agent process refuses a keystore-sourced seed without the gate, so the seed in memory still
+  signs nothing without a presented ticket or a live delegation. The passphrase travels on a pipe, never in argv or the
+  environment; the helper programs are fixed absolute paths; the node-local record names the source and holds no secret;
+  `owner status` and `doctor` name the keystore in use. No journal, signature or sync byte changes. *Residual:* a stored
+  passphrase is readable at rest by any process of the same user on the owner node that can ask the same keystore for it
+  (on WSL, any process that can run `powershell.exe`): with it such a process starts its own unsealing and signs
+  anything, bypassing the gate. Boot unlock trades "a same-uid process must catch a typed passphrase" for "a same-uid
+  process can read the seed". Accepted for 4.x as an admitted-device, owner-node-foothold residual (David, 2026-10-13).
+  **Operator rule:** the owner node runs no seat, no module with `trust: full`, and nothing that is not hive core and
+  `happrove`; `owner keystore clear` and `owner boot-unit remove` undo it. Reopen trigger: a TPM-backed path (a non-WSL owner
+  node, or WSL with a TPM bridge), which makes the stored secret non-exportable. The DPAPI entropy string is a domain
+  tag, not a secret.
+
 - **`hv`'s code is in several files (3.1).** The body of `hv` runs from `hivemind/parts/*.py`, chosen by one list,
   `PARTS`, in `hv` itself (no glob, no config, nothing under `HIVE_HOME`), read as bytes and run into `hv`'s own
   namespace. A part has exactly the authority `hv` has, no more. Parts are tracked `.py` files, so the signed source
