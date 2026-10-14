@@ -68,7 +68,7 @@ A path under a version this node does not serve (`/v2/…`) is `404` naming the 
 ### `GET /v1/`
 
 ```json
-{"api": ["v1"], "contract": "4.1", "hive_id": "…", "device_id": "k1:…", "module": "hwatch",
+{"api": ["v1"], "contract": "4.2", "hive_id": "…", "device_id": "k1:…", "module": "hwatch",
  "node_id": "k1:…", "node_devices": 1,
  "quota": {"limits": {…}, "used": {…}, "remaining": {…}}, "config": {"x-hwatch:poll": "30"}}
 ```

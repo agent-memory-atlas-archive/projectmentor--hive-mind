@@ -53,8 +53,8 @@ Everything a module can reach is marked with one of three tiers.
   refused, so adding one is a MINOR and raises `min_core`).
 - **Manifest contract 1 (3.1)**: the optional fields `contract`, `cli`, `runtimes`, `config_schema`, `status`,
   `doctor`, `reads`, `ui` and `trust`, and the rules `validate_manifest` applies to them ([`MODULES.md`](MODULES.md)). A manifest
-  is signed, so its shape cannot be amended in place: a new field, or a stricter or looser rule, is contract `2`, which
-  a 3.1 node refuses by name. A manifest without `contract` is a 2.1/3.0 manifest and keeps its meaning; a contract-1
+  is signed, so its shape cannot be amended in place: a stricter or looser rule on an existing field is contract `2`, which
+  a 3.1 node refuses by name. An additive optional field does not need a new contract: it rides `min_core`, because an older core refuses a field it does not know (`help` in 4.1, `commands` in 4.2). A manifest without `contract` is a 2.1/3.0 manifest and keeps its meaning; a contract-1
   manifest needs `min_core` 3.1, so a 3.0 node refuses it (as unknown fields). `ui_block.schema.json` is the one
   definition of the `ui` block, schema `1`.
 - **The `status` envelope and the `doctor` answer**: the JSON shapes in [`MODULES.md`](MODULES.md), and `hive-mind
@@ -199,6 +199,8 @@ Termux; the `AGENTS.md` cell; module-added lines in the session digest, which la
 them; a unified entity identity across module and shared entities (3.0, public #151).
 
 ## Versioning
+
+**4.2** is additive: a signed `module.json` may carry an optional top-level `commands` map declaring the module's operator verbs (which change state, whether each takes `--dry-run`, how to undo it or that it cannot be undone; see `MODULES.md`, "Declared commands"), and core gains `hive-mind module commands`. A module that ships `commands` sets `min_core` 4.2, because a 4.1 core refuses the field; `contract` stays 1. `GET /v1/` reports `contract: "4.2"`. No journal, projection, signing or sync format changes (`PROTOCOL_VERSION` stays 3). `CONTRACT_HISTORY.md` has the entry.
 
 **4.1** is additive: a `config_schema` entry may carry an optional `help` string (see `MODULES.md`); a module that ships `help` sets `min_core` 4.1, because a 4.0 core refuses the field. `GET /v1/` reports `contract: "4.1"`. `CONTRACT_HISTORY.md` has the entry.
 

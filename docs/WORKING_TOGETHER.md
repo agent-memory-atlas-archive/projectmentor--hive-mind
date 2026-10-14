@@ -141,7 +141,7 @@ You do not have to approve every small fix.
 
 You do say yes before anyone builds a change to any of these:
 
-- The hive's rule set. Today that set is number 4.1.
+- The hive's rule set. Today that set is number 4.2.
 - How notes are signed.
 - How the devices share the hive.
 - The written security promises.

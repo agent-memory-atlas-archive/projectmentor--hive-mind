@@ -584,7 +584,8 @@ at once). Concretely:
   visible choice that permission rules and audit can see. A module's undo archive is a local file of the module (B9
   class): a same-uid process, including the module, can delete or edit it; the undo verb re-checks current state and
   refuses a superseded restore. `module check --run` runs only `<verb> --help` of each declared verb, under the same
-  scrubbed environment, time and size limits as `status` and `doctor`, with no stdin.
+  scrubbed environment and 64 KiB output cap as `status` and `doctor`, with no stdin; each probe gets 5 s and the
+  run 60 s in all.
 - **Module config secrets sit in a plaintext node file (3.1).** A `secret` key in a `config_schema` is node-scoped by
   the validator, so it is never journaled or synced, and the CLI never takes it from the command line (shell history,
   `ps`), masks it in `list`, `get`, `--json`, `validate` and the doctor, and refuses it from `--fleet`. It is stored in
