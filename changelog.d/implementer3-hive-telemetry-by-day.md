@@ -1,0 +1,1 @@
+- A `scope=hive` telemetry read now also returns a `by_day` series (21-day cap, same filters as the totals) on each reporting entry of `nodes`, so a client no longer needs one extra read per node. Additive; older clients ignore it. (Part of projectmentor/hive-mind-dash#27.)

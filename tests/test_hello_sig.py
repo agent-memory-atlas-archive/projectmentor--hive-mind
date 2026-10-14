@@ -959,3 +959,33 @@ def test_signed_telemetry_goes_only_to_a_verified_address_under_enforce(tmp_path
         assert len(sent) == 1 and peer["status"] == "online"
         assert "Hive-Auth-Sig" in sent[0][1]["headers"]                 # a verified (or non-enforce) read still signs
         assert sent[0][1]["allow_redirects"] is False                   # and never follows a redirect
+
+
+def test_hive_telemetry_returns_per_node_by_day_from_one_probe(tmp_path, monkeypatch):
+    hvc, _seen = _client(tmp_path, monkeypatch, _gov([_did(PEER)], purged=[_did(PURGED)], hive=""))
+    monkeypatch.setenv("HIVE_SYNC_AUTH_OUTBOUND", "permissive")
+    probes = []
+
+    def fake_peers(probe=True):
+        probes.append(probe)
+        return [{"name": "p", "device": _did(PEER), "addr": "127.0.0.1:9", "status": "in sync", "self": False}]
+    monkeypatch.setattr(hvc, "api_peers", fake_peers)
+    days = [f"2026-09-{d:02d}" for d in range(1, 26)]          # 25 days: the 21-day cap must hold per node
+    rows = [{"when": d + "T10:00:00Z", "project": "x", "agent": "a", "duration_s": 1, "tokens_in": 1,
+             "tokens_out": 1, "cost_usd": None, "models": {}} for d in days] + \
+           [dict(rows_dup, project="y") for rows_dup in [{"when": days[-1] + "T11:00:00Z", "agent": "a",
+            "duration_s": 1, "tokens_in": 1, "tokens_out": 1, "cost_usd": None, "models": {}}]]
+
+    class _R:
+        def json(self):
+            return {"available": True, "totals": {"sessions": len(rows)}, "recent": rows}
+    monkeypatch.setattr("requests.get", lambda url, **kw: _R())
+    out = hvc.api_telemetry_hive()
+    assert probes == [True]                                        # one api_peers probe per read
+    peer = [n for n in out["nodes"] if n["status"] == "online"][0]
+    assert len(peer["by_day"]) == 21 and peer["by_day"][-1] == {"day": days[-1], "sessions": 2}
+    assert len(out["by_day"]) == 21                                # the totals keep their shape
+    filt = hvc.api_telemetry_hive(project="y")                     # filters apply to the per-node series too
+    assert [n for n in filt["nodes"] if n["status"] == "online"][0]["by_day"] == [{"day": days[-1], "sessions": 1}]
+    own = [n for n in out["nodes"] if n["status"] == "self"][0]
+    assert own["by_day"] == []

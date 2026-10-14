@@ -456,13 +456,18 @@ def api_telemetry_hive(limit=25, offset=0, sort="recent", project=None, agent=No
         # collected[0] is self; the rest came from `targets`, i.e. they ARE sync-reachable. So a peer
         # that answered sync but has no telemetry is ONLINE on older code, NOT offline.
         status = "self" if i == 0 else ("online" if avail else "no-telemetry")
-        nodes.append({"node": name, "node_id": nid, "status": status, "reachable": avail,
-                      "sessions": tel.get("totals", {}).get("sessions", 0) if avail else 0})
+        entry = {"node": name, "node_id": nid, "status": status, "reachable": avail,
+                 "sessions": tel.get("totals", {}).get("sessions", 0) if avail else 0}
         if avail:
+            rows = []
             for x in tel.get("recent", []):
                 row = dict(x)
                 row["node_name"] = name
-                all_recent.append(row)
+                rows.append(row)
+            all_recent.extend(rows)
+            # per-node by_day over the same filters as the totals, so a client needs no per-node reads
+            entry["by_day"] = _tel_aggregate(rows, 0, 0, sort, project, agent, node, day, model)["by_day"]
+        nodes.append(entry)
     for name, nid in unreachable:
         nodes.append({"node": name, "node_id": nid, "status": "offline", "reachable": False, "sessions": 0})
     order = {"self": 0, "online": 1, "no-telemetry": 2, "offline": 3}
