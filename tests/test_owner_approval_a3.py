@@ -211,7 +211,7 @@ def test_the_unit_is_a_oneshot_that_stays_up_and_holds_nothing_secret(tmp_path):
     assert "Type=oneshot" in text and "RemainAfterExit=yes" in text and "WantedBy=default.target" in text
     assert '"--gated"' in text and '"--passphrase-source" "dpapi"' in text and '"owner" "lock"' in text
     assert 'Environment="HIVE_HOME=/home/u/.hive"' in text and "allow-synced" not in text
-    assert "owner.ts.net" in owner_agent.render_unit("/c", "libsecret", "owner.ts.net", 1, 2, True, "/h").replace('"', "")
+    assert '"--rp-id" "owner.ts.net"' in text
     assert "--allow-synced" in owner_agent.render_unit("/c", "libsecret", "h", 1, 2, True, "/h")
 
 

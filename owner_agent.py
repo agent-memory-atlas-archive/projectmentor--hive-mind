@@ -1115,10 +1115,11 @@ def cmd_unlock(lib, argv, out=print):
     seed = None
     for attempt in range(1, 4):
         if a.passphrase_source != "prompt":
+            src = str(a.passphrase_source)
             try:
-                pw = keystore.fetch(a.passphrase_source, lib._ensure_key_dir(), lib.HIVE_HOME)
+                pw = keystore.fetch(src, lib._ensure_key_dir(), lib.HIVE_HOME)
             except keystore.KeystoreError as e:
-                print(f"hive-mind: could not read the owner passphrase from {a.passphrase_source}: {e}", file=sys.stderr)
+                print(f"hive-mind: could not read the owner key's secret from {src}: {e}", file=sys.stderr)
                 return 1
         else:
             pw = _read_unlock_passphrase(a.passphrase_fd)
