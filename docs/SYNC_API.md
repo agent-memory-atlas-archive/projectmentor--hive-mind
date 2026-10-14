@@ -323,7 +323,7 @@ they are the dashboard's internal data layer, not a stable public API.
 |---|---|---|
 | `/api/overview` | — | Counts, convergence, contested items, the audit summary |
 | `/api/search` | `q`, `tag`, `kind` = `all`\|`fact`\|`decision`\|`idea`, `min_confidence`, `limit` (1–200, default 50), `offset`, `sort` = `confidence` (default; `salience` is a legacy alias) \| `importance` \| `utility` \| `recency`, `status` = `all` \| `contested` \| `forgotten` (owner-forgotten) \| `volatile` | Paginated facts and decisions, like `hv search` |
-| `/api/tags` | — | Tag counts |
+| `/api/tags` | optional `counts=1` | The distinct tags; with `counts=1` also `counts`, the number of facts and decisions per tag |
 | `/api/related` | `kind` = `fact`\|`decision`, `id` | Entries related to one item |
 | `/api/item` | `sid` (an `h:…` short id or a `node_id:seq` ref) | One item, for dashboard deep links (`/#h:…`) |
 | `/api/audit` | — | The `hv audit` result |

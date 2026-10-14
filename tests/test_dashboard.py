@@ -146,6 +146,14 @@ def test_api_tags_lists_distinct_tags(daemon):
     assert o["tags"] == sorted(o["tags"])
 
 
+def test_api_tags_counts_optional(daemon):
+    assert "counts" not in json.loads(_get(daemon, "/api/tags")[1])
+    o = json.loads(_get(daemon, "/api/tags?counts=1")[1])
+    assert list(o["counts"]) == o["tags"]
+    assert all(isinstance(n, int) and n >= 1 for n in o["counts"].values())
+    assert o["counts"]["android"] >= 2   # a fact and a decision carry it
+
+
 def test_api_telemetry_shape(daemon):
     t = json.loads(_get(daemon, "/api/telemetry?limit=25&offset=0")[1])
     assert "totals" in t and "recent" in t and "by_day" in t and "by_model" in t

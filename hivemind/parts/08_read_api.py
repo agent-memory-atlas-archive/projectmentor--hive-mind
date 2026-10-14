@@ -159,11 +159,13 @@ def api_search(query="", tag=None, kind="all", min_confidence=0.0,
             "offset": offset, "limit": limit}
 
 
-def api_tags():
+def api_tags(counts=False):
     """All distinct tags across facts + decisions, sorted. Lets the dashboard tag filter stay
-    COMPLETE even when the result lists are paginated (the page only carries its own rows' tags)."""
+    COMPLETE even when the result lists are paginated (the page only carries its own rows' tags).
+    counts=True adds `counts`: {tag: number of facts + decisions carrying it} (additive read field)."""
     conn = get_conn()
     tags = set()
+    tally = {}
     for tbl in ("facts", "decisions"):
         try:
             rows = conn.execute(f"SELECT tags FROM {tbl} WHERE tags IS NOT NULL AND tags != ''").fetchall()
@@ -171,14 +173,17 @@ def api_tags():
             continue
         for r in rows:
             try:
-                for t in (json.loads(r[0]) if r[0] else []):
-                    t = str(t).strip()
+                for t in {str(t).strip() for t in (json.loads(r[0]) if r[0] else [])}:
                     if t:
                         tags.add(t)
+                        tally[t] = tally.get(t, 0) + 1
             except Exception:
                 continue
     conn.close()
-    return {"tags": sorted(tags)}
+    out = {"tags": sorted(tags)}
+    if counts:
+        out["counts"] = {t: tally[t] for t in out["tags"]}
+    return out
 
 
 def api_item(sid):

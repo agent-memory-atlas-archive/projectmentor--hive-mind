@@ -713,7 +713,7 @@ class Handler(BaseHTTPRequestHandler):
                     offset=max(0, int(q.get("offset", ["0"])[0] or 0)),
                     sort=q.get("sort", ["confidence"])[0], status=q.get("status", ["all"])[0]))
             elif u.path == "/api/tags":
-                self._send(200, hv.api_tags())
+                self._send(200, hv.api_tags(counts=q.get("counts", ["0"])[0] in ("1", "true")))
             elif u.path == "/api/related":
                 self._send(200, hv.api_related(
                     kind=q.get("kind", ["fact"])[0],
