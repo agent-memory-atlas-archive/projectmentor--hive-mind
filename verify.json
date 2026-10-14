@@ -1,5 +1,5 @@
 {
-  "digest": "fa759d0cbe68863b5998d581b36fd130d5d4dfba3d5c7bade0426260af57bb40",
+  "digest": "3283f60d7db5ded810cbf90dce5736fe9d6f8b1c88501defeeaf75afa183c063",
   "files": {
     ".github/FUNDING.yml": "ca6c63d7539bb7d2f809b5068781c78de97c028a44c5ae252b11bc1695caf85d",
     ".github/ISSUE_TEMPLATE/bug_report.yml": "22df51b1e51c25f50726392c79811116b88c40370843ff2d4a3e76b643f1cb68",
@@ -23,6 +23,7 @@
     "approvers.py": "18b91c5d5f5b6965a7576735b566c09f8f4460cada38749c54be8d611237c215",
     "cells/example-tool.json": "1ef1bb649f6805631bb6c20940baefb4a4bd867122b2c9e9b565c69aac30f060",
     "chacha20poly1305.py": "6c3bb50dc126dab128184280b4d11cb1494800651e97aea941a821f31ff012fd",
+    "changelog.d/fix-run-capture-stdin-budget.md": "ac8a9f10fdf3995f06bb6b003c25e23d724dd75569d94b26a993509855073ec9",
     "commandmap.py": "8bd409700a0667a15fa435d74cb3d48ae79a1d80b963b78e8791be12f9bc6e1b",
     "config/.peers.json.example": "e81eb4533b4e06969946a8fa1c977e0692bc047275101bcdbae1504355866674",
     "config/nudge.env.example": "b278edb191f6588316383f5c095f6332fc3ccaf695c595dccd9b21c4322d5cf3",
@@ -35,11 +36,11 @@
     "docs/HV_ARCHITECTURE.md": "06e7e5e1d880f3eaced360025fa1403ed0d89907c45ddfffd0746276244bb835",
     "docs/INTEGRATION_DOGFOOD.md": "4c5758bbf4073b1f71fc5274ed6bc42bc9a4c9153d372e22cf6e34d2be5a6ad1",
     "docs/INTERNALS.md": "4af5337542697b26ce6a8538cd5a0c24daf7a06e0fd106557820e1865a051e9b",
-    "docs/MODULES.md": "ebac56b8e49f2118d416585ba774e95b43e6fa64260c932c7c62029e5495ebc3",
+    "docs/MODULES.md": "4eeb998aa1f8219d11178400698ce1e91f280550385811826aa7ae9f9d55db79",
     "docs/MODULE_API.md": "3e8e466a4e121a1acb1798d41e30047b5cd3d8364147007ff7a81fc33355e423",
     "docs/NAMESPACES.md": "9bf01e1a565d4158f340be9f3c1f4ebc55583708546dbc29f18f1353f20ecdeb",
     "docs/SYNC_API.md": "251a5bf57daa7c2a19398d87cbf44b937a5a90529ac611ffd2cf19d3b74c8bf8",
-    "docs/THREAT_MODEL.md": "e17cfe12f317196cd06b529fd15f0df0f6ed86c2e054a4218b8aeabe65fb08f3",
+    "docs/THREAT_MODEL.md": "f67c00fb29779ea743b2558089d64dbba3d64163f0b5ac732d9fdfbb9364519d",
     "docs/WORKING_TOGETHER.md": "1e95751dfd727a8aa505e56e2903d9d109c3c20895e6dfaaa096120de70d05c7",
     "docs/design/hivemind_continual_learning_design.md": "95dd0438ab71ab0f0bf85ca67e102e7b3cc28074ff9ce9a187ded9f5595828f5",
     "docs/history/P2P_DESIGN.md": "91b34fee3d1c55a1759b4d256c1c805afb5e084e874932bb133c2487825de1dd",
@@ -49,7 +50,7 @@
     "hive_module_api.py": "42104bb7608b0bc816d52750dd9f3b9720ec1954940ab85339fbf0349c86e100",
     "hive_module_client.py": "a734b85aff7cb4bd86f32a3b3ef697e5048e440e7a22d572668b9cebd86718e1",
     "hive_module_doctor.py": "6c942d56113dd19d926911cdc1ce6e1070b16bb46b9679bb10fd6e0e3686bf07",
-    "hive_modules.py": "19668d801cff8ac4cea7035fd5bb28aac115b0298cbae1c893b07fa91ff80304",
+    "hive_modules.py": "aa76cf5748a1e0fc81e7660f1699f06c5498d4bbc9ab009962df5ff3c6882fa3",
     "hive_sync_daemon.py": "ebad53e217e00728a834d4914b49a5bd203d2eafd52829e8392272794529b031",
     "hive_version.py": "481670c649e5be6f10070f5d46004144eb7b2bc97d246dffac988711b1d615c3",
     "hivemind/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -233,7 +234,7 @@
     "tests/test_merkle_dedup.py": "be232d5c8466f1f470c98099c620093e0b3031aaa5bc4c9271caf47dcb53cb28",
     "tests/test_migrate_forget.py": "2451804f27ef0a5ad62f738dc37e190434948bd504618dd762c91697883065c2",
     "tests/test_module_api.py": "0f1af4eb8101c4faa10d94bdadfbcf7fa31fd2d524f80789b1d6c155b9df091b",
-    "tests/test_module_commands.py": "fc66c629b2abdff7421660508ca8e4bdfbfc43ea4452968fbb7b8d9c83e15598",
+    "tests/test_module_commands.py": "0c49b4d36ba97621332338ff5c56257f14d4fc3275bf90c8b90e260b2fbbbe6f",
     "tests/test_module_config_schema.py": "1f53e7d9eeda978a6280087cdfb29572657916b97a97f1d6e17e442028fb9d59",
     "tests/test_module_doctor.py": "0654351fbb758ca6c258b0530a0e1843b4359fa8c7dbe34cba1b992ba9090d48",
     "tests/test_module_doctor_slot.py": "e437bcf5f12a619f906a265e96c84a8945ff151486439a34338442383eac3626",
@@ -314,6 +315,6 @@
     "vocabulary.py": "3a6977fc89573561e6248748db90379acc810ff183556e220ce6bf1b2c0d0d3b",
     "x25519.py": "ec1967595a2306cde860afe4dffab40a3f833d089de6caf5c9c080df8fd45726"
   },
-  "sequence": 702,
+  "sequence": 704,
   "version": "4.2"
 }
