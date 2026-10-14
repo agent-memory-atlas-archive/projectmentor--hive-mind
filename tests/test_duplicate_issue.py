@@ -2,6 +2,7 @@
 
 import re
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -68,7 +69,28 @@ def test_different_body_same_title():
 
 
 def test_oversize_body_not_compared():
-    assert di.body_similarity("a" * 20001, "a" * 20001) == 0.0
+    assert di.body_similarity("a" * (di.MAX_BODY_CHARS + 1), "a" * (di.MAX_BODY_CHARS + 1)) == 0.0
+
+
+def test_worst_case_run_is_bounded():
+    # repetitive near-identical bodies at the size cap, many same-title same-author candidates: the
+    # quadratic SequenceMatcher case, times the most comparisons a run allows
+    n = di.MAX_BODY_CHARS
+    h = n // 2
+    body = "a" * h + "b" * h  # same letters, different order: passes the quick ratios, fails ratio()
+    new = issue(500, body="b" * h + "a" * h, at="2026-10-14T10:05:00Z")
+    cands = [issue(100 + i, body=body, at="2026-10-14T10:01:00Z") for i in range(100)]
+    t = time.monotonic()
+    assert di.find_original(new, cands) is None
+    assert time.monotonic() - t < 15
+    calls = []
+    real = di.body_similarity
+    di.body_similarity = lambda a, b: calls.append(1) or 0.0
+    try:
+        di.find_original(new, cands)
+    finally:
+        di.body_similarity = real
+    assert len(calls) == di.MAX_COMPARISONS
 
 
 def test_find_original_picks_oldest():

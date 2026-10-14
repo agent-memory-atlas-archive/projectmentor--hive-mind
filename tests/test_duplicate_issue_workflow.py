@@ -1,5 +1,6 @@
 """duplicate-issue.yml follows the CI-01 rules (hive-mind#493)."""
 
+import ast
 import re
 from pathlib import Path
 
@@ -38,6 +39,20 @@ def test_checks_out_default_branch_without_credentials():
 
 
 def test_script_never_closes():
-    src = (PROJECT / "scripts" / "ci" / "duplicate_issue.py").read_text()
-    code = "\n".join(l for l in src.splitlines() if not l.lstrip().startswith("#"))
-    assert not re.search(r'"close"|"delete"|state=closed|"--reason"|-X["\' ]*(DELETE|PATCH)', code)
+    # every string passed to gh or subprocess, in any spelling (quoted, f-string, spaced), is checked token by token
+    tree = ast.parse((PROJECT / "scripts" / "ci" / "duplicate_issue.py").read_text())
+    banned = {"close", "closed", "delete", "lock", "reopen", "transfer", "--reason", "-x", "patch", "put"}
+    seen = []
+    for call in (n for n in ast.walk(tree) if isinstance(n, ast.Call)):
+        name = getattr(call.func, "id", None) or getattr(call.func, "attr", "")
+        if name in ("_gh", "run"):
+            for const in (n for a in call.args for n in ast.walk(a) if isinstance(n, ast.Constant)):
+                if isinstance(const.value, str):
+                    seen += re.findall(r"[\w-]+", const.value.lower())
+    assert "api" in seen and "comment" in seen
+    assert not banned & set(seen), banned & set(seen)
+
+
+def test_job_is_bounded():
+    assert re.search(r"(?m)^    timeout-minutes: [1-5]\b", WF_CODE)
+    assert re.search(r"(?m)^    concurrency:\n      group: \S+\n      cancel-in-progress: false\b", WF_CODE)

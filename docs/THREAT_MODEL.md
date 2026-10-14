@@ -790,8 +790,12 @@ issue triggers a job that holds a write token. It checks out the default branch 
 title, body and author to `scripts/ci/duplicate_issue.py` through `env:` only, and posts fixed text plus one
 issue number. It flags (comment and the `duplicate?` label) and never closes, edits or deletes. A match needs
 the same login, so a stranger cannot make the bot name or label anyone else's issue; the most they can do is
-get their own duplicate flagged. Residual: an outsider can open many identical issues and draw one bot comment
-each; this is bounded by GitHub's own rate limits and moderation, and costs the repo nothing but noise. Do not
+get their own duplicate flagged. Residual: an outsider can open many near-identical issues and so start many
+jobs. Each job is bounded: `timeout-minutes: 2`, a single `concurrency` group (one job at a time, GitHub keeps
+only the newest waiting one, so a flood costs at most one runner for about two minutes at a stretch and may
+leave some later duplicates unflagged), bodies over 2,000 characters never compared, and at most 5 body
+comparisons per run (about a second of CPU even on the worst repetitive input; a test bounds it). Beyond that
+it is bounded by GitHub's own rate limits and moderation. Do not
 add a `run:` that interpolates issue text, a checkout of anything other than the default branch, or a close
 action to this workflow without reviewing it as a security change.
 

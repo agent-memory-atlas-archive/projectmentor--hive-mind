@@ -25,7 +25,8 @@ from datetime import datetime, timedelta
 LABEL = "duplicate?"
 WINDOW = timedelta(minutes=10)
 MIN_BODY_SIMILARITY = 0.95
-MAX_BODY_CHARS = 20000  # compare at most this much; a longer body is not a quick double-submit
+MAX_BODY_CHARS = 2000  # a longer body is not compared: SequenceMatcher is quadratic on repetitive text
+MAX_COMPARISONS = 5  # body comparisons per run; with the cap above, a run costs about a second at worst
 MAX_CANDIDATES = 100
 
 
@@ -54,8 +55,8 @@ def parse_time(s):
     return datetime.fromisoformat(s.replace("Z", "+00:00"))
 
 
-def is_duplicate(new, old):
-    """new/old: dicts with number, title, body, author, created_at. True only if all four conditions hold."""
+def same_origin(new, old):
+    """The cheap conditions: older number, same author, same non-empty title, inside the window."""
     if old["number"] >= new["number"] or not new["author"] or old["author"] != new["author"]:
         return False
     if norm_title(old["title"]) != norm_title(new["title"]) or not norm_title(new["title"]):
@@ -63,13 +64,22 @@ def is_duplicate(new, old):
     gap = parse_time(new["created_at"]) - parse_time(old["created_at"])
     if not timedelta(0) <= gap <= WINDOW:
         return False
-    return body_similarity(old["body"], new["body"]) >= MIN_BODY_SIMILARITY
+    return True
+
+
+def is_duplicate(new, old):
+    """new/old: dicts with number, title, body, author, created_at. True only if all four conditions hold."""
+    return same_origin(new, old) and body_similarity(old["body"], new["body"]) >= MIN_BODY_SIMILARITY
 
 
 def find_original(new, candidates):
-    """The oldest candidate that is a strict duplicate target for `new`, or None."""
-    hits = [c for c in candidates if is_duplicate(new, c)]
-    return min(hits, key=lambda c: c["number"]) if hits else None
+    """The oldest candidate that is a strict duplicate target for `new`, or None. At most MAX_COMPARISONS
+    bodies are compared (oldest first), so an author's pile of look-alike issues cannot lengthen the run."""
+    pool = sorted((c for c in candidates if same_origin(new, c)), key=lambda c: c["number"])
+    for c in pool[:MAX_COMPARISONS]:
+        if body_similarity(c["body"], new["body"]) >= MIN_BODY_SIMILARITY:
+            return c
+    return None
 
 
 def _gh(*args, stdin=None):
