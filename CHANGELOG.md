@@ -10,6 +10,15 @@ Git tags are `vMAJOR.MINOR.PATCH`. `vX.Y.0` marks the commit on `main` that comp
 without changing the contract are tagged `vX.Y.1`, `vX.Y.2`, … Dates are when each version was
 introduced (a contract) or tagged (a patch).
 
+## 4.1.1 (2026-10-14)
+
+- Owner approval slice A1 (#481, security): `hive-mind owner unlock --gated` starts an agent that signs only what an enrolled approver's passkey approved (a presented ticket, single or batch; ES256 or EdDSA, `rpId`/origin/UP/UV/`BE`/sign count checked) or a live delegation covers; under `HIVE_APPROVAL_TICKET` a run signs through the agent or not at all (no seed, no passphrase fallback); a persisted used-ticket set refuses replay across restarts; `owner approver|delegate add|revoke|list` keep owner-signed `hive-approver-v1` records under the section 4.3 membership rule (`approvers.min`, delegation scope, daily cap and ceilings in the agent). Also: `--plan` refuses secret `x-<module>:<name>` keys for `config set|confidence set|quorum set`, labels the plan verb correctly, and prints no success line. No journal, signature or sync byte changes.
+- Owner approval slice A3 (#489, security): boot unlock from the OS keystore, only with `--gated`. `owner keystore store|clear|status` keeps the owner passphrase in DPAPI (WSL interop), the Secret Service or the macOS keychain after checking it opens the sealed key; `owner unlock --gated --passphrase-source dpapi|libsecret|keychain` reads it from there (refused without `--gated`, and the agent process refuses a keystore seed without the gate); `owner boot-unit install|remove|status` writes a user unit and turns on lingering; `owner status` and `hv doctor` (`owner-keystore`) name the keystore in use. THREAT_MODEL states the seed-at-rest residual and the operator rule. No journal, signature or sync byte changes.
+- Approver ids and hex digests (#487, security): `approvers.id_ok` and `hex64_ok` used `$`-anchored regexes, which also matched before a trailing newline (`"t\n"`); they now use `fullmatch`. No journal, signature or sync byte changes.
+- Tests pin the owner-approval A1 guards that no test reached (EdDSA assertion signature, delegation key and module scope, re-enrol of an enrolled id, delegation clearing on a break-glass revoke, the ticket gate in `hivemind_owner`); THREAT_MODEL gains the `--approvers-min 2` operator rule. No code change. (#485)
+- A `scope=hive` telemetry read now also returns a `by_day` series (21-day cap, same filters as the totals) on each reporting entry of `nodes`, so a client no longer needs one extra read per node. Additive; older clients ignore it. (Part of projectmentor/hive-mind-dash#27.)
+- `/api/tags?counts=1` also returns `counts`, the number of facts and decisions per tag; without the parameter the reply is unchanged (hive-mind-dash#18 gap 5).
+
 ## 4.1.0 (2026-10-13)
 
 - **4.1: contract 4.1.** A module's `config_schema` entry may carry an optional plain-language `help` string (at most 400 characters, text only); a module that ships it sets `min_core` 4.1. Additive, no signing, journal or sync change. `docs/CONTRACT_HISTORY.md` has the entry (Part of hive-mind-dash#18).
