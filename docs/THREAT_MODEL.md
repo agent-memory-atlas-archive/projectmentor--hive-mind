@@ -566,6 +566,23 @@ at once). Concretely:
   temporary directory, with a time and size limit; a module that spawns a detached child can outlive it. Operator rule:
   run `--run` only on a module you would install. Only an admitted publisher key signs a manifest, so a remaining gap
   that needs one is an admitted-device residual (accepted for 3.x).
+- **Declared commands are the publisher's word, not a sandbox (4.2).** `commands` sits inside the signed `module.json`,
+  so only the pinned publisher key can declare, and `check_tree` turns a map edited in place into the existing `fail`.
+  The validator refuses control, format and line-separator characters in an `undo` word, because the install summary
+  prints the table before the publisher key is pinned. A publisher that lies (an irreversible verb declared
+  `reversible: "yes"` or `"n/a"`, a mutating verb declared `mutates: false`, a verb declared `dry_run: true` whose dry
+  run writes, a `reversible: "no"` verb that does not enforce `--yes`) is bounded by that signature and by the probes,
+  which check only that `<verb> --help` exits 0 and that its text names the flags: `hv doctor` probes the undo verbs,
+  `module check --run` every declared verb, both without a shell or stdin, in their own session, with the output
+  discarded or capped and the whole process group killed at the deadline. If a module ignores `--help`, the probe runs
+  that verb itself (an undo verb under `hv doctor`, any declared verb under `module check --run`, which the publisher
+  or CI runs on their own copy). What a declaration buys an agent (an allow rule over `hive-mind module run *`) is
+  exactly as good as the publisher's honesty. This is an admitted-device residual (the publisher key is pinned by the
+  owner; accepted for 4.x as the 3.1 fields were). Operator rules: pin only publishers you trust; read the `commands`
+  table at install and `module commands <name>` after an update; give the agent's settings a deny rule for `--yes`
+  (a deny outranks an allow) and for pty wrappers. The deny rule covers the flag, not the prompt: a verb mis-declared
+  `yes` or `n/a` never asks for `--yes`, and a process that has a terminal (a pty an agent allocates for itself)
+  can answer the `yes` prompt with no `--yes` in argv. That is the human path, and the same residual.
 - **Module config secrets sit in a plaintext node file (3.1).** A `secret` key in a `config_schema` is node-scoped by
   the validator, so it is never journaled or synced, and the CLI never takes it from the command line (shell history,
   `ps`), masks it in `list`, `get`, `--json`, `validate` and the doctor, and refuses it from `--fleet`. It is stored in

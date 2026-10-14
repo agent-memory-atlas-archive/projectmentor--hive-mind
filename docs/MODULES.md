@@ -333,6 +333,54 @@ prompt): that update fails as in step 3, and `hive-mind module update <name> --s
 signed manifest **fails**. An absent or stopped unit, a revoked device, missing config, a down
 listener and quota past 80% **warn**.
 
+## Declared commands *(4.2)*
+
+A module that declares `commands` tells its callers, in the signed `module.json`, which operator verbs change state and
+how to take the change back. A caller (an agent, a unit, happrove's executor) reads `hive-mind module commands <name>
+[--json]` and decides from the table; a verb the table does not list is undeclared, and a caller treats it as one that
+cannot be undone. The declaration is the publisher's word: the core validates its shape and probes `--help`, and cannot
+test that it is true. Rules for a verb that changes state:
+
+- **`--dry-run`.** Prints exactly what the verb would change, item by item, in the same shape the real run prints, and
+  changes nothing (no file, snapshot, ledger, unit, request or journal write). It never prompts and never needs
+  `--yes`, at a terminal or not, including on a `reversible: "no"` verb, so a caller whose settings deny `--yes` can
+  still see the plan. It exits 0 when the verb would act once confirmed, and uses the real run's refusal (same message,
+  same exit code) only for another reason: a superseded restore, an unknown id, a missing file. `--dry-run` with
+  `--yes` is still a dry run. Text output starts with the line `dry run: nothing is changed`. A machine format keeps
+  its format: every record it prints carries `"dry_run": true`, and a real run omits the field.
+- **`reversible: "yes"`.** Before it removes, moves or overwrites a thing, the verb writes the thing as it was to a
+  bounded archive of the module's own (a local 0600 file or snapshot section, never journaled, never synced). The
+  bound is a count and an age, stated in the module's README and `--help`. Pruning on each write drops entries older
+  than the age, then the oldest until the count fits; an entry past the age is expired even before a write prunes it.
+  Each entry has an undo id (the proposal id when there is one, else a fresh 16-hex id), the time, the verb and its
+  arguments as data, and the restore point. For each change the real run prints `undo: <cli> <undo verb> <id>`, filled
+  in, on stdout (on stderr when stdout is a machine format); a `--json` run carries `"undo": [argv…]` per change, and a
+  value with spaces or a leading `-` stays one element.
+- **The undo verb** takes the undo id (or `--since <time>`) and restores the thing as it was. It refuses, naming the
+  reason and the id, with exit 1, when the restore is superseded: the entry was pruned or is past the age, a newer
+  state exists for the same subject, or the subject no longer exists. There is no force flag. `--since` handles each
+  selected id on its own, oldest first, reports and skips a superseded one, and exits 1 if any was refused. The undo
+  verb is itself a declared verb, takes `--dry-run`, and never needs `--yes`.
+- **`reversible: "no"`.** Its help text contains the sentence `This cannot be undone.` and names `--yes` and
+  `--dry-run`. A real run's output starts with `this cannot be undone: <what>`. When stdin is not a terminal
+  (`os.isatty(0)` is false: an agent, a unit, a hook, `ssh` without `-t`), a real run without `--yes` prints
+  `refused: <verb> cannot be undone; add --yes to confirm, or --dry-run to see what it would do`, changes nothing and
+  exits 1. At a terminal it asks once (`This cannot be undone. Type yes to continue:`) and only the word `yes`
+  proceeds. `--yes` is accepted, and ignored, on any declared mutating verb. No environment variable stands in for it.
+  Such a verb is never `fleet: true`.
+- **`reversible: "n/a"`.** Takes `--dry-run`, needs no `--yes`, and prints what it did. `module check` lists every such
+  verb in one warning, because the core cannot tell `n/a` from a lie.
+- **Every declared verb answers `--help` with exit 0 and changes nothing.** `module check --run` runs
+  `<cli.command> <verb> --help` for each declared verb in the same scrubbed environment and throwaway directory as
+  `status` and `doctor`, 5 seconds each and 60 seconds in all (then it stops and warns, naming the verbs it did not
+  run). It warns, and never fails, when a help exits non-zero, when a `reversible: "no"` verb's help lacks `This cannot
+  be undone.`, `--yes` or `--dry-run`, or when a verb that changes state lacks `--dry-run`. `hv doctor` probes the
+  declared undo verbs the same way (the first 8, 5 seconds each, only for a manual, install or update run). `module
+  run` passes every word after the module name to the module unchanged, so `--dry-run` and `--yes` reach it as typed.
+
+An allow rule over `hive-mind module run *` is only as safe as the publisher is honest. Pin publishers you trust, read
+the table at install and after an update, and keep a deny rule for `--yes` in the settings of any agent.
+
 ## The four modules
 
 hwatch and hcns are public overviews: their repositories are private, so there are no links here and access is on

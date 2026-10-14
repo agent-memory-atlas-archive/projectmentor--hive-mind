@@ -8,6 +8,7 @@ import json
 import os
 import stat
 import sys
+import time
 import types
 from pathlib import Path
 
@@ -471,3 +472,151 @@ def test_module_run_passes_flags_dashes_and_spaces_through_one_word_each(install
     rc, _, _ = run(["run", "demo", *(["--"] if dash else []), *words], capsys)
     assert rc == 7                                              # the module's own exit status
     assert out.read_text().split("\n")[:-1] == words
+
+
+# ── `module check --run` probes each declared verb with --help (§5.3) ─────────────────────────────
+
+HELP_CMDS = {
+    "show": {"mutates": False},
+    "good": {"mutates": True, "reversible": "n/a", "dry_run": True},
+    "nodry": {"mutates": True, "reversible": "n/a", "dry_run": True},
+    "bad": {"mutates": True, "reversible": "n/a", "dry_run": True},
+    "stop": {"mutates": True, "reversible": "no", "dry_run": True},
+    "halt": {"mutates": True, "reversible": "no", "dry_run": True},
+}
+HELP_SCRIPT = '''echo "$@" >> "$HIVE_MODULE_DIR/calls"
+case "$1" in
+  show) echo "usage: show";;
+  good) echo "usage: good [--dry-run]";;
+  nodry) echo "usage: nodry";;
+  bad) echo "usage: bad [--dry-run]"; exit 2;;
+  stop) echo "usage: stop [--yes] [--dry-run]. This cannot be undone.";;
+  halt) echo "usage: halt [--dry-run]";;
+esac
+'''
+
+
+def calls(root):
+    return (root / "calls").read_text().splitlines() if (root / "calls").exists() else []
+
+
+def test_check_run_probes_every_declared_verb_with_help_and_warns(tmp_path):
+    publish_with_script(tmp_path, HELP_CMDS, HELP_SCRIPT)
+    errors, warnings = hive_modules.check_module(tmp_path, CORE, run=True)
+    assert errors == []
+    mine = [w for w in warnings if w.startswith("declared verb")]
+    assert mine == [
+        "declared verb `nodry` is a verb that changes state, and its `--help` does not mention: --dry-run",
+        "declared verb `bad`: `--help` exited 2, not 0",
+        "declared verb `halt` is an irreversible verb, and its `--help` does not mention: This cannot be undone., --yes",
+    ]
+    assert not [w for w in warnings if "`show`" in w or "`good`" in w or "`stop`" in w]
+
+
+def test_check_run_runs_nothing_but_help_and_check_without_run_runs_nothing(tmp_path):
+    log = tmp_path / "log"
+    publish_with_script(tmp_path, HELP_CMDS, f'echo "$@" >> {log}\ncase "$*" in *--help) exit 0;; esac\nexit 9\n')
+    hive_modules.check_module(tmp_path, CORE)
+    assert not log.exists()
+    hive_modules.check_module(tmp_path, CORE, run=True)
+    lines = log.read_text().splitlines()
+    assert lines == [f"{v} --help" for v in HELP_CMDS]
+
+
+def test_check_run_has_no_help_probe_without_a_map_or_a_cli(tmp_path):
+    log = tmp_path / "log"
+    publish_with_script(tmp_path, None, f'echo "$@" >> {log}\n')
+    hive_modules.check_module(tmp_path, CORE, run=True)
+    assert not log.exists()
+
+
+def test_check_run_stops_at_the_total_and_names_the_verbs_it_did_not_run(tmp_path, monkeypatch):
+    log = tmp_path / "log"
+    publish_with_script(tmp_path, HELP_CMDS, f'echo "$@" >> {log}\nsleep 30\n')
+    monkeypatch.setattr(hive_modules, "HELP_PROBE_TIMEOUT", 0.4)
+    monkeypatch.setattr(hive_modules, "HELP_PROBE_TOTAL", 1.0)
+    _, warnings = hive_modules.check_module(tmp_path, CORE, run=True)
+    mine = [w for w in warnings if w.startswith(("declared verb", "stopped probing"))]
+    ran = [line.split()[0] for line in log.read_text().splitlines()]
+    assert 1 <= len(ran) < len(HELP_CMDS)
+    assert mine[:len(ran)] == [f"declared verb `{v}`: `--help` did not finish in time" for v in ran]
+    assert mine[len(ran):] == [f"stopped probing declared verbs after 1.0 s; not run: {', '.join(list(HELP_CMDS)[len(ran):])}"]
+
+
+def test_check_run_notes_a_missing_program(tmp_path):
+    out = hive_modules.help_warnings({"cli": {"name": "d", "command": ["/nonexistent/prog"]}, "files": {},
+                                      "commands": {"show": {"mutates": False}}}, tmp_path, {"PATH": os.environ["PATH"]})
+    assert len(out) == 1 and out[0].startswith("declared verb `show`: `--help` could not run")
+
+
+# ── probe_help: no stdin, its own session, the whole group killed (the #502 verdict gaps) ─────────
+
+def help_script(tmp_path, body):
+    fake_cli(tmp_path / "p.sh", body)
+    return [str(tmp_path / "p.sh"), "--help"]
+
+
+def test_probe_help_gives_the_child_no_stdin(tmp_path):
+    argv = help_script(tmp_path, 'if read x; then exit 9; fi\nexit 0\n')
+    r, w = os.pipe()
+    os.write(w, b"typed\n")
+    saved = os.dup(0)
+    try:
+        os.dup2(r, 0)
+        assert hive_modules.probe_help(argv, dict(os.environ), tmp_path) == (0, "")
+    finally:
+        os.dup2(saved, 0)
+        for fd in (saved, r, w):
+            os.close(fd)
+
+
+def test_probe_help_runs_the_child_in_its_own_session(tmp_path):
+    out = tmp_path / "sid"
+    argv = help_script(tmp_path, f"sed 's/.*) //' /proc/$$/stat | cut -d' ' -f4 > {out}\n")
+    assert hive_modules.probe_help(argv, dict(os.environ), tmp_path) == (0, "")
+    sid = int(out.read_text())
+    assert sid != os.getsid(0) and sid > 0
+
+
+def alive(pid):
+    try:
+        return Path(f"/proc/{pid}/stat").read_text().rsplit(") ", 1)[1][0] != "Z"
+    except OSError:
+        return False
+
+
+def wait_dead(pid):
+    for _ in range(60):
+        if not alive(pid):
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def test_probe_help_kills_the_whole_group_at_the_deadline(tmp_path):
+    pidfile = tmp_path / "grandchild"
+    argv = help_script(tmp_path, f"sleep 30 &\necho $! > {pidfile}\nwait\n")
+    pid = None
+    try:
+        rc, why = hive_modules.probe_help(argv, dict(os.environ), tmp_path, timeout=0.5)
+        assert rc is None and why == "did not finish in 0.5 s"
+        pid = int(pidfile.read_text())
+        assert wait_dead(pid), "the grandchild outlived the probe"
+    finally:
+        if pid and alive(pid):
+            os.kill(pid, 9)
+
+
+def test_check_run_kills_the_whole_group_of_a_help_probe_that_hangs(tmp_path, monkeypatch):
+    pidfile = tmp_path / "grandchild"
+    publish_with_script(tmp_path, {"show": {"mutates": False}}, f"sleep 30 &\necho $! > {pidfile}\nwait\n")
+    monkeypatch.setattr(hive_modules, "HELP_PROBE_TIMEOUT", 0.5)
+    pid = None
+    try:
+        _, warnings = hive_modules.check_module(tmp_path, CORE, run=True)
+        assert "declared verb `show`: `--help` did not finish in time" in warnings
+        pid = int(pidfile.read_text())
+        assert wait_dead(pid), "the grandchild outlived the probe"
+    finally:
+        if pid and alive(pid):
+            os.kill(pid, 9)

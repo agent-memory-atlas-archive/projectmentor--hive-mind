@@ -3052,6 +3052,73 @@ def _run_json(argv, files, mod_dir, env):
         return proc.returncode, None, "did not print JSON"
 
 
+HELP_PROBE_TIMEOUT, HELP_PROBE_TOTAL = 5, 60
+HELP_NEEDS_NO = ("This cannot be undone.", "--yes", "--dry-run")
+
+
+def _run_help(argv, cwd, env, timeout):
+    """Run one `<verb> --help` (no shell, no stdin; stdout and stderr read together, capped at CHECK_OUTPUT_CAP bytes);
+    (returncode, text, problem or None). The group is killed at the deadline."""
+    try:
+        proc = subprocess.Popen(argv, cwd=str(cwd), env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, start_new_session=True)
+    except OSError as e:
+        return None, "", f"could not run: {e.strerror or e}"
+    deadline, chunks, size, fd = time.monotonic() + timeout, [], 0, proc.stdout.fileno()
+    try:
+        while True:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                _kill_group(proc)
+                proc.wait()
+                return None, "", "did not finish in time"
+            if not select.select([fd], [], [], left)[0]:
+                continue
+            chunk = os.read(fd, 65536)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            size += len(chunk)
+            if size > CHECK_OUTPUT_CAP:
+                _kill_group(proc)
+                proc.wait()
+                return None, "", f"printed more than {CHECK_OUTPUT_CAP} bytes"
+        try:
+            proc.wait(timeout=max(deadline - time.monotonic(), 0.001))
+        except subprocess.TimeoutExpired:
+            _kill_group(proc)
+            proc.wait()
+            return None, "", "did not finish in time"
+    finally:
+        proc.stdout.close()
+    return proc.returncode, b"".join(chunks).decode("utf-8", "replace"), None
+
+
+def help_warnings(m, mod_dir, env):
+    """The `module check --run` probe of the declared verbs: `<cli> <verb> --help` for each, 5 s each and
+    HELP_PROBE_TOTAL s in all. Warnings only (help text is provisional); nothing here runs a verb without `--help`."""
+    warnings, cmds, stop = [], m.get("commands") or {}, time.monotonic() + HELP_PROBE_TOTAL
+    base = module_argv(m, m["cli"]["command"], mod_dir)
+    todo = list(cmds)
+    while todo:
+        left = stop - time.monotonic()
+        if left <= 0:
+            warnings.append(f"stopped probing declared verbs after {HELP_PROBE_TOTAL} s; not run: {', '.join(todo)}")
+            break
+        verb = todo.pop(0)
+        rc, text, why = _run_help([*base, *verb.split(), "--help"], mod_dir, env, min(HELP_PROBE_TIMEOUT, left))
+        if why or rc != 0:
+            warnings.append(f"declared verb `{verb}`: `--help` {why or f'exited {rc}, not 0'}")
+            continue
+        e = command_entry(cmds[verb])
+        need = list(HELP_NEEDS_NO) if e["reversible"] == "no" else ["--dry-run"] if e["mutates"] else []
+        missing = [w for w in need if w not in text]
+        if missing:
+            kind = "an irreversible verb" if e["reversible"] == "no" else "a verb that changes state"
+            warnings.append(f"declared verb `{verb}` is {kind}, and its `--help` does not mention: {', '.join(missing)}")
+    return warnings
+
+
 def _kill_group(proc):
     """Signal the group while its leader is still unreaped (an exited, unreaped leader keeps the group id from being
     reused). Callers `wait()` only after this."""
@@ -3133,6 +3200,8 @@ def check_module(root, core_version, run=False, deny=()):
                     continue
                 rc, obj, why = _run_json(m[field], m["files"], mod_dir, env)
                 errors += [f"{field} {why}"] if why else [f"{p}" for p in judge(rc, obj)]
+            if m.get("cli") and m.get("commands"):
+                warnings += help_warnings(m, mod_dir, env)
     return errors, warnings
 
 
