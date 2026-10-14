@@ -6,10 +6,6 @@ where every `grep` that matched it printed the whole line (18,544 characters at 
 here, not on that line. The adapter-facing summary is `docs/AGENT_INTEGRATION.md` §7; release notes are
 `CHANGELOG.md`.
 
-## 4.3
-
-Additive: **two adapter verbs for the owner approval module**: `hive-mind owner present` and `hive-mind owner member` read one JSON request on stdin, forward it to the gated owner agent's `present` or `member` op and print the agent's reply as JSON (`CLI_REFERENCE.md`). No manifest field, API route, journal or wire change. A module that calls them sets `min_core` 4.3.
-
 ## 4.2
 
 Additive: **modules may declare their operator verbs** in an optional top-level manifest field `commands` (`MODULES.md`, "Declared commands"): for each verb, whether it mutates, whether it is reversible (`yes`, `no`, `n/a`), the `undo` argv for a reversible one, and that it takes `--dry-run`. New surface: `hive-mind module commands <name> [--json]`; `module run` passes `--dry-run` through and `--yes` is the word an irreversible verb needs; `module check` warns on a contract-1 manifest with a `cli` and no map, and `module check --run` runs `<verb> --help` for each declared verb (5 s each, 60 s in all) and warns on a missing `--dry-run` or irreversibility sentence; `hv doctor` reports the same. Nothing an adapter calls changes, so an adapter written for 4.1 keeps working and does not re-integrate. `commands` is a new top-level key, so a 4.1 core refuses a manifest that carries it as an unknown field; a module that ships it sets `min_core` 4.2, and the 4.2 validator refuses the map under a lower `min_core`. `contract` stays 1: the field rides `min_core`, as `help` did in 4.1. The manifest signature, the publisher key and the file-digest scheme are unchanged, and no journal, projection or sync format changes (`PROTOCOL_VERSION` stays 3). Deployment rule: a module PR that sets `min_core` 4.2 merges only after `v4.2.0` is tagged and every node runs it, or `module refresh` on a 4.1 node disables the module as `disabled-incompatible`.

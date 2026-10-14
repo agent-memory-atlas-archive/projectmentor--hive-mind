@@ -200,8 +200,6 @@ them; a unified entity identity across module and shared entities (3.0, public #
 
 ## Versioning
 
-**4.3** is additive: core gains the control-plane verbs `hive-mind owner present` and `hive-mind owner member` (JSON on stdin, the gated agent's reply as JSON), for the owner approval module. A module that calls them sets `min_core` 4.3.
-
 **4.2** is additive: a signed `module.json` may carry an optional top-level `commands` map declaring the module's operator verbs (which change state, whether each takes `--dry-run`, how to undo it or that it cannot be undone; see `MODULES.md`, "Declared commands"), and core gains `hive-mind module commands`. A module that ships `commands` sets `min_core` 4.2, because a 4.1 core refuses the field; `contract` stays 1. `GET /v1/` reports `contract: "4.2"`. No journal, projection, signing or sync format changes (`PROTOCOL_VERSION` stays 3). `CONTRACT_HISTORY.md` has the entry.
 
 **4.1** is additive: a `config_schema` entry may carry an optional `help` string (see `MODULES.md`); a module that ships `help` sets `min_core` 4.1, because a 4.0 core refuses the field. `GET /v1/` reports `contract: "4.1"`. `CONTRACT_HISTORY.md` has the entry.

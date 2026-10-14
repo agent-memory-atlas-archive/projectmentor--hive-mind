@@ -1,6 +1,6 @@
 # HiveMind Agent Integration Spec
 
-`Contract-Version: 4.3`  *(SemVer `MAJOR.MINOR`; authoritative value: `hv version`)*
+`Contract-Version: 4.2`  *(SemVer `MAJOR.MINOR`; authoritative value: `hv version`)*
 
 > **Audience: any AI agent** (Claude Code, Hermes, OpenClaw, an MCP host, any CLI agent).
 > You are reading this because you are joining a HiveMind — a shared, local-first memory.
@@ -270,7 +270,6 @@ governance actions, config keys, channels and the rest) is listed in [`NAMESPACE
 generated from `vocabulary.py`, and a name anything else adds takes a prefix.
 
 **Changelog.** The full per-version record is [`CONTRACT_HISTORY.md`](CONTRACT_HISTORY.md).
-- `4.3` — **`owner present` and `owner member` (JSON on stdin).** Additive: control-plane verbs that send a passkey assertion to the gated owner agent for a ticket or a membership change and print its reply as JSON; used by the owner approval module. See `docs/CLI_REFERENCE.md` and `docs/CONTRACT_HISTORY.md`.
 - `4.2` — **Modules may declare their operator verbs (`commands`).** Additive: a module manifest may carry a `commands` map saying which verbs change state, whether each takes `--dry-run`, and how to undo it or that it cannot be undone. New: `hive-mind module commands <name> [--json]`; `module check` warns on a contract-1 module with a `cli` and no map, and `module check --run` probes each declared verb's `--help`; `hv doctor` reports the same. A module that ships `commands` sets `min_core` 4.2; an older core refuses it as an unknown field. Nothing an adapter calls changes, so an adapter written for 4.1 does not re-integrate. No journal, projection, signing or sync change. Full entry: [`CONTRACT_HISTORY.md`](CONTRACT_HISTORY.md).
 - `4.1` — **`config_schema` entries may carry `help`.** Additive: a module manifest may give each config key an optional plain-language `help` string (text only, at most 400 characters), which `config schema --json` and `hdash` show. A module that ships `help` sets `min_core` 4.1; an older core refuses it as an unknown field. No journal, projection, signing or sync change. Full entry: [`CONTRACT_HISTORY.md`](CONTRACT_HISTORY.md).
 - `4.0` — **removes the `hv dash` and `hv telemetry` forwarders; every `config set` refusal exits 1.** **MAJOR: re-integrate (§0) by re-reading; an adapter that ran a removed verb moves to `hdash dash` or `hwatch telemetry`.** `hv dash` and `hv telemetry` exit 2 with a pointer and run nothing (#433); `hive-mind config set` exits 1 on every refusal where most exited 0 (#432); new: `hv config node`, `config schema|show --json`, `module list --json`, `--non-interactive` (exit 5), and the node-local `dashboard_share` key (#435, #437). No signing, manifest or sync change. Full entry: [`CONTRACT_HISTORY.md`](CONTRACT_HISTORY.md).
