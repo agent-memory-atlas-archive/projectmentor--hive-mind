@@ -1119,7 +1119,7 @@ def cmd_unlock(lib, argv, out=print):
             try:
                 pw = keystore.fetch(src, lib._ensure_key_dir(), lib.HIVE_HOME)
             except keystore.KeystoreError as e:
-                print(f"hive-mind: could not read the owner key's secret from {src}: "
+                print(f"hive-mind: could not read the owner key's secret from the OS keystore: "
                       f"{keystore.REASONS.get(e.code, keystore.REASONS['failed'])}", file=sys.stderr)
                 return 1
         else:
