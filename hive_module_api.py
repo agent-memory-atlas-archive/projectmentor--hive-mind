@@ -9,7 +9,7 @@ through the core. It is data plane only. It imports no owner-key code (the S2 bo
   GET  /v1/search   -> `api_search`: ?q=&tag=&kind=&min_confidence=&limit=&offset=&sort=&status=
   GET  /v1/item     -> `api_item`: ?id=<h:... or node_id:seq>
   GET  /v1/entity   -> `entity_view`: ?name=<entity name>, with the module entities a core `same-as` joins to it
-  GET  /v1/overview, tags, related, audit, peers, verify, node -> the dashboard reads (3.1): served only to a module
+  GET  /v1/overview, tags, related, audit, peers, verify, node, series -> the dashboard reads (3.1): served only to a module
                        whose signed manifest names the route in `reads` (see `_read_route`)
   GET  /v1/tip      -> {node_id, seq, hash}: the caller's own chain tip (seq 0 and `sha256:genesis` before its first write)
   POST /v1/entries  -> append one entry the module signed itself (see `route_entries`)
@@ -456,7 +456,7 @@ def route_item(ctx, q):
 # installer records that list in `.modules.json` (`reads`), the same row `limits_for` reads. Each is the matching
 # `/api/*` computation in `hv`, with owner-forgotten facts left out where it can carry them. `hive_modules.READ_ROUTES`
 # validates the manifest field and a test pins the two tuples equal (this module imports nothing from `hive_modules`).
-READ_ROUTES = ("overview", "tags", "related", "audit", "peers", "verify", "node")
+READ_ROUTES = ("overview", "tags", "related", "audit", "peers", "verify", "node", "series")
 READ_BURST, READ_RATE = 60, 5.0     # per-device token bucket: a burst of 60, refilled 5 a second. Reads never touch the write quota
 _read_buckets = {}                  # device id -> (tokens, last refill time)
 _read_lock = threading.Lock()
@@ -514,6 +514,10 @@ def _read_tags(ctx, q):
     return daemon.hv.api_tags(counts=q.get("counts", ["0"])[0] in ("1", "true"))
 
 
+def _read_series(ctx, q):
+    return daemon.hv.api_series(days=_int(q, "days", 30, 1, 90), include_forgotten=False)
+
+
 def _read_related(ctx, q):
     raw = q.get("id", [""])[0]
     if not raw.isascii() or not raw.isdigit() or len(raw) > 18:
@@ -569,7 +573,7 @@ ROUTES = {"/v1/": route_root, "/v1/feed": route_feed, "/v1/search": route_search
           "/v1/tip": route_tip, "/v1/entries": route_entries, "/v1/entity": route_entity,
           **{f"/v1/{n}": _read_route(n, f) for n, f in (
               ("overview", _read_overview), ("tags", _read_tags), ("related", _read_related), ("audit", _read_audit),
-              ("peers", _read_peers), ("verify", _read_verify), ("node", _read_node))}}
+              ("peers", _read_peers), ("verify", _read_verify), ("node", _read_node), ("series", _read_series))}}
 WRITE_ROUTES = ("/v1/entries",)             # the POST routes; every other route is GET
 
 

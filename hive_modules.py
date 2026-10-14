@@ -231,7 +231,7 @@ CLI_RESERVED = frozenset({"hv", "hive-mind", "hive-dispatch", "hive-sync", "hive
                           "hivemind", "module", "modules"})
 RUNTIME_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
 MAX_RUNTIMES = 16
-READ_ROUTES = ("overview", "tags", "related", "audit", "peers", "verify", "node")
+READ_ROUTES = ("overview", "tags", "related", "audit", "peers", "verify", "node", "series")
 TAILNET_READS = ("peers", "node")                   # carry tailnet addresses
 NODE_LOCAL_READS = ("overview", "peers", "verify")  # carry this node's own state, not only the feed's
 

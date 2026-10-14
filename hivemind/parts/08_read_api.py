@@ -186,6 +186,34 @@ def api_tags(counts=False):
     return out
 
 
+SERIES_DAYS_MAX = 90
+
+
+def api_series(days=30, include_forgotten=True):
+    """Daily counts of facts, decisions and ideas for the last `days` days (capped at 90), oldest day first, as
+    {"facts": [{"day", "n"}], "decisions": [...], "ideas": [...]}. Counts only, never row text. A day with no rows is
+    left out. `created_at` is the row's own timestamp, so a row whose stamp is not a `YYYY-MM-DD` date is not counted.
+    `include_forgotten=False` (the module API) leaves owner-forgotten facts out of the facts counts."""
+    days = max(1, min(int(days), SERIES_DAYS_MAX))
+    since = (datetime.now(timezone.utc) - timedelta(days=days - 1)).strftime("%Y-%m-%d")
+    conn = get_conn()
+    out = {}
+    try:
+        for tbl in ("facts", "decisions", "ideas"):
+            where = "substr(created_at, 1, 10) >= ?"
+            if tbl == "facts" and not include_forgotten:
+                where += f" AND confidence > {FORGET_FLOOR}"
+            try:
+                rows = conn.execute(f"SELECT substr(created_at, 1, 10) AS d, count(*) FROM {tbl} WHERE {where} "
+                                    "GROUP BY d ORDER BY d", (since,)).fetchall()
+            except Exception:
+                rows = []
+            out[tbl] = [{"day": r[0], "n": r[1]} for r in rows if re.fullmatch(r"\d{4}-\d{2}-\d{2}", r[0] or "")]
+    finally:
+        conn.close()
+    return out
+
+
 def api_item(sid):
     """1.19 PR3b: resolve a short id `h:…` (or a `node_id:seq` ref) through journal_index to the row it
     names on THIS node — {kind, id, ref, sid, item} — so a dashboard deep link `/#h:…` survives rebuilds
