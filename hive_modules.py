@@ -302,6 +302,11 @@ def _has_control(text):
     return any(ord(c) < 0x20 or ord(c) == 0x7f for c in text)
 
 
+def _has_unprintable(text):
+    """Control, format (bidi, zero-width) and line-break characters: C0, DEL, C1, U+200B, U+202E, U+2028 and so on."""
+    return any(unicodedata.category(c) in ("Cc", "Cf", "Zl", "Zp") for c in text)
+
+
 def _check_argv(label, cmd):
     """An argv list with `service.command`'s rules: strings, no control characters, and a relative first word may not
     leave the module's directory. It is run without a shell."""
@@ -495,7 +500,7 @@ def _check_commands(m):
         if "undo" in e:
             undo = e["undo"]
             if (not isinstance(undo, list) or not 1 <= len(undo) <= MAX_UNDO_WORDS
-                    or not all(isinstance(w, str) and 0 < len(w) <= MAX_UNDO_WORD and not _has_control(w)
+                    or not all(isinstance(w, str) and 0 < len(w) <= MAX_UNDO_WORD and not _has_unprintable(w)
                                and (_UNDO_PLACEHOLDER.match(w) if "{" in w else True) for w in undo)
                     or undo[0].startswith("-")):
                 raise ModuleError(f"{where} {key}: undo is an argv list of 1 to {MAX_UNDO_WORDS} words (placeholders {{name}}), "

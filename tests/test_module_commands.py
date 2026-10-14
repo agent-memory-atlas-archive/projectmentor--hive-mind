@@ -140,6 +140,8 @@ MALFORMED = "a b: undo is an argv list of 1 to 16 words (placeholders {name}), n
 
 
 @pytest.mark.parametrize("undo", [[], "a b", [""], ["a", ""], ["a", 1], ["a"] * 17, ["a", "x" * 129], ["a", "b\n"], ["a", "b\x00"],
+                                  ["a", "--to\x9b2J"], ["a", "\x85--z"], ["a", "--to\u202eyes"], ["a", "--z\u200b"], ["a", "--z\u2028"],
+                                  ["a", "--z\u2029"], ["a", "\x7f"],
                                   ["a", "b{id}"], ["a{id}"], ["a", "{id}x"], ["a", "{ID}"], ["a", "{}"], ["a", "{i d}"], ["a", "{id"],
                                   ["-a", "{id}"], ["a", "{" + "x" * 33 + "}"]])
 def test_a_malformed_undo(undo):
