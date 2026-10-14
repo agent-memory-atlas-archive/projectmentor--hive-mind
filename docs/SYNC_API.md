@@ -331,7 +331,7 @@ they are the dashboard's internal data layer, not a stable public API.
 | `/api/verify` | — | The `hv verify` result (**open discovery**, not local only) |
 | `/api/daemon` | — | The code this daemon process loaded: `root` (its checkout), `digest` (`hv verify`'s source digest at startup, `null` if it could not be computed), `contract`, `pid`, `started_at`. Read by `hv doctor`'s `daemon-code` check ([#112](https://github.com/projectmentor/hive-mind/issues/112)); local only, never on `/hive/info` |
 | `/api/telemetry` | `limit` (1–2000, default 25), `offset`, `sort`, `fproject`, `fagent`, `fnode`, `fday`, `fmodel`, `scope` = `self`\|`hive` | This node's session telemetry, or combined across reachable nodes with `scope=hive` |
-| `/api/peers` | `probe` = `1` (default) \| `0` | Admitted devices with reachability |
+| `/api/peers` | `probe` = `1` (default) \| `0` | Admitted devices with reachability; each row carries `seen` (a date) and `seen_at` (the full timestamp of its latest journal entry, `null` if none) |
 
 **Per-node view.** `/api/overview`, `/api/search`, `/api/status` and `/api/telemetry` accept
 `node=<device_id>`. For another node, the daemon looks up that admitted device's address itself (never
