@@ -1,5 +1,5 @@
 {
-  "digest": "537442f3ce6e7cbb9e368b9fd57081c73155cbbd56bc46aabd1ee6353aee1dbe",
+  "digest": "1e0ed4f6ea869ad32d6c814705d75e95b4bb90e332a377677b5a6f40cfeef752",
   "files": {
     ".github/FUNDING.yml": "ca6c63d7539bb7d2f809b5068781c78de97c028a44c5ae252b11bc1695caf85d",
     ".github/ISSUE_TEMPLATE/bug_report.yml": "22df51b1e51c25f50726392c79811116b88c40370843ff2d4a3e76b643f1cb68",
@@ -26,6 +26,7 @@
     "changelog.d/implementer-a1-guard-tests.md": "5636cd63f1c598689ae2b0ccc55a357d3e0fe55f359ccdee2bf3a7b73372ceed",
     "changelog.d/implementer-owner-approval-a1-481.md": "47b8d41f1072fa0e5966326ee76140ca26ea655b23b6862f4a529e5dd2881236",
     "changelog.d/implementer-owner-approval-a3-489.md": "db7c36983db467a40eea2508bad854eb840cf18e00c30ff246e6fd68c4552639",
+    "changelog.d/implementer3-hive-telemetry-by-day.md": "b9985ddb739887c9104252f07550e795649e4d94785ffa953666d448e09136ae",
     "commandmap.py": "8bd409700a0667a15fa435d74cb3d48ae79a1d80b963b78e8791be12f9bc6e1b",
     "config/.peers.json.example": "e81eb4533b4e06969946a8fa1c977e0692bc047275101bcdbae1504355866674",
     "config/nudge.env.example": "b278edb191f6588316383f5c095f6332fc3ccaf695c595dccd9b21c4322d5cf3",
@@ -65,7 +66,7 @@
     "hivemind/parts/05_trust_validation.py": "5bc472065d8a83633c1851c334854440d455af315bbcfc1a575fcbf0f57b3cbb",
     "hivemind/parts/06_links_forget.py": "bb1614aae418764a6300656d5392e4852b3fcd3a5884bc364e7cb31bb036b09f",
     "hivemind/parts/07_data_commands.py": "2d96a3437a634324831f58a05a5a42ff68ddef99a1f5b7545c661e28495f4cc8",
-    "hivemind/parts/08_read_api.py": "c5d816749276ea10d37639a933e7ca022289f61a1fa23713625384eb1fb64f60",
+    "hivemind/parts/08_read_api.py": "75f856ad93065e5b4e8bf03142c1db5f3a2aa8fd54be0bd937f6baf85e7bbbdf",
     "hivemind/parts/09_entity_store_ops.py": "5e594bc9063a175bc1c7a5ea0608c4ed0c213f432752e6d0854778dd80c9c30a",
     "hivemind/parts/10_agent_loop.py": "0aac5e7c674fc4c79b8de3de1319cf5f6bf68fbe49ea3923ec6b70022946bb53",
     "hivemind/parts/11_release_node.py": "cb02a9a4373b227be3af702e1ed306336d34177e3549b9ed37593565c741bef1",
@@ -204,7 +205,7 @@
     "tests/test_governance.py": "833fa4d2359950347d1cc6186bcf2298511bd08dddebfaef277ba86281f290ef",
     "tests/test_group.py": "58f2af5aaba440310af0e851ee0089c88c57e48496bab9ccb01b9212ea6bcdbc",
     "tests/test_hardening_batch2.py": "05ad11fbb3dd92b35989d27d13580ed3587177a3a0f44ce86ef0e6eafc9d84a8",
-    "tests/test_hello_sig.py": "da1306a8fb16140281d79e68c2f47ee3ec0fba46c6be503715c5dc2c201029b3",
+    "tests/test_hello_sig.py": "688a9307194d8eacbcd39896fe5ecd4608a65666f5d20a4abe132f3adc7d70a3",
     "tests/test_hermes_plugin.py": "36b4bdae5c04fe889fd1f2bd4434fb7eb4274c4f64c05f89d4b54124f82b44d8",
     "tests/test_hive_home_sandbox.py": "743fed9fe89acf38fe81a017d0776949996016196e0763fa2a2b1838406f72f6",
     "tests/test_hive_mind_version.py": "41fa954a0e78883cfffedbb25c2de1a383e799844267c526db933191204295c1",
@@ -312,6 +313,6 @@
     "vocabulary.py": "3a6977fc89573561e6248748db90379acc810ff183556e220ce6bf1b2c0d0d3b",
     "x25519.py": "ec1967595a2306cde860afe4dffab40a3f833d089de6caf5c9c080df8fd45726"
   },
-  "sequence": 678,
+  "sequence": 680,
   "version": "4.1"
 }
