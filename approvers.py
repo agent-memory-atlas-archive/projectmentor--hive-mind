@@ -49,11 +49,11 @@ def unb64u(text):
 
 
 def id_ok(value):
-    return isinstance(value, str) and bool(_ID_RE.match(value))
+    return isinstance(value, str) and bool(_ID_RE.fullmatch(value))
 
 
 def hex64_ok(value):
-    return isinstance(value, str) and bool(_HEX64.match(value))
+    return isinstance(value, str) and bool(_HEX64.fullmatch(value))
 
 
 # ---- records ---------------------------------------------------------------------------------------------------------
