@@ -1505,7 +1505,7 @@ def _forward(lib, op, req, out):
         reply = Client(socket_path(lib.HIVE_HOME)).request({"op": op, **req})
     except AgentError as e:
         reply = {"ok": False, "why": str(e)}
-    out(json.dumps(reply, sort_keys=True, separators=(",", ":")))
+    out(json.dumps(reply))
     return 0 if reply.get("ok") is True else 1
 
 
