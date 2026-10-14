@@ -662,7 +662,8 @@ def api_verify():
 
 def api_peers(probe=True):
     """Admitted devices for the dashboard Hive tab: name, device, principal, address, last-seen,
-    status. Names/addresses/sync-status are resolved by a bounded concurrent live probe (so a
+    status. `seen` is the date; `seen_at` is the full timestamp of the device's latest journal entry (None if none),
+    so a client can show minutes. Names/addresses/sync-status are resolved by a bounded concurrent live probe (so a
     directly-admitted peer like gregorius still shows a real name/address); unreachable peers fall
     back to their join-request label/URL and last-seen staleness. `module` is the module name when the
     device is a module identity (the owner's `admit` marker, `gov["modules"]`), else None; the marker does not
@@ -693,7 +694,7 @@ def api_peers(probe=True):
             addr = url.rstrip("/").replace("http://", "").replace("https://", "") if url else "—"
             status = "stale" if (age is not None and age > 14) else "offline"
         out.append({"name": name, "device": d, "principal": prin,
-                    "addr": addr, "seen": seen, "status": status, "self": d == NODE_ID,
+                    "addr": addr, "seen": seen, "seen_at": last_seen.get(d) or None, "status": status, "self": d == NODE_ID,
                     "module": (gov.get("modules") or {}).get(d)})
     return out
 

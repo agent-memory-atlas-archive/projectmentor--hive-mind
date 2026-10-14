@@ -1,0 +1,1 @@
+- `/api/peers` rows carry `seen_at`, the full timestamp of the device's latest journal entry (`null` if none), beside the date-only `seen`. Additive read field; older clients ignore it. (hive-mind-dash#18 gap 3)
