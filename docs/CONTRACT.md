@@ -22,7 +22,7 @@ Everything a module can reach is marked with one of three tiers.
 - **The routes and their verbs**: `GET /v1/`, `/v1/feed`, `/v1/search`, `/v1/item`, `/v1/entity`, `/v1/tip` and
   `POST /v1/entries`, with the parameters, the status codes and the fields [`MODULE_API.md`](MODULE_API.md) lists.
   *(provisional, 3.1)* `GET /v1/overview`, `/v1/tags`, `/v1/related`, `/v1/audit`, `/v1/peers`, `/v1/verify` and
-  `/v1/node` are served only to a module whose manifest declares them in `reads`; their fields may change in a MINOR.
+  `/v1/node`, and (4.2) `/v1/series` are served only to a module whose manifest declares them in `reads`; their fields may change in a MINOR.
   `GET /v1/` includes, since 2.3, `node_id` (this node's own device id, a string) and `node_devices` (the count of node devices
   in the hive, an integer: the admitted devices and the genesis device, with revoked, purged and module devices left out); the route carries no device list, address or principal.
 - **The authentication**: the Hive-Auth envelope, its signing bytes and the module-device requirement; an unsigned
