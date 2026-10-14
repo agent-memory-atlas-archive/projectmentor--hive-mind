@@ -52,7 +52,7 @@ owner, escrow, capsule, cell or comb state.
 | `/v1/tip` | GET | The caller's own chain tip, to build the next entry |
 | `/v1/entries` | POST | Append one entry the module signed |
 | `/v1/overview` | GET | *(3.1, `reads`)* The dashboard header: counts, role, address, merkle root |
-| `/v1/tags` | GET | *(3.1, `reads`)* Every distinct tag |
+| `/v1/tags` | GET | *(3.1, `reads`)* Every distinct tag; `?counts=1` adds `counts` (facts + decisions per tag) |
 | `/v1/related` | GET | *(3.1, `reads`)* Facts that share tags with one fact or decision |
 | `/v1/audit` | GET | *(3.1, `reads`)* The audit counts and a small sample per bucket |
 | `/v1/peers` | GET | *(3.1, `reads`)* The admitted devices, with a live probe of each |
@@ -161,7 +161,7 @@ dashboard. All are `GET`, read-only, loopback and signed like every other route,
 | Route | Query | Answer |
 |---|---|---|
 | `/v1/overview` | | `api_overview`: node, hive, owner, role, contract, counts, address, merkle root |
-| `/v1/tags` | | `{"tags": [...]}` |
+| `/v1/tags` | | `{"tags": [...]}`, plus `"counts": {tag: n}` with `?counts=1` |
 | `/v1/related` | `id` (a local row id, required), `kind` (`fact` or `decision`, default `fact`) | `{"related": [...], "tags": [...]}`; `400` for a missing or malformed `id` or a bad `kind` |
 | `/v1/audit` | | counts (`recheck`, `stale`, `duplicate`, `contravened`) and `samples` |
 | `/v1/peers` | `probe` (`0` to skip the live probe) | `{"peers": [{name, device, principal, addr, seen, status, self, module}]}`; `module` is the module name for a module identity, else `null`; no host device is recorded |

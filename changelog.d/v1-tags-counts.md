@@ -1,0 +1,1 @@
+- The module API's `GET /v1/tags` honours `counts=1` like `/api/tags`: the reply adds `counts` (facts + decisions per tag). Without it the reply is unchanged. Additive; the route and its `reads` declaration are the same. (Part of projectmentor/hive-mind-dash#18, gap 5; hive-mind#492 added it to `/api/tags` only.)

@@ -113,6 +113,9 @@ def test_overview_tags_verify_and_peers_answer_what_the_api_twin_does(hive):
     assert code == 200 and ov == hv.api_overview()
     assert hive.get("/v1/tags") == (200, hv.api_tags())
     assert "backup" in hive.get("/v1/tags")[1]["tags"]
+    assert "counts" not in hive.get("/v1/tags")[1]                    # counts only on request
+    code, tg = hive.get("/v1/tags?counts=1")
+    assert code == 200 and tg == hv.api_tags(counts=True) and tg["counts"]["backup"] >= 1
     code, v = hive.get("/v1/verify")
     assert code == 200 and set(v) >= {"ok", "level", "lines"}
     code, p = hive.get("/v1/peers?probe=0")
