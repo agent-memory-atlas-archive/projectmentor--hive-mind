@@ -21,6 +21,10 @@ jobs:
       contents: read        # fetch scripts/ci from the default branch
       issues: write         # comment and label
     runs-on: ubuntu-latest
+    timeout-minutes: 2      # an outsider chooses the input; bound what one job can cost
+    concurrency:
+      group: duplicate-issue
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
