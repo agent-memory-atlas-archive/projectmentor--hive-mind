@@ -158,6 +158,17 @@ def test_unlock_with_a_keystore_source_needs_gated(hive, interop, capsys):
 
 
 @LINUX
+@pytest.mark.parametrize("source", keystore.SOURCES)
+def test_a_failing_source_with_a_canary_in_its_output_prints_nothing_of_it(hive, interop, monkeypatch, capsys, source):
+    canary = "CANARY-passphrase-7f3a"
+    monkeypatch.setattr(keystore, "run_default", lambda argv, data, timeout=30: (1, canary.encode()))
+    lib = _lib(hive)
+    assert owner_agent.cmd_unlock(lib, ["--gated", "--rp-id", RP, "--passphrase-source", source]) == 1
+    err = capsys.readouterr().err
+    assert "could not read the owner key's secret" in err and canary not in err
+
+
+@LINUX
 def test_boot_unlock_end_to_end_through_the_fake_keystore(hive, interop, capsys):
     run_ctl(hive, *add_flags(PHONE), "--break-glass", passphrase_fd=PASS)
     lib = _lib(hive)
