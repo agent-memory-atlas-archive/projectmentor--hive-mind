@@ -1,0 +1,1 @@
+- `/api/tags?counts=1` also returns `counts`, the number of facts and decisions per tag; without the parameter the reply is unchanged (hive-mind-dash#18 gap 5).
