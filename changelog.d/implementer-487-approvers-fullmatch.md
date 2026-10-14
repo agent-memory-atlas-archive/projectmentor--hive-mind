@@ -1,1 +1,0 @@
-- Approver ids and hex digests (#487, security): `approvers.id_ok` and `hex64_ok` used `$`-anchored regexes, which also matched before a trailing newline (`"t\n"`); they now use `fullmatch`. No journal, signature or sync byte changes.

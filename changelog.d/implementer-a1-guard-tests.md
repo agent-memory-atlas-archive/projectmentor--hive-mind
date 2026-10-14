@@ -1,1 +1,0 @@
-- Tests pin the owner-approval A1 guards that no test reached (EdDSA assertion signature, delegation key and module scope, re-enrol of an enrolled id, delegation clearing on a break-glass revoke, the ticket gate in `hivemind_owner`); THREAT_MODEL gains the `--approvers-min 2` operator rule. No code change. (#485)
