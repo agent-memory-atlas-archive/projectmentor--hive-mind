@@ -1,7 +1,19 @@
 # HiveMind
 
-**Peer-to-peer shared memory for AI agents.** When one agent learns something, every other
-agent on every machine can use it too. Local-first, no cloud, no central server.
+HiveMind is shared memory for your AI agents: a fact one agent writes on one machine is there for the next agent and the next machine, with no server in between.
+
+Free and open source under the AGPL-3.0. Alpha: the agent contract (today **4.2**, `hv version`) still changes between minor versions.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/projectmentor/hive-mind/main/scripts/installer/install.sh | bash
+hive-mind install
+./hv remember "The payments API rate-limits at 100 req/s" --tags api,payments
+./hv search "payments"
+```
+
+On a second machine: run `hive-mind invite` on the first, paste the line it prints into `hive-mind install` on the second, run the same search, see the same fact.
+
+A markdown handoff travels only if someone copies it. Mem0 and the stock MCP memory server keep memory for an application, usually with a service in the middle. HiveMind keeps the agents' own notes on your own machines and leaves a disagreement visible.
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3.0-E07A00.svg)](LICENSE)
 ![Python](https://img.shields.io/badge/python-3.12-3776AB.svg)
@@ -31,6 +43,7 @@ over Tailscale, a private network between your devices.
 
 Pinecone, Weaviate, LlamaIndex, and LangGraph help one program search a pile of text.
 HiveMind keeps the notes your agents share, and a record of who agreed.
+
 
 ---
 
