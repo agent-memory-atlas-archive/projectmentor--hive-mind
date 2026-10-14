@@ -680,6 +680,11 @@ module's own key directory (`HIVE_MODULE_KEY_DIR`, read-write: its state) and re
 `PATH` entries its runtimes resolved to. A `trusted` unit renders as it always did. `module trust` re-renders and
 restarts the unit, and the doctor expects the effective tier's text. This is a filesystem and privilege sandbox, not a
 network one: a confined module can still reach the network and the node's local API with its own device key.
+A confined unit with a `service` also gets its own runtime directory (`RuntimeDirectory=hive-mind-mod-<name>`, mode 0700,
+exported as `HIVE_MODULE_RUNTIME_DIR`) for its sockets, since `$XDG_RUNTIME_DIR` is read-only under `ProtectSystem=strict`; it is never the
+shared `%t/hive-mind`, which holds the owner-unlock agent's socket and stays out of its reach. It also gets read-only, file by
+file, `hive_module_client.py` and the three it imports (`ed25519.py`, `merkle.py`, `sync_common.py`): never the checkout,
+`.peers.json` or the key store. Those four are core code, not secrets.
 Residual: a module that needs a directory outside these (a tool under the home that is not on its `PATH`) fails until
 the publisher declares it as a runtime; there is no operator override. The tier can go down on a node (`module trust <name> confined`, node-local) and up only with the
 owner key (clearing that lowering, or an update that signs a higher tier than the node last held), never above what the

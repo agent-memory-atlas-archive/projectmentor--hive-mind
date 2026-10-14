@@ -1,0 +1,1 @@
+- A `confined` module unit with a `service` now gets its own runtime directory (`HIVE_MODULE_RUNTIME_DIR`, `RuntimeDirectory=hive-mind-mod-<name>`, 0700) and read-only access to the reference client's four files, so a confined service can bind a socket and import `hive_module_client`. Additive. (#504)
