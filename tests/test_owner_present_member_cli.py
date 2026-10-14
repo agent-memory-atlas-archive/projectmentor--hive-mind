@@ -92,7 +92,7 @@ def test_no_agent_is_a_json_refusal_with_exit_1(hive, name, payload):
 
 @LINUX
 @pytest.mark.parametrize("name,raw", [
-    ("present", b""), ("present", b"not json"), ("present", b"[]"), ("present", b"{}"),
+    ("present", b""), ("present", b"not json"), ("present", b"[]"), ("present", b"[\"tickets\",\"assertion\"]"), ("present", b"{}"),
     ("present", json.dumps({"tickets": [], "assertion": {}, "op": "sign"}).encode()),     # no extra key reaches the agent
     ("present", json.dumps({"tickets": []}).encode()),
     ("present", b"\xff\xfe"),
