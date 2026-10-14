@@ -685,6 +685,9 @@ exported as `HIVE_MODULE_RUNTIME_DIR`) for its sockets, since `$XDG_RUNTIME_DIR`
 shared `%t/hive-mind`, which holds the owner-unlock agent's socket and stays out of its reach. It also gets read-only, file by
 file, `hive_module_client.py` and the three it imports (`ed25519.py`, `merkle.py`, `sync_common.py`): never the checkout,
 `.peers.json` or the key store. Those four are core code, not secrets.
+The shared `%t/hive-mind` directory is absent from a confined unit, not merely unreadable: `ProtectHome=tmpfs` and
+`PrivateTmp=yes` hide it, and the unit's own `hive-mind-mod-<name>` directory is the only runtime directory it has. The
+doctor's environment is another process and does not carry `HIVE_MODULE_RUNTIME_DIR`.
 Residual: a module that needs a directory outside these (a tool under the home that is not on its `PATH`) fails until
 the publisher declares it as a runtime; there is no operator override. The tier can go down on a node (`module trust <name> confined`, node-local) and up only with the
 owner key (clearing that lowering, or an update that signs a higher tier than the node last held), never above what the

@@ -383,6 +383,15 @@ A manifest with a `service` block becomes `hive-module-<name>.service`, and `hiv
 directory, with the module's own key directory and **no owner-key path** in its environment. It does not use the sync
 unit's `pkill -f` pattern. `add` installs it, `update` re-renders it, `remove` stops and deletes it.
 
+**A `confined` unit with a `service`** (see `trust` in [`MODULES.md`](MODULES.md)) gets a per-module runtime directory:
+`RuntimeDirectory=hive-mind-mod-<name>`, mode 0700, at `$XDG_RUNTIME_DIR/hive-mind-mod-<name>` and exported as
+`HIVE_MODULE_RUNTIME_DIR`. It is the only place the unit can create a socket, because `$XDG_RUNTIME_DIR` itself is
+read-only under `ProtectSystem=strict`. The unit also reads, read-only and one file at a time, the four files of the
+reference client from the core checkout: `hive_module_client.py`, `ed25519.py`, `merkle.py` and `sync_common.py`, so
+`import hive_module_client` works. Nothing else of the checkout, `.peers.json` or the key store is visible. The variable is
+set only on the unit: the module's own doctor (below) and any client outside the unit, such as a status command, are other
+processes and do not get it, so they resolve `$XDG_RUNTIME_DIR/hive-mind-mod-<name>` themselves.
+
 **After a core update** (`hive-mind update`), the internal `hive-mind module reapply` runs: it renders every
 installed module's units again, writes only the files that changed, reloads systemd once and restarts only the units
 it rewrote. It never fails the update; a module it cannot re-apply is a warning that names it.
