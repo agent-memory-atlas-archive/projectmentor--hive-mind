@@ -983,9 +983,9 @@ def test_hive_telemetry_returns_per_node_by_day_from_one_probe(tmp_path, monkeyp
     out = hvc.api_telemetry_hive()
     assert probes == [True]                                        # one api_peers probe per read
     peer = [n for n in out["nodes"] if n["status"] == "online"][0]
-    assert len(peer["by_day"]) == 21 and peer["by_day"][-1] == {"day": days[-1], "sessions": 2}
+    assert len(peer["by_day"]) == 21 and peer["by_day"][-1] == {"day": days[-1], "sessions": 2, "tokens": 4, "cost": None}
     assert len(out["by_day"]) == 21                                # the totals keep their shape
     filt = hvc.api_telemetry_hive(project="y")                     # filters apply to the per-node series too
-    assert [n for n in filt["nodes"] if n["status"] == "online"][0]["by_day"] == [{"day": days[-1], "sessions": 1}]
+    assert [n for n in filt["nodes"] if n["status"] == "online"][0]["by_day"] == [{"day": days[-1], "sessions": 1, "tokens": 2, "cost": None}]
     own = [n for n in out["nodes"] if n["status"] == "self"][0]
     assert own["by_day"] == []

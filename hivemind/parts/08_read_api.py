@@ -354,7 +354,8 @@ def _tel_aggregate(recents, limit, offset, sort="recent", project=None, agent=No
     """Shared telemetry projection over a list of per-session dicts: compute `facets`, FILTER by
     node/project/agent/day/model, total + by-day + by-model over the FILTERED set, then SORT
     (recent|cost|tokens|duration) and paginate. `day`/`model` let the by-day bars and by-model rows
-    drill in. Used by both the per-node and hive-combined views so they behave identically."""
+    drill in. Each `by_day` row carries `sessions`, `tokens` (in + out) and `cost` (USD; None when no session
+    that day is priced), the 21-day cap unchanged. Used by both the per-node and hive-combined views so they behave identically."""
     facets = {"projects": sorted({x["project"] for x in recents}),
               "agents": sorted({x["agent"] for x in recents}),
               "nodes": sorted({(x.get("node_name") or x.get("node") or "-") for x in recents})}
@@ -383,7 +384,12 @@ def _tel_aggregate(recents, limit, offset, sort="recent", project=None, agent=No
             tot["priced"] = True
         d = (x["when"] or "")[:10]
         if d:
-            by_day[d] = by_day.get(d, 0) + 1
+            bd = by_day.setdefault(d, {"sessions": 0, "tokens": 0, "cost": 0.0, "priced": False})
+            bd["sessions"] += 1
+            bd["tokens"] += (x["tokens_in"] or 0) + (x["tokens_out"] or 0)
+            if x["cost_usd"] is not None:
+                bd["cost"] += x["cost_usd"]
+                bd["priced"] = True
         for mname, mv in (x.get("models") or {}).items():
             pm = by_model.setdefault(mname, {"in": 0, "out": 0, "cost": 0.0, "priced": False})
             pm["in"] += mv.get("in", 0)
@@ -398,7 +404,8 @@ def _tel_aggregate(recents, limit, offset, sort="recent", project=None, agent=No
             "duration": lambda x: x["duration_s"] or 0}.get(sort, lambda x: x["when"] or "")
     f = sorted(f, key=keyf, reverse=True)
     return {"totals": tot, "recent": f[offset:offset + limit], "recent_total": len(f),
-            "by_day": [{"day": d, "sessions": c} for d, c in sorted(by_day.items())][-21:],
+            "by_day": [{"day": d, "sessions": v["sessions"], "tokens": v["tokens"], "cost": v["cost"] if v["priced"] else None}
+                       for d, v in sorted(by_day.items())][-21:],
             "by_model": by_model, "facets": facets}
 
 
