@@ -821,6 +821,13 @@ def test_a_trusted_unit_has_no_sandbox_lines_and_a_signed_confined_one_has_them(
     key_dir = _keys.key_dir(hive) / "modules" / "boxed"
     assert f"BindPaths={key_dir}\n" in text and text.count("\nBindPaths=") == 1       # the state directory, and only it
     assert f"BindReadOnlyPaths=-{tmp_path / 'modules' / 'boxed'}\n" in text
+    assert "RuntimeDirectory=hive-mind-mod-boxed\n" in text and "RuntimeDirectoryMode=0700\n" in text
+    assert 'Environment="HIVE_MODULE_RUNTIME_DIR=%t/hive-mind-mod-boxed"\n' in text
+    assert "%t/hive-mind\n" not in text and "RuntimeDirectory=hive-mind\n" not in text
+    root = Path(hive_modules.__file__).resolve().parent
+    ro = [l for l in text.splitlines() if l.startswith("BindReadOnlyPaths=/")]
+    assert sorted(ro) == sorted(f"BindReadOnlyPaths={root / f}" for f in hive_modules.CLIENT_FILES)
+    assert "peers" not in text and f"={root}\n" not in text      # never the checkout or its peers file
 
 
 @LINUX_ONLY
@@ -856,3 +863,27 @@ def test_a_confined_unit_can_still_write_its_state_directory(tmp_path):
                         f"echo ok > {state}/f && ! echo x > {mod}/g && ! echo x > /usr/g"], capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
     assert (state / "f").read_text() == "ok\n" and not (mod / "g").exists()
+
+
+@LINUX_ONLY
+def test_a_confined_service_can_bind_in_its_runtime_dir_and_import_the_client(tmp_path):
+    if subprocess.run(["systemd-run", "--user", "--wait", "--quiet", "true"], capture_output=True).returncode:
+        pytest.skip("no user systemd manager")
+    state, mod = tmp_path / "state", tmp_path / "mod"
+    state.mkdir(), mod.mkdir()
+    root = Path(hive_modules.__file__).resolve().parent
+    props = hive_modules._confined_lines(mod, state, None, "stub504")
+    run = os.environ["XDG_RUNTIME_DIR"]          # a transient unit's properties get no specifier expansion: do %t here
+    args = [a for line in props if not line.startswith("CapabilityBoundingSet=") for a in ("-p", line.replace("%t", run))]
+    args += ["-p", "CapabilityBoundingSet="]
+    base = ["systemd-run", "--user", "--wait", "--quiet", "--collect", "--pipe", *args]
+    if subprocess.run([*base, "true"], capture_output=True).returncode:
+        pytest.skip("this user manager cannot set up the sandbox (no mount namespaces)")
+    code = ("import os,socket,sys;sys.path.insert(0,%r);import hive_module_client;"
+            "d=os.environ['HIVE_MODULE_RUNTIME_DIR'];s=socket.socket(socket.AF_UNIX);s.bind(d+'/s.sock');"
+            "assert oct(os.stat(d).st_mode&0o777)=='0o700';"
+            "assert not os.path.exists(os.environ['XDG_RUNTIME_DIR']+'/hive-mind');"
+            "assert not os.path.exists(%r);print('ok')") % (str(root), str(root / ".peers.json"))
+    r = subprocess.run([*base, "-E", f"XDG_RUNTIME_DIR={run}",
+                        "python3", "-I", "-c", code], capture_output=True, text=True)
+    assert r.returncode == 0 and "ok" in r.stdout, r.stderr + r.stdout

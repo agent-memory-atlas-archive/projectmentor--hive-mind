@@ -917,14 +917,28 @@ def _unit_path_arg(p):
     return str(p).replace("\\", "\\x5c").replace(" ", "\\x20").replace("\t", "\\x09").replace("%", "%%")
 
 
-def _confined_lines(module_dir, key_dir, path):
+CLIENT_FILES = ("hive_module_client.py", "ed25519.py", "merkle.py", "sync_common.py")
+
+
+def _confined_lines(module_dir, key_dir, path, name=None):
     """The sandbox of a `confined` unit: the filesystem read-only, the home directory replaced by an empty tmpfs, then
     only what the module needs put back. Its own directory and the PATH entries under it are read-only (it must
-    still run); its key directory, the module's own state, is the one thing it may write."""
+    still run); its key directory, the module's own state, is the one thing it may write.
+
+    With a `name` (a unit that has a service) it also gets its own runtime directory, `RuntimeDirectory=` (mode 0700,
+    exported as `HIVE_MODULE_RUNTIME_DIR`) for its sockets: never the shared `%t/hive-mind`, which holds the owner-unlock
+    agent's socket. And the reference client's files, read-only and one by one, so it can `import hive_module_client`;
+    not the checkout, `.peers.json` or the key store."""
     keep = [module_dir, *(d for d in (path or "").split(":") if d.startswith("/") and d not in SYSTEM_PATH)]
-    return ["ProtectSystem=strict", "ProtectHome=tmpfs", "PrivateTmp=yes", "CapabilityBoundingSet=",
-            "BindPaths=" + _unit_path_arg(key_dir),
-            *("BindReadOnlyPaths=-" + _unit_path_arg(d) for d in dict.fromkeys(map(str, keep)))]
+    root = Path(__file__).resolve().parent
+    lines = ["ProtectSystem=strict", "ProtectHome=tmpfs", "PrivateTmp=yes", "CapabilityBoundingSet=",
+             "BindPaths=" + _unit_path_arg(key_dir),
+             *("BindReadOnlyPaths=-" + _unit_path_arg(d) for d in dict.fromkeys(map(str, keep)))]
+    if name:
+        lines += [f"RuntimeDirectory=hive-mind-mod-{name}", "RuntimeDirectoryMode=0700",
+                  f'Environment="HIVE_MODULE_RUNTIME_DIR=%t/hive-mind-mod-{name}"',
+                  *("BindReadOnlyPaths=" + _unit_path_arg(root / f) for f in CLIENT_FILES)]
+    return lines
 
 
 def render_units(name, manifest, module_dir, key_dir, path=None, trust=None):
@@ -957,7 +971,7 @@ def render_units(name, manifest, module_dir, key_dir, path=None, trust=None):
               _env("HIVE_MODULE_KEY_DIR", key_dir), *([_env("PATH", path)] if path else []), "NoNewPrivileges=yes",
               "StandardOutput=journal", "StandardError=journal"]
     if (trust or signed_trust(manifest)) == "confined":
-        lines += _confined_lines(module_dir, key_dir, path)
+        lines += _confined_lines(module_dir, key_dir, path, name)
     grace = svc.get("stop_grace")
     if grace:                           # SIGTERM the main process only, let it drain, SIGKILL the group after `grace`
         lines += [f"TimeoutStopSec={grace}", "KillMode=mixed"]
