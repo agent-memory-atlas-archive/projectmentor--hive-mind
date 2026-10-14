@@ -3071,11 +3071,12 @@ def help_warnings(m, mod_dir, env):
     lacks the plain words. Warnings only: help text is provisional. Runs nothing but `--help`."""
     out, started, cmds = [], time.monotonic(), m["commands"]
     for i, (verb, e) in enumerate(cmds.items()):
-        if time.monotonic() - started >= CHECK_HELP_TOTAL:
+        left = CHECK_HELP_TOTAL - (time.monotonic() - started)
+        if left <= 0:
             out.append(f"probing the help of declared verbs stopped after {CHECK_HELP_TOTAL} s; not run: {', '.join(list(cmds)[i:])}")
             break
         rc, text, why = _run_capture([*m["cli"]["command"], *verb.split(), "--help"], m["files"], mod_dir, env,
-                                     timeout=CHECK_HELP_TIMEOUT, merge_stderr=True)
+                                     timeout=min(CHECK_HELP_TIMEOUT, left), merge_stderr=True)
         if why:
             out.append(f"`{verb} --help` {why}")
             continue

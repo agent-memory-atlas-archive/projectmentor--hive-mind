@@ -273,7 +273,7 @@ manifest and shipped files for text that looks like a person, host, account or r
 runs the module's `status` and `doctor` in a throwaway directory, with a scrubbed environment (`PATH`, a temporary
 `HOME`, `HIVE_MODULE_NAME/DIR/KEY_DIR` and `HIVE_DOCTOR_MODE=manual`; no owner or identity variable), a 20-second
 limit and a 64 KiB output cap, and checks the shapes above. For a module that declares `commands` it also runs
-`<cli.command> <verb> --help` for each declared verb (5 s each, 60 s in all; then it stops and warns naming the verbs it did not
+`<cli.command> <verb> --help` for each declared verb (5 s each, 60 s in all, the last probe getting only the time that remains; then it stops and warns naming the verbs it did not
 run) and warns when one exits non-zero, when a mutating verb's help does not name `--dry-run`, or when a `reversible: "no"`
 verb's help lacks `This cannot be undone.`, `--yes` or `--dry-run`. Nothing in `check` runs a verb without `--help`. `--run` runs the module's own code as you, which is why it
 is a flag. A contract-1 manifest with a `cli` and no `commands` gets a warning (4.2), and the verbs a `commands` map
