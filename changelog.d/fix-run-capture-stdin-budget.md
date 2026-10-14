@@ -1,0 +1,1 @@
+- `module check --run` now gives the last `--help` probe only the time left of its 60 s budget, so the run takes 60 s in all rather than up to 65 s; `_run_capture` is tested to give the child no stdin. (Closes #510.)

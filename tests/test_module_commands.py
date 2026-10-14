@@ -386,7 +386,8 @@ def test_run_stops_probing_at_the_total_and_names_the_verbs_it_did_not_run(tmp_p
     monkeypatch.setattr(hive_modules, "CHECK_HELP_TOTAL", 0.5)
     _, warns, calls = help_run(tmp_path, '*) sleep 30;;')
     assert calls == ["hygiene apply --help", "hygiene undo --help"]
-    assert warns[:2] == ["`hygiene apply --help` did not finish in 0.3 seconds", "`hygiene undo --help` did not finish in 0.3 seconds"]
+    assert warns[0] == "`hygiene apply --help` did not finish in 0.3 seconds"
+    assert warns[1].startswith("`hygiene undo --help` did not finish in 0.") and "0.3 seconds" not in warns[1]   # only what remains
     assert warns[2] == "probing the help of declared verbs stopped after 0.5 s; not run: hygiene list, restart, stop"
 
 
@@ -538,6 +539,29 @@ def test_probe_help_gives_the_child_no_stdin(tmp_path):
         os.dup2(saved, 0)
         for fd in (r, w, saved):
             os.close(fd)
+
+
+def test_run_capture_gives_the_child_no_stdin(tmp_path):
+    fake_cli(tmp_path / "p.sh", 'read x || exit 0\nexit 7\n')
+    r, w = os.pipe()                    # an inherited stdin would be this open pipe, and `read` would block to the deadline
+    saved = os.dup(0)
+    os.dup2(r, 0)
+    try:
+        rc, out, why = hive_modules._run_capture([str(tmp_path / "p.sh")], {}, tmp_path, {"PATH": os.environ["PATH"]}, timeout=3)
+        assert (rc, out, why) == (0, b"", None)
+    finally:
+        os.dup2(saved, 0)
+        for fd in (r, w, saved):
+            os.close(fd)
+
+
+def test_help_warnings_last_probe_gets_only_the_time_that_remains(tmp_path, monkeypatch):
+    seen, clock = [], iter([0.0, 1.0, 58.0, 61.0])
+    monkeypatch.setattr(hive_modules.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(hive_modules, "_run_capture", lambda *a, timeout=None, **k: seen.append(timeout) or (0, b"--dry-run", None))
+    m = {"cli": {"command": ["x"]}, "files": [], "commands": {"a": {"mutates": True}, "b": {"mutates": True}, "c": {"mutates": True}}}
+    out = hive_modules.help_warnings(m, tmp_path, {})
+    assert seen == [5, 2.0] and "not run: c" in out[-1]
 
 
 def test_probe_help_starts_its_own_session(tmp_path):
