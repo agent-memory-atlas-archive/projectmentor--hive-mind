@@ -1440,7 +1440,8 @@ def refuse_disabled(name, rec):
 
 
 def cmd_run(lib, args):
-    """`module run <name> [--] args…`: the launcher's job without the launcher."""
+    """`module run <name> [--] args…`: the launcher's job without the launcher, run from the module tree like the
+    launcher (#518)."""
     rec = load_state(lib).get(args.name)
     if rec is None:
         raise ModuleError(f"module {args.name!r} is not installed")
@@ -1450,7 +1451,7 @@ def cmd_run(lib, args):
         raise ModuleError(f"module {args.name!r} declares no cli")
     argv = module_argv(manifest, manifest["cli"]["command"], modules_dir() / args.name) + list(args.args)
     try:
-        rc = subprocess.run(argv, env=module_env(lib, args.name, recorded_path(rec))).returncode
+        rc = subprocess.run(argv, env=module_env(lib, args.name, recorded_path(rec)), cwd=str(modules_dir() / args.name)).returncode
     except OSError as e:
         raise ModuleError(f"could not run {argv[0]}: {e}")
     return rc if rc >= 0 else 128 - rc

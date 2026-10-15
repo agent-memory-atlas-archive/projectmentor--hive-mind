@@ -200,6 +200,21 @@ def test_the_launcher_runs_the_command_from_the_module_tree_so_a_relative_script
 
 
 @LINUX_ONLY
+def test_module_run_also_runs_the_command_from_the_module_tree(hive, tmp_path, bindir, monkeypatch):
+    # #518, the verifier's hold on the first head: `module run` is "the launcher's job without the launcher", so it
+    # gets the same working directory.
+    cli = {"name": "democwd", "command": ["python3", "-I", "tool.py"]}
+    pub = publish(tmp_path, cli=cli, files={"tool.py": "import os, sys\nprint(os.getcwd())\nprint('|'.join(sys.argv[1:]))\n"})
+    _add(hive, tmp_path / "repo", pub)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    r = _run(hive, "module", "run", "demo", "--", "x", "y z")
+    lines = r.stdout.splitlines()
+    assert lines[0].endswith("/modules/demo") and lines[1] == "x|y z"
+
+
+@LINUX_ONLY
 def test_a_launcher_name_that_is_a_foreign_file_refuses_before_anything_is_written(hive, tmp_path, bindir):
     (bindir / "democtl").write_text("#!/bin/sh\necho mine\n")
     pub = publish(tmp_path, cli=CLI)
