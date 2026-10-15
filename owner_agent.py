@@ -76,6 +76,7 @@ UNIX_PATH_MAX = 100
 TICKET_LIVE = 15 * 60                  # a presented ticket stays usable this long (design 4.3)
 USED_KEEP = 24 * 3600                  # the used-ticket set prunes entries older than this
 BATCH_MAX = 10
+STDIN_MAX = 1 << 20                     # `owner present` and `owner member` read at most 1 MiB of JSON on stdin
 USED_FILE, APPROVERS_FILE, DELEGATIONS_FILE = "used-tickets.json", "approvers.json", "delegations.json"
 
 
@@ -1476,6 +1477,59 @@ def cmd_delegate(lib, argv, out=print):
     return _finish(lib, a, "delegate-revoke", {**{k: v for k, v in old[0].items() if k != "owner_sig"}, "revoked": at})
 
 
+def _stdin_request(keys):
+    """The one JSON object a JSON-on-stdin verb takes, or None after saying why. Never reads a terminal and never
+    prompts: a terminal on stdin is refused. The size is capped before parsing."""
+    try:
+        if os.isatty(0):
+            print("hive-mind: this verb reads one JSON object on stdin, not a terminal", file=sys.stderr)
+            return None
+        raw = sys.stdin.buffer.read(STDIN_MAX + 1)
+        if len(raw) > STDIN_MAX:
+            print("hive-mind: the request on stdin is too large", file=sys.stderr)
+            return None
+        req = json.loads(raw.decode("utf-8"))
+    except (OSError, ValueError):
+        print("hive-mind: stdin is not one JSON object", file=sys.stderr)
+        return None
+    if not isinstance(req, dict) or set(req) != set(keys):
+        print("hive-mind: the request must be an object with exactly: " + ", ".join(sorted(keys)), file=sys.stderr)
+        return None
+    return req
+
+
+def _forward(lib, op, req, out):
+    """Send one request to the gated agent and print its reply as JSON. 0 if the agent said ok, 1 if it refused or is not
+    reachable (the reply still goes to stdout, `{"ok": false, "why": ...}`). The agent, not this verb, is the gate."""
+    try:
+        reply = Client(socket_path(lib.HIVE_HOME)).request({"op": op, **req})
+    except AgentError as e:
+        reply = {"ok": False, "why": str(e)}
+    out(json.dumps(reply))
+    return 0 if reply.get("ok") is True else 1
+
+
+def cmd_present(lib, argv, out=print):
+    import argparse
+    argparse.ArgumentParser(prog="hive-mind owner present",
+                            description="Approve tickets with one passkey assertion: reads {tickets, assertion} as JSON on stdin, "
+                                        "forwards it to the gated agent's `present` op and prints the agent's reply as JSON. "
+                                        "Exit 0 approved, 1 refused or no agent, 2 bad request.").parse_args(argv)
+    req = _stdin_request(("tickets", "assertion"))
+    return 2 if req is None else _forward(lib, "present", req, out)
+
+
+def cmd_member(lib, argv, out=print):
+    import argparse
+    argparse.ArgumentParser(prog="hive-mind owner member",
+                            description="Add or revoke an approver or a delegation: reads {kind, record, assertions} as JSON on "
+                                        "stdin, forwards it to the gated agent's `member` op and prints the agent's reply "
+                                        "(with the owner-signed record) as JSON. Exit 0 recorded, 1 refused or no agent, 2 bad request."
+                            ).parse_args(argv)
+    req = _stdin_request(("kind", "record", "assertions"))
+    return 2 if req is None else _forward(lib, "member", req, out)
+
+
 # ---- boot unlock: the keystore and the user unit (owner approval slice A3) -------------------------------------------------
 
 UNIT_NAME = "hive-owner-agent.service"
@@ -1628,7 +1682,8 @@ def cmd_boot_unit(lib, argv, out=print):
     return 0
 
 
-COMMANDS = {"keystore": cmd_keystore, "boot-unit": cmd_boot_unit, "unlock": cmd_unlock, "lock": cmd_lock, "status": cmd_status, "approver": cmd_approver, "delegate": cmd_delegate}
+COMMANDS = {"keystore": cmd_keystore, "boot-unit": cmd_boot_unit, "unlock": cmd_unlock, "lock": cmd_lock, "status": cmd_status, "approver": cmd_approver, "delegate": cmd_delegate,
+            "present": cmd_present, "member": cmd_member}
 
 
 # ---- the agent process --------------------------------------------------------------------------------------------
