@@ -1311,7 +1311,9 @@ def module_env(lib, name, path):
 
 def launcher_text(lib, name, manifest, path):
     """The launcher file the core renders: the module supplies a name and an argv, never shell text. Every word is
-    single-quoted; the environment is the module's own, and the owner's secrets are unset."""
+    single-quoted; the environment is the module's own, and the owner's secrets are unset. The command runs with
+    the module tree as its working directory, so a `cli.command` such as `python3 -I tool.py` works from any
+    directory the operator is in (#518)."""
     body = "\n".join([
         "unset " + " ".join(SCRUBBED_ENV),
         f"HIVE_MODULE_NAME={shlex.quote(name)}",
@@ -1319,6 +1321,7 @@ def launcher_text(lib, name, manifest, path):
         f"HIVE_MODULE_KEY_DIR={shlex.quote(str(Path(lib._ensure_key_dir()) / 'modules' / name))}",
         f"PATH={shlex.quote(path)}",
         "export HIVE_MODULE_NAME HIVE_MODULE_DIR HIVE_MODULE_KEY_DIR PATH",
+        'cd "$HIVE_MODULE_DIR" || exit 1',
         "exec " + " ".join(shlex.quote(a) for a in module_argv(manifest, manifest["cli"]["command"], modules_dir() / name)) + ' "$@"',
         ""])
     digest = hashlib.sha256(body.encode()).hexdigest()

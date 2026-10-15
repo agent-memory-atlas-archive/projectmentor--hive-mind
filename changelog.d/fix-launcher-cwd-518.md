@@ -1,0 +1,1 @@
+- The module CLI launcher (`~/.local/bin/<name>`) now enters the module's own directory before running the manifest's `cli.command`, so a command with a relative script name such as `python3 -I hdash` works from any directory instead of failing with "can't open file" everywhere but the module tree. Launchers are re-rendered on the next `module update`. (#518)

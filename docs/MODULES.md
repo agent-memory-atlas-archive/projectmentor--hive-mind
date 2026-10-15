@@ -136,7 +136,7 @@ single-quoted, so no module text is ever shell. The file's second line is a mark
 the rest, which is how the core knows a file is its own. An install is refused, before anything is written, when the name
 is one the core uses, another module's, an existing file that is not this module's unedited launcher, or when the bin dir
 is writable by group or world. `remove` deletes the launcher (only if it is still the module's own and unedited); `update`
-renames or drops it with the manifest, and a failed update puts the old one back.
+renames or drops it with the manifest, and a failed update puts the old one back. The launcher enters the module's own directory before it runs the command, so a `cli.command` with a relative script name (`python3 -I tool.py`) works from any directory (4.2.1).
 
 `hive-mind module run <name> [--] <args…>` does the same without the launcher (flags after the name go to the module's
 command, each word unchanged, and core reads none of them), and returns the command's exit status.

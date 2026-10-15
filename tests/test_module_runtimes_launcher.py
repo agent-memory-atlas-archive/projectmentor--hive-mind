@@ -184,6 +184,22 @@ def test_the_launcher_unsets_the_owners_secrets_and_quotes_a_hostile_argv(hive, 
 
 
 @LINUX_ONLY
+def test_the_launcher_runs_the_command_from_the_module_tree_so_a_relative_script_works_anywhere(hive, tmp_path, bindir):
+    # #518: hdash's `cli.command` was `python3 -I hdash`, a script name relative to the module tree; run from any other
+    # directory the launcher failed with "can't open file". The launcher now enters HIVE_MODULE_DIR before the exec.
+    cli = {"name": "democwd", "command": ["python3", "-I", "tool.py"]}
+    pub = publish(tmp_path, cli=cli, files={"tool.py": "import os, sys\nprint(os.getcwd())\nprint('|'.join(sys.argv[1:]))\n"})
+    _add(hive, tmp_path / "repo", pub)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    r = subprocess.run([str(bindir / "democwd"), "x", "y z"], capture_output=True, text=True, cwd=elsewhere)
+    assert r.returncode == 0, r.stderr
+    lines = r.stdout.splitlines()
+    assert lines[0].endswith("/modules/demo") and lines[1] == "x|y z"
+    assert 'cd "$HIVE_MODULE_DIR" || exit 1' in (bindir / "democwd").read_text()
+
+
+@LINUX_ONLY
 def test_a_launcher_name_that_is_a_foreign_file_refuses_before_anything_is_written(hive, tmp_path, bindir):
     (bindir / "democtl").write_text("#!/bin/sh\necho mine\n")
     pub = publish(tmp_path, cli=CLI)
