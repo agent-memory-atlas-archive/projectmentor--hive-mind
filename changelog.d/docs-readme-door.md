@@ -1,0 +1,1 @@
+- README: opens with the one sentence (shared memory for your AI agents, no server in between), the AGPL-3.0 and alpha line, and the four-command proof with the second-machine step; the badges, website line, dashboard image and intro paragraphs move below the proof, and every section and anchor stays.
