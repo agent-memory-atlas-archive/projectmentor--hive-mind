@@ -1,5 +1,5 @@
 {
-  "digest": "20c760945eefd08ca3878ef83eacd47fd9fded5da24ecf229ad033a3df0e0d6f",
+  "digest": "51bc424188212b3b7f19e73dd93f5048a5f4ddbfd0131850509c48f13b06b7db",
   "files": {
     ".github/FUNDING.yml": "ca6c63d7539bb7d2f809b5068781c78de97c028a44c5ae252b11bc1695caf85d",
     ".github/ISSUE_TEMPLATE/bug_report.yml": "22df51b1e51c25f50726392c79811116b88c40370843ff2d4a3e76b643f1cb68",
@@ -17,12 +17,13 @@
     "CHANGELOG.md": "a13864bb3ae6171be1fc5da1b6f392c6f0e9f5e3f5ea3bb1aa7ffb6548556077",
     "CLA.md": "78a00158ab3090dbb1a4de6ed03b150f22b5a0e99bcbba139a6244728780cc7b",
     "CONTRIBUTING.md": "4497a6cad02f179eaecdebb55cf22f2ca578af0d7cbd9445ff6b05aafda8f2d4",
-    "README.md": "a9ce85819a916c936d125e1f09008ba197c5e79efbc03c375eb77747885933c5",
+    "README.md": "e0cb79856b75de260fda6b1d97d1493df73f5bd4c4cf5b20f731ce879a952873",
     "SECURITY.md": "96637414ee287d816e96b2184959350ed3f6cda4b2dd79ccded8e477569b585d",
     "advisories.json": "e1f7246819257c9cdcb8118aaee972ed89f22fb056d67230320d5ea7fdce6703",
     "approvers.py": "18b91c5d5f5b6965a7576735b566c09f8f4460cada38749c54be8d611237c215",
     "cells/example-tool.json": "1ef1bb649f6805631bb6c20940baefb4a4bd867122b2c9e9b565c69aac30f060",
     "chacha20poly1305.py": "6c3bb50dc126dab128184280b4d11cb1494800651e97aea941a821f31ff012fd",
+    "changelog.d/docs-readme-door.md": "abadd6b5af40b71c3be63593e6c774d9df313ba6a5f7bda0407a551d18d1901b",
     "changelog.d/doctor-module-launcher.md": "0e923d2cdb9afc5172491f3d84d4c8a3f8f46a02797ee8e2c78f5c99ccec8b78",
     "changelog.d/fix-run-capture-stdin-budget.md": "ac8a9f10fdf3995f06bb6b003c25e23d724dd75569d94b26a993509855073ec9",
     "changelog.d/implementer-owner-present-512.md": "2002b7a0fcb82de214ec8aa06ce8fb5c8c989008bb261eda23679cc5ad11b732",
@@ -322,6 +323,6 @@
     "vocabulary.py": "3a6977fc89573561e6248748db90379acc810ff183556e220ce6bf1b2c0d0d3b",
     "x25519.py": "ec1967595a2306cde860afe4dffab40a3f833d089de6caf5c9c080df8fd45726"
   },
-  "sequence": 710,
+  "sequence": 712,
   "version": "4.2"
 }
