@@ -1,5 +1,5 @@
 {
-  "digest": "91e8cf5daf633b1a37e396b4a3c3fe282423c77b7bd979878dc74eb31484ea63",
+  "digest": "82e9a72d28bed85a3de315e083a0906bd608f9a2fe78950255779dee06eba259",
   "files": {
     ".github/FUNDING.yml": "ca6c63d7539bb7d2f809b5068781c78de97c028a44c5ae252b11bc1695caf85d",
     ".github/ISSUE_TEMPLATE/bug_report.yml": "22df51b1e51c25f50726392c79811116b88c40370843ff2d4a3e76b643f1cb68",
@@ -23,6 +23,7 @@
     "approvers.py": "18b91c5d5f5b6965a7576735b566c09f8f4460cada38749c54be8d611237c215",
     "cells/example-tool.json": "1ef1bb649f6805631bb6c20940baefb4a4bd867122b2c9e9b565c69aac30f060",
     "chacha20poly1305.py": "6c3bb50dc126dab128184280b4d11cb1494800651e97aea941a821f31ff012fd",
+    "changelog.d/docs-cli-command-rule.md": "634c3d89229110463f6d20d6755762d0bb8c27a4b834a43276b69dd045d5eb51",
     "changelog.d/docs-readme-door.md": "abadd6b5af40b71c3be63593e6c774d9df313ba6a5f7bda0407a551d18d1901b",
     "changelog.d/doctor-module-launcher.md": "0e923d2cdb9afc5172491f3d84d4c8a3f8f46a02797ee8e2c78f5c99ccec8b78",
     "changelog.d/fix-run-capture-stdin-budget.md": "ac8a9f10fdf3995f06bb6b003c25e23d724dd75569d94b26a993509855073ec9",
@@ -42,7 +43,7 @@
     "docs/INTEGRATION_DOGFOOD.md": "4c5758bbf4073b1f71fc5274ed6bc42bc9a4c9153d372e22cf6e34d2be5a6ad1",
     "docs/INTERNALS.md": "4af5337542697b26ce6a8538cd5a0c24daf7a06e0fd106557820e1865a051e9b",
     "docs/MODULES.md": "be42ba4be5eebbcd15c25a4ab9d70485d66910332abf8d82578bf23bc4ec29eb",
-    "docs/MODULE_API.md": "74115c231c5d5b8bb45c159b5b71efca9c35f2525c4be30606dd81cca0bf1e17",
+    "docs/MODULE_API.md": "581988d9fcfbc20ae90028a3e057de42fce32d071af996e2e24c514131a0de89",
     "docs/NAMESPACES.md": "9bf01e1a565d4158f340be9f3c1f4ebc55583708546dbc29f18f1353f20ecdeb",
     "docs/SYNC_API.md": "c7cd6c1b94854ca9f260cad9d2b0ac80e0a9fb28a7875f3ffa3605e4944356ab",
     "docs/THREAT_MODEL.md": "b9bd4a2acc72c20129bd290febd8579bd37f1c4d711be43d7a97a725cb6d8832",
@@ -325,6 +326,6 @@
     "vocabulary.py": "3a6977fc89573561e6248748db90379acc810ff183556e220ce6bf1b2c0d0d3b",
     "x25519.py": "ec1967595a2306cde860afe4dffab40a3f833d089de6caf5c9c080df8fd45726"
   },
-  "sequence": 714,
+  "sequence": 716,
   "version": "4.2"
 }
