@@ -1,5 +1,5 @@
 {
-  "digest": "51bc424188212b3b7f19e73dd93f5048a5f4ddbfd0131850509c48f13b06b7db",
+  "digest": "91e8cf5daf633b1a37e396b4a3c3fe282423c77b7bd979878dc74eb31484ea63",
   "files": {
     ".github/FUNDING.yml": "ca6c63d7539bb7d2f809b5068781c78de97c028a44c5ae252b11bc1695caf85d",
     ".github/ISSUE_TEMPLATE/bug_report.yml": "22df51b1e51c25f50726392c79811116b88c40370843ff2d4a3e76b643f1cb68",
@@ -27,6 +27,7 @@
     "changelog.d/doctor-module-launcher.md": "0e923d2cdb9afc5172491f3d84d4c8a3f8f46a02797ee8e2c78f5c99ccec8b78",
     "changelog.d/fix-run-capture-stdin-budget.md": "ac8a9f10fdf3995f06bb6b003c25e23d724dd75569d94b26a993509855073ec9",
     "changelog.d/implementer-owner-present-512.md": "2002b7a0fcb82de214ec8aa06ce8fb5c8c989008bb261eda23679cc5ad11b732",
+    "changelog.d/peers-probe0-cached.md": "836ad96352156408ce23ece5c186529b966b535d1e4727fdda157fa894f8d1f6",
     "changelog.d/runtime-dir-fallback.md": "3b6b042fb387fbd7f3c9b1876071705f2561c09a825ce765be51982ab2c37ea8",
     "commandmap.py": "8bd409700a0667a15fa435d74cb3d48ae79a1d80b963b78e8791be12f9bc6e1b",
     "config/.peers.json.example": "e81eb4533b4e06969946a8fa1c977e0692bc047275101bcdbae1504355866674",
@@ -68,7 +69,7 @@
     "hivemind/parts/05_trust_validation.py": "5bc472065d8a83633c1851c334854440d455af315bbcfc1a575fcbf0f57b3cbb",
     "hivemind/parts/06_links_forget.py": "bb1614aae418764a6300656d5392e4852b3fcd3a5884bc364e7cb31bb036b09f",
     "hivemind/parts/07_data_commands.py": "2d96a3437a634324831f58a05a5a42ff68ddef99a1f5b7545c661e28495f4cc8",
-    "hivemind/parts/08_read_api.py": "0d7817dda17aedb57088c58d29646056346d97c1e09d33eadce754ea5e9f8b83",
+    "hivemind/parts/08_read_api.py": "01925335c33611222aeed72f7417bce7e5837242c450130e21ffb023520a79db",
     "hivemind/parts/09_entity_store_ops.py": "5e594bc9063a175bc1c7a5ea0608c4ed0c213f432752e6d0854778dd80c9c30a",
     "hivemind/parts/10_agent_loop.py": "0aac5e7c674fc4c79b8de3de1319cf5f6bf68fbe49ea3923ec6b70022946bb53",
     "hivemind/parts/11_release_node.py": "cb02a9a4373b227be3af702e1ed306336d34177e3549b9ed37593565c741bef1",
@@ -271,6 +272,7 @@
     "tests/test_peer_address.py": "0f83dbc0d7e613ee11b2e84628395d1d9ce9b91feef1d0bb9c00b94a805efb10",
     "tests/test_peers_isolation.py": "002bd72d3769a096dea25c976e3d0018cc04be9078550e131f08f2e3cfb5dfe1",
     "tests/test_peers_module_field.py": "b6267ad593a46f380fe915f78bc2929855ea094db176fa120111eed325217ae9",
+    "tests/test_peers_probe0_cached.py": "9dee871978752042b5db8c83885fa1f8238d219c23ccb62b114526bb2a0f9cdb",
     "tests/test_perf.py": "54f7e79495f490f310e7a4963c1cb69407b96ca1228a6302e2a444914ed8e0a4",
     "tests/test_projection_authz.py": "78ca6b027a95798b31ea52cb700cf4a90afb7db9b963cbc25197d7e74eae0247",
     "tests/test_proxy_enforce.py": "f7df1a5b53a4696450f7f0c451c0c15d0df0cd902a646ae0bdaac337e5420316",
@@ -323,6 +325,6 @@
     "vocabulary.py": "3a6977fc89573561e6248748db90379acc810ff183556e220ce6bf1b2c0d0d3b",
     "x25519.py": "ec1967595a2306cde860afe4dffab40a3f833d089de6caf5c9c080df8fd45726"
   },
-  "sequence": 712,
+  "sequence": 714,
   "version": "4.2"
 }
