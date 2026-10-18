@@ -1,5 +1,5 @@
 {
-  "digest": "b2f44066cca3b6f0b6558d551577b326e5f458caf770af3d7321b83a555daa01",
+  "digest": "a1f376aa866a4e93c1e7fe5f57de0300500332e61ccb606c02759e80265fc679",
   "files": {
     ".github/FUNDING.yml": "ca6c63d7539bb7d2f809b5068781c78de97c028a44c5ae252b11bc1695caf85d",
     ".github/ISSUE_TEMPLATE/bug_report.yml": "22df51b1e51c25f50726392c79811116b88c40370843ff2d4a3e76b643f1cb68",
@@ -12,7 +12,7 @@
     ".github/workflows/cla.yml": "09e9c23c9183758cf86ccf10ed8975b3660bd59c8e90846866c96ac723a7e40f",
     ".github/workflows/duplicate-issue.yml": "76dccca4febfeb97d3d9941dcab85f3ede4170c9dcba8a4d5d1e0649aec7c96a",
     ".github/workflows/release-issue-close.yml": "a625c6cf5a913245d3bf1dfba5111e270d8f8685d411e0593419e36bee83de4b",
-    ".github/workflows/sign.yml": "4be19163ffa6c3c6010ac249475ffce87c8b514fa1b1e5496f19d64634905778",
+    ".github/workflows/sign.yml": "69995607be7f9928dce35a291f840e466f9151227c001e9b19661c2a189a2016",
     "AGENTS.md": "4abda267ab6ded83f372bfa36362ad8a55ebdaff6a2c7f258eee9eed584374e3",
     "CHANGELOG.md": "a13864bb3ae6171be1fc5da1b6f392c6f0e9f5e3f5ea3bb1aa7ffb6548556077",
     "CLA.md": "78a00158ab3090dbb1a4de6ed03b150f22b5a0e99bcbba139a6244728780cc7b",
@@ -327,6 +327,6 @@
     "vocabulary.py": "3a6977fc89573561e6248748db90379acc810ff183556e220ce6bf1b2c0d0d3b",
     "x25519.py": "ec1967595a2306cde860afe4dffab40a3f833d089de6caf5c9c080df8fd45726"
   },
-  "sequence": 718,
+  "sequence": 720,
   "version": "4.2"
 }
